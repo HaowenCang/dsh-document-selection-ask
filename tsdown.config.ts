@@ -14,11 +14,11 @@ import { defineConfig } from 'tsdown'
  *
  * tsdown emits JavaScript only. Declarations come from `tsc -p
  * tsconfig.build.json`, which writes one declaration file per module: the
- * bundled declaration output resolves the entire DSH client type graph, and
- * that graph contains packages the installation supplies to the running client
- * through its own module fallback rather than alongside itself. The plugin's
- * type contract is checked exhaustively by `pnpm typecheck` against
- * `tests/compatibility/contracts.compile.ts`.
+ * bundled declaration output resolves the entire DSH client type graph, and the
+ * packages on that graph are pinned to one exact release in `devDependencies`
+ * so `pnpm install` supplies them inside this project's own `node_modules`.
+ * The plugin's type contract is checked exhaustively by `pnpm typecheck`
+ * against `tests/compatibility/contracts.compile.ts`.
  */
 const PLUGIN_ID = 'dsh-document-selection-ask'
 
@@ -41,10 +41,17 @@ export default defineConfig([
     // boundary. CommonJS emits `exports.apply = …` against the wrapper's own
     // `module`/`exports`, which is exactly the shape the loader's `require`
     // returns to the boot.
+    //
+    // The file is `lib/client.js`, the name DSH's own dual-face packages use and
+    // the one `exports["./client"]` advertises. The host serves that export at
+    // `/plugins/<id>/client.js` whatever it is called, but the conventions that
+    // inspect a plugin package — the DSH plugin injection tooling among them —
+    // look for the literal file, and a CommonJS output otherwise takes `.cjs`.
     format: 'cjs',
     platform: 'browser',
     target: 'es2022',
     dts: false,
+    outExtensions: () => ({ js: '.js' }),
     external: ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client'],
     banner: `window.__ModuleLoader__.load({\n\tid: ${JSON.stringify(PLUGIN_ID)},\n\tfactory: (require) => {\n\t\tvar module = { exports: {} };\n\t\tvar exports = module.exports;`,
     footer: `\t\treturn module.exports;\n\t}\n});`,

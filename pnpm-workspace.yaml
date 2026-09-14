@@ -8,11 +8,12 @@ allowBuilds:
 # root deterministically and does not walk up into an unrelated parent
 # workspace.
 #
-# `@deepseek-ai/*` DSH contracts are junctioned into `node_modules` by
-# `scripts/link-dsh-deps.mjs` (wired as the `preinstall` hook) so the contract
-# probe compiles against the DSH installation actually running on this machine.
-# That is also why `autoInstallPeers` is off: installing `@deepseek-ai/cordis`
-# from the registry would create a second Cordis program, and the DSH client
+# `@deepseek-ai/*` DSH contracts are ordinary `devDependencies` pinned to one
+# exact release, so a fresh clone reaches a working contract environment with
+# `pnpm install` alone: nothing outside this directory is read or written.
+# `autoInstallPeers` stays off because installing `@deepseek-ai/cordis` as an
+# auto-installed peer would create a second Cordis program, and the DSH client
 # packages declare their contract by augmenting Cordis's `Context` interface —
 # two copies means the augmentations land on a `Context` this plugin never sees.
+# `@deepseek-ai/cordis` is therefore an explicit devDependency and a peer.
 autoInstallPeers: false

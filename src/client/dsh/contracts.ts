@@ -13,10 +13,11 @@
  * `skipLibCheck` is enabled in `tsconfig.client.json` because several DSH client
  * packages reference optional peer packages a plugin consumer is not expected
  * to install. It does not soften these imports: each one below resolves to a
- * real declaration, and `scripts/link-dsh-deps.mjs` fails the install if any
- * package on this contract graph is missing or is present at a version that
- * does not match the installed DSH. A named import that cannot be resolved
- * would degrade to `any` silently, so the probe annotates what it reads.
+ * real declaration, and every package on this contract graph is pinned to one
+ * exact release in `devDependencies`, so `pnpm install` supplies the whole graph
+ * inside this project and `pnpm dsh:doctor` reports the pin against the DSH
+ * installation on this machine. A named import that cannot be resolved would
+ * degrade to `any` silently, so the probe annotates what it reads.
  *
  * Public import paths only. The DSH packages also publish `./src/*`; this
  * plugin never uses it, and `tests/compatibility/contracts.compile.ts` fails to
