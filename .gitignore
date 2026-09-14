@@ -1,0 +1,11 @@
+# Build output: `pnpm build` regenerates it from `src/`.
+lib/
+
+# Dependencies. `scripts/link-dsh-deps.mjs` junctions the installed DSH packages
+# into `node_modules/@deepseek-ai`, so this directory is machine-specific.
+node_modules/
+
+# Test and tooling artifacts.
+test-results/
+playwright-report/
+*.tsbuildinfo

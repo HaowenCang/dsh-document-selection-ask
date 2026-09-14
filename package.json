@@ -1,0 +1,67 @@
+{
+  "name": "dsh-document-selection-ask",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DSH client plugin: select content in TXT/Markdown/code/CSV/PDF/DOCX/PPTX/XLSX document previews and append a provenance-aware quote to the current conversation draft.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "main": "./lib/index.mjs",
+  "types": "./lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.mjs"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-sidebar-documentpreview"
+      ],
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "dsh:link": "node scripts/link-dsh-deps.mjs",
+    "preinstall": "node scripts/link-dsh-deps.mjs",
+    "typecheck": "tsc -p tsconfig.client.json --noEmit",
+    "test": "vitest run",
+    "test:browser": "playwright test",
+    "build": "tsdown && tsc -p tsconfig.build.json"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-client-store": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-ui-dockkit": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-ui-slots": "0.1.5-rc.1",
+    "@playwright/test": "1.63.0",
+    "@types/node": "22.20.0",
+    "@types/react": "18.3.27",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "tsdown": "0.23.0",
+    "typescript": "5.9.3",
+    "vitest": "3.2.4"
+  }
+}

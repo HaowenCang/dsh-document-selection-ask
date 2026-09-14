@@ -1,0 +1,18 @@
+# Normalize line endings for a repository that is edited on Windows and read
+# by tooling that expects POSIX text. Binary formats are excluded so Git never
+# attempts a textual conversion on them.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.pdf binary
+*.docx binary
+*.pptx binary
+*.xlsx binary
+*.zip binary
+*.wasm binary
+*.woff binary
+*.woff2 binary

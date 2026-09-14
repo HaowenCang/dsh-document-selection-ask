@@ -1,0 +1,13 @@
+# Cordis patch for `dsh-document-selection-ask`.
+#
+# One row inserts the package itself. The row is a bare plugin by package name:
+# the host half (`exports "."`) runs in the host process, and the `dsh.client`
+# declaration in `package.json` makes the browser half (`exports "./client"`,
+# served as the plugin's `client.js`) load in the web GUI and call
+# `applyClient(ctx)` on the client context.
+#
+# Task 1 registers no renderer and no slot contribution, so this patch is the
+# complete activation surface for the package as it stands.
+- insert:
+    - id: document-selection-ask
+      name: 'dsh-document-selection-ask'

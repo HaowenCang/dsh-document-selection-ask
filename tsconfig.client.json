@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["node"],
+
+    /**
+     * The DSH client contract surface is declared by the installed DSH packages
+     * themselves; `tests/compatibility/contracts.compile.ts` is the only place
+     * that states which of those declarations this plugin depends on. Library
+     * checking stays off because several DSH client packages reference optional
+     * peer packages that a plugin consumer is not expected to install.
+     */
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.d.ts", "tests/**/*.ts", "tests/**/*.tsx"]
+}

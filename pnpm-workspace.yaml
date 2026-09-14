@@ -1,0 +1,18 @@
+packages: []
+
+# esbuild drives vitest's transform pipeline; its install script is required.
+allowBuilds:
+  esbuild: true
+
+# The plugin is a single package; this file exists so pnpm resolves the project
+# root deterministically and does not walk up into an unrelated parent
+# workspace.
+#
+# `@deepseek-ai/*` DSH contracts are junctioned into `node_modules` by
+# `scripts/link-dsh-deps.mjs` (wired as the `preinstall` hook) so the contract
+# probe compiles against the DSH installation actually running on this machine.
+# That is also why `autoInstallPeers` is off: installing `@deepseek-ai/cordis`
+# from the registry would create a second Cordis program, and the DSH client
+# packages declare their contract by augmenting Cordis's `Context` interface —
+# two copies means the augmentations land on a `Context` this plugin never sees.
+autoInstallPeers: false
