@@ -20,6 +20,12 @@
   - commit: `d288661`
   - fault-tolerant disposer aggregation; the close-out of the one remediation
     required by Task 3
+- Task 3B
+  - documentation and execution-protocol change only; no production code, no tests
+  - human-facing progress notes, Task reports, deviation notes and blocker reports
+    are pinned to Simplified Chinese (`AGENTS.md`, this workflow doc, and
+    `DEEPSEEK_TASK_PROMPT.md`); identifiers, command output, error text, filenames,
+    API names, commit subjects and quoted upstream text stay untranslated
 
 ## Current gate
 
@@ -28,6 +34,7 @@
 - Task 2 selection/quote unit suites: PASS
 - Task 3 selection core suites: PASS
 - Task 3A disposer aggregation suite: PASS
+- Task 3B documentation gates: PASS (no `src/` or `tests/` change in the round)
 - Full `pnpm test`: PASS (196 tests)
 - `pnpm typecheck`: PASS
 - `pnpm build`: PASS
@@ -39,6 +46,7 @@
 ## Open source
 
 - Task 3A — PASS
+- Task 3B — PASS
 - GitHub publication — ACTIVE
 - Repository visibility — public
 - License — MIT

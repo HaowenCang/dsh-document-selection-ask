@@ -32,6 +32,23 @@ Before editing any file, read:
 
 Do not begin by scanning the entire repository indiscriminately.
 
+## Human-facing language
+
+Unless the human explicitly requests another language:
+
+- all progress updates, Task reports, implementation explanations, blocker reports,
+  review notes, and final summaries addressed to the human must use Simplified Chinese;
+- fixed technical identifiers, source code, command output, error messages, filenames,
+  API names, commit subjects, and quoted upstream text may remain in their original language;
+- do not switch the surrounding explanatory prose to Japanese, English, Traditional Chinese,
+  or another language merely because source material or a report template uses that language;
+- if a required report template contains English field names, keep the field names if useful,
+  but write explanatory values and prose in Simplified Chinese.
+
+This rule concerns human-facing communication only. It does not require translating source
+code identifiers, upstream API names, existing English repository documentation, or commit
+subjects.
+
 ## Execution discipline
 
 Execute **one Task only per round** unless the human explicitly requests a larger batch.

@@ -64,6 +64,25 @@ git rev-parse '@{u}'
 commit and a documentation commit, both must be pushed; a round whose status
 commit stays local is not synchronized.
 
+### Report language
+
+```text
+Human-facing Task report language: Simplified Chinese by default.
+```
+
+The report stage is the last step of the sequence for a reason: the rule in
+`AGENTS.md` ("Human-facing language") applies to it first, and the template's
+English field names are kept while the values and the surrounding prose are
+written in Simplified Chinese.
+
+A language drift in free-form explanatory prose should be corrected before the
+report is sent.
+
+Identifiers are not prose and are not translated: source code, command output,
+error text, filenames, API names, commit subjects and quoted upstream text stay
+in their original language. The rule fixes the language of explanation, not the
+language of artifacts.
+
 The repository is public and MIT-licensed, so no force-push, no rewriting of
 published history and no commit amendment of an already-pushed commit is
 permitted without explicit human approval. Corrections are made with new
