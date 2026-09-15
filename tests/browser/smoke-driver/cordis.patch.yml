@@ -1,0 +1,13 @@
+# Cordis patch for the test-only smoke driver.
+#
+# One row inserts the driver package. The row is a bare plugin by package name:
+# the host half (`exports "."`) runs in the host process and does nothing, and
+# the `dsh.client` declaration in `package.json` makes the browser half
+# (`exports "./client"`) load in the web GUI.
+#
+# The driver is never published and never part of the shipped plugin. It exists
+# so the Playwright real-preview smoke can ask DSH to open a fixture through the
+# public navigation service instead of synthesizing preview markup.
+- insert:
+    - id: dsa-smoke-driver
+      name: '@dsh-smoke/dsa-smoke-driver'

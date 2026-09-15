@@ -1,0 +1,38 @@
+{
+  "name": "@dsh-smoke/dsa-smoke-driver",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Test-only DSH client plugin that opens this repository's smoke fixtures through the public ctx.sidebarRight.openResource navigation service, so the real DSH document preview renders them for the Playwright smoke.",
+  "type": "module",
+  "license": "MIT",
+  "main": "./lib/index.mjs",
+  "exports": {
+    ".": {
+      "default": "./lib/index.mjs"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-client-ui-sidebar-right": "0.1.5-rc.1"
+  }
+}

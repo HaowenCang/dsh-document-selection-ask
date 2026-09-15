@@ -124,3 +124,22 @@ pnpm build
 ```
 
 不需要、也不允许预先修复用户级 DSH 安装。`pnpm dsh:doctor` 仅做检测：比对 contract pin 与本机 DSH 安装版本，不一致时以非零退出码报告；`--runtime` 要求必须找到本机安装。仓库不含任何机器绝对路径：全新 clone 只需 `pnpm install` 即可通过上述 gate。
+
+## 真实 DSH 预览 smoke（开发者用，非用户功能）
+
+`tests/browser/ask-flow.spec.ts` 在一个运行中的 DSH 里注入 preview body；它验证插件自身行为，但不证明真实文档预览会产出 adapter 读取的 DOM。`tests/browser/real-dsh-textpreview.spec.ts` 补齐这一点：该 spec 不创建任何 preview 节点，它点击 test-only companion plugin 提供的控件，由该控件调用公开的 `ctx.sidebarRight.openResource(...)`，真实 `@deepseek-ai/dsh-client-ui-sidebar-documentpreview` 随即自行 mount TXT / code / Markdown fixture，Ask 全流程都在这份真实预览上观察。两类测试必须分开报告，只有后者是 Task 5B 的 gate。
+
+该 companion driver 位于 `tests/browser/smoke-driver/`，是独立、最小、private、test-only 的 DSH client plugin：它不 import 被测插件，不创建 `data-textpreview-*` 节点，除 `ctx.sidebarRight.openResource` 外不做任何导航。它不进入主包 `files` 发布集合，也不作为 npm/runtime 依赖发布；用户无需安装它。
+
+复现步骤（只操作隔离 profile `dsa-smoke`，不触碰任何用户 profile）：
+
+```bash
+pnpm install
+pnpm build                 # 主插件产物（不含 driver）
+pnpm smoke:driver          # 构建 test-only driver（tests/browser/smoke-driver/lib）
+pnpm smoke:profile prepare # 生成 fixture + 幂等维护 dsa-smoke 的 link/bundle 行
+dsh --profile dsa-smoke --port 50111 --no-open
+DSH_SMOKE_URL='http://127.0.0.1:50111/?token=…' pnpm test:browser
+```
+
+`pnpm smoke:profile` 支持 `inspect` / `prepare` / `validate` / `cleanup`，固定 profile 名 `dsa-smoke`，写入前会拒绝其它 profile；重复执行不产生 duplicate loader entry。未设置 `DSH_SMOKE_URL` 时真实预览 spec 自动 skip，`pnpm test:browser` 在没有 DSH 的机器上仍可用。

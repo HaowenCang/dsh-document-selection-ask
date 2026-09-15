@@ -262,6 +262,22 @@ describe('reproducibility guard', () => {
     }
   })
 
+  it('leaves the smoke profile work to a script that cannot touch a user profile', () => {
+    // Task 5B brought the isolated `dsa-smoke` profile up through a project
+    // script rather than by hand. Two properties keep that safe, and both are
+    // cheap to lose in a later edit: the script refuses any profile but its own,
+    // and the repository never writes to a profile path directly — the DSH home
+    // is resolved at run time from `DSH_HOME`/`homedir()`, so no checkout carries
+    // another machine's layout.
+    const script = readFileSync(join(repoRoot, 'scripts', 'dsh-smoke-profile.mjs'), 'utf8')
+    expect(script).toContain("const PROFILE_NAME = 'dsa-smoke'")
+    expect(script).toContain('refusing to act on profile')
+    expect(script).toContain("process.env.DSH_HOME ?? join(homedir(), '.dsh')")
+    for (const { label, pattern } of MACHINE_PATH_MARKERS) {
+      expect(script, `the smoke profile script contains a ${label}`).not.toMatch(pattern)
+    }
+  })
+
   it('publishes a doctor script in place of the removed repair hook', () => {
     const manifest: { scripts?: Record<string, string> } = JSON.parse(
       readFileSync(join(repoRoot, 'package.json'), 'utf8'),

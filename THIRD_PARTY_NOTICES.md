@@ -27,6 +27,22 @@ plugin and are **not** shipped in the published package, which is why the
 | --- | --- | --- | --- |
 | `jsdom` | 30.0.1 | MIT | Test-only DOM implementation. The client specs run under the Vitest `jsdom` environment so that selection ownership, `Range` behaviour and the overlay's render lifecycle are exercised against a real `Selection`/`Range` pair and a real DOM rather than against hand-written stand-ins. No `jsdom` type or value is referenced by `src/`. |
 | `@types/react-dom` | 18.3.7 | MIT | Type declarations for React DOM, required because the client specs mount components with `createRoot` (Task 5). Types only; nothing from this package reaches the bundle. |
+| `@deepseek-ai/dsh-client-ui-sidebar-right` | 0.1.5-rc.1 | MIT | Contract-only pin for the real-DSH smoke added in Task 5B. The compile probe `tests/compatibility/smoke-driver.contracts.compile.ts` reads the `Context.sidebarRight` augmentation and `openResource` from this package's public `./client` declaration, so the one navigation call the test-only driver makes is checked against the published contract. No value or type from it reaches the plugin's bundle, and it is not a dependency of the shipped package. |
+
+Tasks 5B introduced exactly one dependency, recorded with the required fields:
+
+```text
+package:  @deepseek-ai/dsh-client-ui-sidebar-right
+version:  0.1.5-rc.1
+license:  MIT
+runtime/test-only: development/test-only
+```
+
+The pin matches the primary runtime release family (`0.1.5-rc.1`), which is the
+same release every other DSH contract package in `devDependencies` carries; the
+license was verified against the published registry metadata (`npm view
+@deepseek-ai/dsh-client-ui-sidebar-right@0.1.5-rc.1 license` reports `MIT`) and
+against the installed package's own `package.json`.
 
 jsdom — MIT. Development/test-only dependency; not included in the runtime plugin
 bundle.
