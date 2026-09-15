@@ -88,6 +88,53 @@
   - the real-TextPreview browser smoke remains unachieved; the reason is recorded
     under `Next` rather than worked around
 
+- Task 5B
+  - commit: `f0b0669`
+  - status: `REAL DSH TEXTPREVIEW SMOKE PASS / PRODUCTION DEFECT RECORDED`
+  - the real preview is now produced by DSH itself. A test-only companion
+    plugin (`tests/browser/smoke-driver/`) occupies the session-scoped
+    `conversation.input.overlay` slot to obtain the current `sessionId`, and its
+    one navigation call is the public
+    `ctx.sidebarRight.openResource(address, { kind: 'text' })`. It imports
+    nothing from the plugin under test, creates no `data-textpreview-*` node, and
+    queries no DOM — asserted over its sources by
+    `tests/unit/smoke-profile.spec.ts`
+  - `kind` is named because the ranking does not reach the product preview on
+    this machine's profiles: `dsh-better-sidebar` registers a file viewer at
+    `priority: 'extension'` with `patterns: ['dsh-resource://file/**']`, which
+    outranks the preview's own `fallback` band, so a bare `openResource` lands in
+    that plugin's editor and no `data-textpreview-*` node exists at all
+  - the driver is a separate private package, built by
+    `tsdown.smoke-driver.config.ts`; it is not in the shipping `files` list, is
+    not a dependency of the shipping package, and `dsa-smoke-driver`,
+    `data-dsa-smoke` and `task5b-smoke` appear in neither `lib/client.js` nor
+    `lib/index.mjs`
+  - `scripts/dsh-smoke-profile.mjs` makes the `dsa-smoke` profile reproducible:
+    `inspect` / `prepare` / `validate` / `cleanup`, idempotent, and it refuses
+    any profile but `dsa-smoke`. It also carries the duplicate-loader-entry guard
+    — each of this repository's bundles must insert exactly one distinct entry id
+    that the profile's own patch layer does not re-insert. `prepare` twice
+    reports `rows=unchanged` and `validation = clean`, and the profile boots
+    twice
+  - the official route was tried first and does not work for this profile:
+    `dsh plugin --profile dsa-smoke add <dir>` forwards to pnpm, which refuses
+    with `ERR_PNPM_UNEXPECTED_VIRTUAL_STORE` because the profile's `node_modules`
+    is a junction onto the `web` profile's installed tree
+  - `@deepseek-ai/dsh-client-ui-sidebar-right@0.1.5-rc.1` is pinned as an exact
+    `devDependency` (MIT, development/test-only) and probed at compile time by
+    `tests/compatibility/smoke-driver.contracts.compile.ts`
+  - **production defect recorded, not fixed.** With the right column expanded,
+    the Ask button is present and on screen but cannot be clicked: the right
+    column's stacking context paints over the composer's floating overlay, whose
+    `z-index: 20` is trapped inside `wSkVaW_composerStack` (`z-index: 1`). At both
+    1600×1000 and 2560×1300 the preview column's left edge reaches past the
+    button's centre, `document.elementFromPoint` there returns
+    `div.dhJKeW_textDocument`, and a real pointer click is refused. Collapsing
+    the column makes the button clickable but unmounts the preview and clears the
+    selection, so no plugin-local route reaches both. The smoke asserts the
+    occlusion directly and triggers the button programmatically for the rest of
+    the flow. Fixing it is a production change and belongs to its own round
+
 ## Current gate
 
 - Task 1 public contracts: PASS
@@ -109,7 +156,7 @@
 - Task 5A capture-rejection domain guard: PASS (3 unit cases; the same split is
   asserted at compile time by an exhaustive `switch` whose `default` branch
   assigns to `never`, so a ninth `SelectionRejectReason` fails `pnpm typecheck`)
-- Full `pnpm test`: PASS (386 tests)
+- Full `pnpm test`: PASS (393 tests)
 - `pnpm typecheck`: PASS
 - `pnpm build`: PASS
 - `git diff --check`: PASS
@@ -118,10 +165,18 @@
 - rc.1 viewport-resize regression (Playwright, live instance): PASS, and verified
   to discriminate — the case fails against the pre-fix listener with the button
   left at its old `y`
-- rc.1 real DSH TextPreview smoke (TXT / code / Markdown): BLOCKED, no reachable
-  route to a shell-opened document in a headless instance
+- rc.1 real DSH TextPreview smoke (Playwright, live instance): PASS (6 cases) —
+  TXT line 2 with exact provenance, code rows 2–3 with exact provenance, Markdown
+  body with file-only provenance, Markdown code fence file-only through a real
+  Shiki block, and the occlusion defect recorded as a live assertion
+- rc.1 real DSH TextPreview smoke against a second profile boot: PASS (6 cases)
+- smoke-profile duplicate-loader-entry regression: PASS (`prepare` twice reports
+  `rows=unchanged`; `validate` clean; two consecutive boots succeed)
+- production-bundle isolation: PASS (no smoke marker in `lib/client.js`,
+  `lib/index.mjs`, or the published `files` list)
 - rc.2 compile-contract probe: PASS
 - rc.2 runtime smoke: NOT TESTED
+- production defect: Ask overlay occluded by the expanded right column — OPEN
 
 ## Open source
 
@@ -130,6 +185,9 @@
 - Task 4 — PASS
 - Task 5 — PASS
 - Task 5A — LOCAL CODE PASS / REAL DSH TEXTPREVIEW SMOKE BLOCKED
+- Task 5B — REAL DSH TEXTPREVIEW SMOKE PASS / PRODUCTION DEFECT RECORDED
+  (the Ask overlay is occluded by the expanded right column; no `src/` change was
+  made in this round)
 - GitHub publication — ACTIVE
 - Repository visibility — public
 - License — MIT
@@ -144,7 +202,55 @@ metadata.
 
 ## Next
 
-Task 6 — shared OOXML ZIP preflight.
+Fixing the recorded production defect — the Ask overlay cannot be clicked while a
+document preview is open — before Task 6. Task 6 is not authorized in this round.
+
+The candidate fixes, in order of how much of the plugin they disturb:
+
+1. raise the composer's floating overlay above the right column. That requires a
+   stacking context the plugin does not own: the overlay's own `z-index: 20` is
+   trapped inside `wSkVaW_composerStack` (`z-index: 1`), so the change would be a
+   DSH-side one;
+2. move the Ask surface out of `conversation.input.overlay` into a slot that is a
+   sibling of both columns (`shell.overlay` is one, at `z-index: 20` on
+   `[data-shell-overlay]`). This is a plugin-local change, but it costs the
+   composer-descendant relationship the focus path currently relies on:
+   `focus-composer.ts` searches for `[data-composer-card]` from the overlay's own
+   anchor, so the search would have to start from the document instead;
+3. clamp the button to the centre column rather than the viewport. This is
+   cosmetic — the button would stop being occluded without the column moving —
+   and it would leave the same defect for any other floating surface.
+
+Option 2 is the one that keeps the fix inside this repository, and it needs its own
+round with its own failing browser case.
+
+Task 5B notes carried forward:
+
+- the real preview is reachable now, and the route is worth recording because it
+  took three attempts to find. `ctx.sidebarRight.openResource` needs the right
+  column to be mounted, and it is reachable only from inside a client plugin. A
+  test-only companion plugin is therefore the mechanism, not a convenience:
+  `tests/browser/smoke-driver/` takes the session id from the session-scoped
+  `conversation.input.overlay` slot and calls the service once per fixture;
+- the fixture address is session-scoped
+  (`dsh-resource://file/session/<id>/<path>`) because the overlay refuses a
+  selection whose address names another session; an `absolute` address would
+  render and then be silently unquotable. `fixtures.ts` builds the address
+  directly rather than importing DSH's own `sessionFileAddress`, because that
+  helper lives in `@deepseek-ai/dsh-util-workspace-path`, a host-side package a
+  browser bundle cannot require;
+- a Shiki row (`.line`) is block-level with a box spanning the whole code block,
+  so its leading edge is outside its own glyphs and a drag anchored there snaps to
+  the nearest character — on the first attempt, to the following line. The smoke
+  anchors inside the row's first token and extends with a real `Shift`+click.
+  This is a property of the renderer, not of the test, and any future
+  selection-driving code should assume it;
+- the composer's published `draft` is the clipboard projection of its Lexical
+  document: the appended block's newlines are not part of the string. Assertions
+  therefore match the block part by part, with the requirement that nothing
+  follows the last part, rather than comparing lines;
+- `pnpm build` and `pnpm smoke:driver` are separate: the driver is a second
+  package and is never part of the shipping bundle.
 
 Task 5 notes carried forward:
 
@@ -184,13 +290,15 @@ Task 5 notes carried forward:
   skipped without it, so `pnpm test:browser` stays usable on a machine with no
   DSH installed.
 
-Task 5A notes carried forward — why the real-TextPreview smoke is blocked:
+Task 5A notes carried forward — the investigation that Task 5B closed:
 
 - the right column is a slot whose **occupant opens itself**. `ctx.layout`
   publishes `openRightbar`/`closeRightbar`, and only the right Sidebar calls
   them, on opening a resource; nothing else writes that state. The document
   preview DOM therefore cannot be made to exist by any external step — it is a
-  consequence of a navigation the shell itself has to perform;
+  consequence of a navigation the shell itself has to perform. Task 5B's answer is
+  to make that navigation happen from inside a client plugin, which is the only
+  place the service is reachable;
 - and in a headless instance with a fresh session, every route to that navigation
   was closed, each one verified rather than assumed:
   - the Files tab exists and is registered, but its tab strip
