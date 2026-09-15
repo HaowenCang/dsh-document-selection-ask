@@ -27,6 +27,21 @@
     are pinned to Simplified Chinese (`AGENTS.md`, this workflow doc, and
     `DEEPSEEK_TASK_PROMPT.md`); identifiers, command output, error text, filenames,
     API names, commit subjects and quoted upstream text stay untranslated
+- Task 4
+  - commit: `6258d86df30cc3c4810cdb58258a3cb82c01fda8`
+  - `createDshTextAdapter()` reads selections from the builtin DSH text,
+    Markdown, code and CSV previews and produces a `SelectionSnapshot`
+  - the builtin renderers are reused: no `ctx.documentPreviews.register` call is
+    made for text, Markdown, code or CSV
+  - ownership is resolved from the selection's own anchor and focus nodes, so a
+    keyboard selection with no pointer target is handled, and it stops at
+    `[data-textpreview-body]`, so preview chrome is never quoted as content
+  - exact line provenance only where the renderer proves it: the plain
+    renderer's `data-textpreview-line` rows and the code renderer's Shiki rows
+    inside their own `[data-code-block-content]`; rendered Markdown stays
+    file-only, including its highlighted code fences
+  - registered into a `SelectionAdapterRegistry` owned by `applyClient` through
+    `ctx.effect`; no module-global registry
 
 ## Current gate
 
@@ -36,7 +51,9 @@
 - Task 3 selection core suites: PASS
 - Task 3A disposer aggregation suite: PASS
 - Task 3B documentation gates: PASS (no `src/` or `tests/` change in the round)
-- Full `pnpm test`: PASS (196 tests)
+- Task 4 DSH builtin text adapter suite: PASS (51 client cases)
+- Task 4 provenance helper suite: PASS (32 unit cases)
+- Full `pnpm test`: PASS (279 tests)
 - `pnpm typecheck`: PASS
 - `pnpm build`: PASS
 - `git diff --check`: PASS
@@ -48,6 +65,7 @@
 
 - Task 3A — PASS
 - Task 3B — PASS
+- Task 4 — PASS
 - GitHub publication — ACTIVE
 - Repository visibility — public
 - License — MIT
@@ -62,7 +80,24 @@ metadata.
 
 ## Next
 
-Task 4 — DSH builtin text/Markdown/code/CSV selection adapter.
+Task 5 — composer bridge and selection Ask overlay.
+
+Task 4 notes carried forward:
+
+- the adapter is registered but nothing dispatches to it yet: browser event
+  wiring (`selectionchange`, `pointerup`, `keyup`, overlay positioning) is
+  Task 5, and the transient snapshot store is `createSelectionKernel`;
+- the rc.1 DOM contract was verified against the installed
+  `@deepseek-ai/dsh-client-ui-sidebar-documentpreview@0.1.5-rc.1` bundle rather
+  than against the design documents. The three renderer identities live in
+  `src/client/adapters/dsh-text/preview-dom.ts` with that verification recorded,
+  because the package publishes its compiled sources only behind `./src/*`;
+- `data-document-preview` carries the renderer identity, not the file format.
+  Markdown files in the plain viewer keep `documentKind: 'markdown'` and may use
+  exact lines, while rendered Markdown never does — a code fence inside it is a
+  Shiki block with the same shape as a real code document;
+- real selection geometry is still a Playwright concern; the client specs assert
+  the copying contract only.
 
 Task 3A notes carried forward:
 
