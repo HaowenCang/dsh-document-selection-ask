@@ -30,25 +30,22 @@
  * DSH_SMOKE_URL='http://127.0.0.1:50111/?token=鈥? pnpm test:browser
  * ```
  *
- * ## The known defect this suite records
+ * ## The defect this suite recorded, and how Task 5C closed it
  *
- * `records the right column occluding the Ask button while it is open` is not a
- * smoke assertion about the plugin's behaviour; it is a live defect report. With
- * the right column expanded, the Ask button is present, styled and on screen, but
- * `document.elementFromPoint` at its own centre returns an element inside the
- * document preview, and a real pointer click is refused by hit testing. The
- * composer's floating overlay lives in a lower stacking context than the right
- * column, so no `z-index` on the plugin's own elements can raise it. The focus
- * path is why the overlay cannot simply move: it searches for
- * `[data-composer-card]` from its own anchor, so the button has to stay inside
- * the composer card.
+ * Task 5B recorded a live defect here. With the right column expanded the Ask
+ * button was present, styled and on screen, but `document.elementFromPoint` at
+ * its own centre returned an element inside the document preview and a real
+ * pointer click was refused: the composer's floating overlay lived in a lower
+ * stacking context than the right column, so no `z-index` on the plugin's own
+ * elements could raise it.
  *
- * The consequence for this suite is that the ask assertions trigger the button
- * **programmatically** rather than through a pointer click, so the rest of the
- * flow still runs end to end against the real preview. That substitution is a
- * workaround for a diagnosed defect, not a licence to stop checking it: the
- * occlusion case asserts the defect directly, so a future fix turns that case red
- * and the substitution can then be deleted.
+ * The consequence for Task 5B was that the ask assertions triggered the button
+ * **programmatically** rather than through a pointer click. Task 5C moved the
+ * visible surface to `shell.overlay`, the frame's own root-scoped floating layer,
+ * and that workaround is deleted here: every case below presses the button with an
+ * ordinary Playwright click, which runs the actionability check and performs a
+ * real hit test. The defect case still exists, inverted, as the regression guard —
+ * see `keeps the Ask button reachable while the right column is expanded`.
  */
 
 import { readFileSync } from 'node:fs'
@@ -248,6 +245,44 @@ async function selectRows(
 }
 
 /**
+ * Select a run of rows and require the gesture to have taken exactly them.
+ *
+ * The retry is not a workaround for the plugin. The document column animates in
+ * when the shell reveals it, and a drag anchored while it is still moving lands
+ * on a different glyph than the one it aimed at — the probes recorded a
+ * one-character selection where the row's whole text was intended. A single
+ * `boundingBox()` read cannot tell a settled box from a moving one, so the case
+ * retries the same real gesture, with a longer settle each time, until the
+ * browser reports the run. Each attempt re-reads the box, and the final attempt's
+ * answer is what the caller sees, so a genuine failure still fails.
+ *
+ * Nothing here selects programmatically: every attempt is a real press, a real
+ * held Shift key and a real click.
+ *
+ * @param page - the browser page.
+ * @param rows - the rows, in document order.
+ * @param fromIndex - the first row to include.
+ * @param toIndex - the last row to include.
+ * @param expected - the text the gesture must have selected.
+ * @returns the selected text as the browser reports it.
+ */
+async function selectExpectedRows(
+  page: Page,
+  rows: Locator,
+  fromIndex: number,
+  toIndex: number,
+  expected: string,
+): Promise<string> {
+  let selected = ''
+  for (const settle of [0, 800, 1600]) {
+    if (settle > 0) await page.waitForTimeout(settle)
+    selected = await selectRows(page, rows, fromIndex, toIndex)
+    if (selected === expected) return selected
+  }
+  return selected
+}
+
+/**
  * One part of an appended block, as this suite asserts it.
  *
  * `exact` is for every part the contract fixes to the character: the provenance
@@ -323,24 +358,23 @@ interface AskOutcome {
 }
 
 /**
- * Press the Ask button and collect what the composer did.
+ * Press the Ask button with a real pointer click and collect what the composer
+ * did.
  *
- * The press is dispatched programmatically, and the module comment states why:
- * the button is occluded by the preview column, so the browser's own hit testing
- * refuses a pointer click. Dispatching at the element still runs the component's
- * real `onClick` 鈥?the same handler, the same bridge, the same `setDraft` call 鈥? * and every other part of the gesture (the selection, the geometry, the focus
- * work the handler performs) stays real. The occlusion is asserted separately.
+ * The click is an ordinary Playwright `locator.click()`, which runs the
+ * actionability check and performs a real hit test at the element's centre. It is
+ * the point of Task 5C: while the button lived inside the composer, the expanded
+ * right column painted over it and the browser refused this exact call. `force`,
+ * `dispatchEvent` and an in-page `.click()` are deliberately absent, so a
+ * regression that puts the button back under the column fails here rather than
+ * passing on a bypass.
  *
  * @param page - the browser page.
  * @returns the outcome.
  */
 async function pressAsk(page: Page): Promise<AskOutcome> {
   const turnsBefore = await page.locator('[data-chat-turn]').count()
-  await page.evaluate((selector) => {
-    const button = document.querySelector(selector)
-    if (button === null) throw new Error('the Ask button is not present')
-    button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-  }, ASK_BUTTON)
+  await page.locator(ASK_BUTTON).first().click({ timeout: 8000 })
   await page.waitForTimeout(1500)
 
   const draft = await readDraft(page)
@@ -398,7 +432,7 @@ test.describe('real DSH 0.1.5-rc.1 TextPreview smoke', () => {
     await openFixture(page, 'txt')
 
     await typeDraft(page, EXISTING_DRAFT)
-    const selected = await selectRows(page, page.locator(PREVIEW_LINE), 1, 1)
+    const selected = await selectExpectedRows(page, page.locator(PREVIEW_LINE), 1, 1, 'beta')
     expect(selected).toBe('beta')
 
     await expect(page.locator(ASK_BUTTON).first()).toBeVisible({ timeout: 15_000 })
@@ -523,11 +557,24 @@ test.describe('real DSH 0.1.5-rc.1 TextPreview smoke', () => {
     expect(outcome.draft).not.toMatch(/\u7b2c \d+ \u884c/)
   })
 
-  test('records the right column occluding the Ask button while it is open', async ({ page }) => {
+  test('keeps the Ask button reachable while the right column is expanded', async ({ page }) => {
+    // **Old behaviour failed here.** Before Task 5C this case asserted the
+    // opposite: that the right column occluded the Ask button. The button was
+    // rendered inside `conversation.input.overlay`, whose `z-index: 20` was
+    // trapped in `wSkVaW_composerStack` (`z-index: 1`), so the expanded column, a
+    // later sibling in the same stacking context, painted over it. At both
+    // 1600x1000 and 2560x1300 `document.elementFromPoint` at the button's own
+    // centre returned a node inside the document preview, and a real pointer click
+    // was refused.
+    //
+    // The surface now occupies `shell.overlay`, the frame's own root-scoped
+    // floating layer, which is a sibling of all three columns. This case asserts
+    // the defect is gone, and it is the regression guard for the whole round: a
+    // future change that puts the button back inside the composer turns it red.
     await openShell(page)
     await openFixture(page, 'txt')
 
-    const selected = await selectRows(page, page.locator(PREVIEW_LINE), 1, 1)
+    const selected = await selectExpectedRows(page, page.locator(PREVIEW_LINE), 1, 1, 'beta')
     expect(selected).toBe('beta')
     await expect(page.locator(ASK_BUTTON).first()).toBeVisible({ timeout: 15_000 })
 
@@ -539,42 +586,97 @@ test.describe('real DSH 0.1.5-rc.1 TextPreview smoke', () => {
         const box = button.getBoundingClientRect()
         const top = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)
         const columnBox = column?.getBoundingClientRect() ?? null
-        const wrapper = button.parentElement ?? button
         return {
           button: { x: box.x, y: box.y, width: box.width, height: box.height },
           column: columnBox === null ? null : { x: columnBox.x, width: columnBox.width },
+          hit: top === null ? null : `${top.tagName}.${top.className}`,
           buttonIsTopmost: top === button || button.contains(top),
-          wrapperZIndex: getComputedStyle(wrapper).zIndex,
-          wrapperPosition: getComputedStyle(wrapper).position,
+          inComposer: button.closest('[data-composer-card]') !== null,
+          inShellOverlay: button.closest('[data-shell-overlay]') !== null,
+          overlaysColumn:
+            columnBox !== null && box.x < columnBox.x + columnBox.width && box.x + box.width > columnBox.x,
         }
       },
       [ASK_BUTTON, RIGHT_COLUMN] as const,
     )
 
     expect(geometry, 'the Ask button must exist for this case to mean anything').not.toBeNull()
-    expect(geometry?.wrapperPosition).toBe('fixed')
-    expect(geometry?.wrapperZIndex).toBe('20')
-
-    // The defect, stated as the observable fact: the button is laid out on
-    // screen and the column still owns the pixel at its centre.
+    // The column really is open and really does reach the button, so the hit test
+    // below is a statement about painting rather than about the column being
+    // somewhere else.
     expect(geometry?.column).not.toBeNull()
-    const overlaps =
-      geometry !== null && geometry.column !== null
-        ? geometry.button.x + geometry.button.width > geometry.column.x
-        : false
-    expect(overlaps, 'the recorded defect presupposes the column reaching the button').toBe(true)
-    expect(geometry?.buttonIsTopmost).toBe(false)
+    expect(geometry?.column?.width ?? 0).toBeGreaterThan(0)
+    expect(geometry?.overlaysColumn, 'the recorded defect presupposed the column reaching the button').toBe(true)
 
-    // And the same fact as the browser enforces it: a real pointer click is
-    // refused. `force` is not used 鈥?the refusal IS the observation.
-    const clickRefused = await page
-      .locator(ASK_BUTTON)
-      .first()
-      .click({ timeout: 4000 })
-      .then(
-        () => false,
-        () => true,
-      )
-    expect(clickRefused, 'a real pointer click currently cannot reach the button').toBe(true)
+    // The fix, stated as the observable fact: the button is no longer inside the
+    // composer, it is inside the frame's shell overlay, and the pixel at its own
+    // centre is the button.
+    expect(geometry?.inComposer).toBe(false)
+    expect(geometry?.inShellOverlay).toBe(true)
+    expect(geometry?.buttonIsTopmost, `elementFromPoint reached ${String(geometry?.hit)}`).toBe(true)
+
+    // And the same fact as the browser enforces it: an ordinary Playwright click
+    // passes its actionability check and lands. `force`, `dispatchEvent` and an
+    // in-page `.click()` are deliberately absent; this call is the assertion.
+    await page.locator(ASK_BUTTON).first().click({ timeout: 8000 })
+    await page.waitForTimeout(1500)
+
+    const draft = await readDraft(page)
+    expect(draft).toContain('> beta')
+    expect(draft).toContain(QUESTION_SUFFIX)
+    expect(await page.locator(ASK_BUTTON).count()).toBe(0)
   })
+
+  // The recorded defect was viewport-dependent in the sense that mattered: it was
+  // present at every width tried, because the column always reached the button's
+  // centre. These two cases assert the fix at the two widths the round bit on, and
+  // each runs the whole hit test plus a real click at its own size.
+  for (const viewport of [
+    { width: 1600, height: 1000 },
+    { width: 2560, height: 1300 },
+  ]) {
+    test(`keeps the Ask button reachable at ${viewport.width}x${viewport.height}`, async ({ page }) => {
+      await page.setViewportSize(viewport)
+      await openShell(page)
+      await openFixture(page, 'txt')
+      // The preview column keeps settling for a moment after the body appears —
+      // it animates in — and a drag anchored while it is still moving lands
+      // mid-glyph. The wait is for the column, not for the renderer.
+      await page.waitForTimeout(2000)
+
+      const selected = await selectExpectedRows(page, page.locator(PREVIEW_LINE), 1, 1, 'beta')
+      expect(selected).toBe('beta')
+      await expect(page.locator(ASK_BUTTON).first()).toBeVisible({ timeout: 15_000 })
+
+      const geometry = await page.evaluate(
+        ([buttonSelector, columnSelector]: readonly [string, string]) => {
+          const button = document.querySelector(buttonSelector)
+          const column = document.querySelector(columnSelector)
+          if (button === null) return null
+          const box = button.getBoundingClientRect()
+          const top = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)
+          const columnBox = column?.getBoundingClientRect() ?? null
+          return {
+            hit: top === null ? null : `${top.tagName}.${top.className}`,
+            buttonIsTopmost: top === button || button.contains(top),
+            columnWidth: columnBox?.width ?? 0,
+            columnReachesButton:
+              columnBox !== null && box.x + box.width > columnBox.x && box.x < columnBox.right,
+            viewport: { width: window.innerWidth, height: window.innerHeight },
+          }
+        },
+        [ASK_BUTTON, RIGHT_COLUMN] as const,
+      )
+
+      expect(geometry?.viewport).toEqual(viewport)
+      expect(geometry?.columnWidth ?? 0).toBeGreaterThan(0)
+      expect(geometry?.columnReachesButton, 'the column must really reach the button').toBe(true)
+      expect(geometry?.buttonIsTopmost, `elementFromPoint reached ${String(geometry?.hit)}`).toBe(true)
+
+      // A real click at this size, actionability check included.
+      await page.locator(ASK_BUTTON).first().click({ timeout: 8000 })
+      await page.waitForTimeout(1500)
+      expect(await readDraft(page)).toContain('> beta')
+    })
+  }
 })

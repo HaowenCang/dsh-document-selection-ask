@@ -56,8 +56,10 @@ export interface OverlayPosition {
 /**
  * Compute the overlay's fixed position.
  *
- * @param origin - the overlay's own root element, used to find the composer card
- * for the no-geometry fallback.
+ * @param origin - an element inside the composer card the selection belongs to;
+ * since Task 5C this is the session registrar's own DOM anchor, because the
+ * visible surface lives in `shell.overlay` and is no longer inside the composer
+ * it writes to. `null` is legal and means only the geometry path is available.
  * @param rects - the snapshot's frozen viewport rectangles.
  * @param size - the overlay's own measured size.
  * @param viewport - the current viewport size.

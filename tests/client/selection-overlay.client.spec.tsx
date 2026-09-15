@@ -1,25 +1,37 @@
 // @vitest-environment jsdom
 /**
- * The Ask overlay.
+ * The Ask surface.
  *
- * This spec renders the real component into a real composer card in jsdom and
- * drives it the way the browser does, because the behaviours under test live in
- * the render lifecycle: a store subscription that must re-render, a layout
- * effect that measures, and a click handler that must read the state its own
- * render committed.
+ * This spec renders the real components into a real jsdom document and drives
+ * them the way the browser does, because the behaviours under test live in the
+ * render lifecycle: a store subscription that must re-render, a layout effect that
+ * measures, and a click handler that must re-resolve the session it writes to.
+ *
+ * **What Task 5C changed about this fixture, and why it is not a stub.**
+ * The Ask button and the composer target now live in two different slots:
+ * `SelectionAskOverlay` occupies `shell.overlay` (root scope, a sibling of the
+ * columns) and `ComposerTargetRegistrar` occupies `conversation.input.overlay`
+ * (session scope, inside the composer card). The fixture mounts **both real
+ * components** into those two positions — the registrar inside the composer card,
+ * the surface in a layer that is deliberately *not* an ancestor of the card — so
+ * the target-table handoff, the three-way gate and the anchor-scoped focus search
+ * are all exercised rather than simulated. A fixture that rendered the button
+ * inside the card would still pass while the production wiring was broken.
  *
  * What jsdom can and cannot prove is stated per case. It cannot prove that
- * `preventDefault` on `pointerdown` preserves a browser selection 閳?it
- * implements no focus-driven selection collapse 閳?so those cases assert the
- * weaker properties that are available here (the default is cancelled, the
- * snapshot survives the press, focus lands on the composer) and the browser
- * suite asserts the real one.
+ * `preventDefault` on `pointerdown` preserves a browser selection — it implements
+ * no focus-driven selection collapse — so those cases assert the weaker properties
+ * available here (the default is cancelled, the snapshot survives the press, focus
+ * lands on the composer) and the browser suite asserts the real one. It also
+ * implements no layout, so the button's real rectangles, and whether the document
+ * column paints over it, are Playwright's business.
  *
- * The kernel, the registry and the feedback source are the production objects.
- * That matters for the questions this spec answers: whether the overlay and the
- * kernel agree about when a snapshot is live, and whether a published rejection
- * reaches the notice. Hand-written stand-ins could agree with the overlay while
- * disagreeing with the kernel.
+ * The kernel, the registry, the feedback source and the target table are the
+ * production objects. That matters for the questions this spec answers: whether
+ * the surface and the kernel agree about when a snapshot is live, whether the
+ * composer half actually publishes a usable target, and whether a published
+ * rejection reaches the notice. Hand-written stand-ins could agree with the
+ * surface while disagreeing with the registrar.
  *
  * The one piece of machinery that is simulated is the adapter: a fixed adapter
  * with a scripted next outcome stands in for scoped DOM capture, which its own
@@ -27,9 +39,15 @@
  * produced nothing" without inventing a second DOM.
  */
 
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
+import type { Root } from 'react-dom/client'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { SELECTION_QUESTION_SUFFIX, appendSelectionToDraft } from '../../src/client/quote/format-selection.js'
+import { createComposerTargetRegistry } from '../../src/client/dsh/composer-target-registry.js'
+import type { ComposerTargetRegistry } from '../../src/client/dsh/composer-target-registry.js'
 import { createSelectionFeedback } from '../../src/client/selection/feedback.js'
 import type { SelectionFeedbackSource } from '../../src/client/selection/feedback.js'
 import { createSelectionKernel } from '../../src/client/selection/kernel.js'
@@ -37,6 +55,7 @@ import type { SelectionKernel } from '../../src/client/selection/kernel.js'
 import { SelectionAdapterRegistry } from '../../src/client/selection/registry.js'
 import type { SelectionAdapter, SelectionCapture, SelectionContext } from '../../src/client/selection/registry.js'
 import type { SelectionRejectReason, SelectionSnapshot } from '../../src/client/selection/types.js'
+import { ComposerTargetRegistrar } from '../../src/client/ui/ComposerTargetRegistrar.js'
 import { SelectionAskOverlay } from '../../src/client/ui/SelectionAskOverlay.js'
 import type { SelectionAskOverlayProps } from '../../src/client/ui/SelectionAskOverlay.js'
 import { installOverlayStyles } from '../../src/client/ui/styles.js'
@@ -67,6 +86,9 @@ const BUTTON = '[data-dsa-selection-ask-button]'
 /** Selector for the rejection notice. */
 const TOAST = '[data-dsa-selection-error]'
 
+/** Selector for the registrar's inert anchor. */
+const ANCHOR = '[data-dsa-composer-target-anchor]'
+
 /**
  * Build a text selection snapshot for one session.
  * @param overrides - fields this case is about.
@@ -86,10 +108,59 @@ function selection(overrides: Partial<SelectionSnapshot> = {}): SelectionSnapsho
   }
 }
 
-/** One mounted overlay and everything it is wired to. */
+/** The shell's active-session store, as `useSessions` presents it. */
+interface ActiveSessionStore {
+  /**
+   * Read the projected active session.
+   * @returns the session id the shell has selected.
+   */
+  current(): string | undefined
+  /** Change the selection and notify the surface. */
+  set(sessionId: string | undefined): void
+  /** Install a listener. */
+  subscribe(listener: () => void): () => void
+}
+
+/**
+ * Build the one store the surface's `useSessions` projection reads.
+ *
+ * It is a plain source rather than a React context because that is what the shell
+ * hands the slot: `useSessions` is a `GlobalStandardProps` member the renderer
+ * binds to the session list store and passes to every root-scope entry. The
+ * fixture reproduces the projection (`state.current`), not the store.
+ *
+ * @param initial - the session the shell starts with.
+ * @returns the store.
+ */
+function activeSessions(initial: string | undefined): ActiveSessionStore {
+  let current = initial
+  const listeners = new Set<() => void>()
+  return {
+    current: () => current,
+    set(sessionId: string | undefined): void {
+      current = sessionId
+      for (const listener of [...listeners]) listener()
+    },
+    subscribe(listener: () => void): () => void {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+  }
+}
+
+/** One mounted surface and everything it is wired to. */
 interface OverlayFixture {
   readonly kernel: SelectionKernel
   readonly feedback: SelectionFeedbackSource
+  readonly composerTargets: ComposerTargetRegistry
+  /** The shell's active-session selection, as the frame's own store holds it. */
+  readonly sessions: ActiveSessionStore
+  /** The layer the Ask surface renders into — deliberately not the composer card. */
+  readonly surfaceRoot: HTMLElement
+  /** The registrar's own container, inside the composer card. */
+  readonly registrarRoot: HTMLElement
   readonly tree: MountedTree
   readonly writes: string[]
   readonly submits: number[]
@@ -99,14 +170,40 @@ interface OverlayFixture {
    * @param capture - the verdict the fixed adapter returns next.
    */
   nextCapture(capture: SelectionCapture): void
+  /**
+   * Write a draft into the composer, as the reader's own typing does.
+   *
+   * The composer publishes a new state object on every edit, so the fixture
+   * re-renders the registrar exactly as the real store notification does. Without
+   * that render the registrar's ref would still hold the previous value, which is
+   * the product's own behaviour rather than a defect in the fixture.
+   *
+   * @param text - the complete next draft.
+   */
+  typeDraft(text: string): void
+  /**
+   * Switch the session the shell has selected, as the session controller does.
+   * @param sessionId - the session to make current, or `undefined` for none.
+   */
+  selectSession(sessionId: string | undefined): void
+  /**
+   * Unmount the session registrar alone, leaving the surface mounted.
+   *
+   * This is the shape a session switch produces: the surface outlives the
+   * composer it was rendering against.
+   */
+  unmountRegistrar(): void
 }
 
 /**
- * Mount the overlay inside a composer card.
+ * Mount the two halves of the Ask flow.
+ *
+ * The registrar goes inside a real `[data-composer-card]`; the surface goes into
+ * a second container appended to the body, which is what makes this fixture
+ * exercise the cross-slot handoff rather than the pre-5C containment.
  *
  * @param options - the snapshot to make live, whether the write should fail, the
- * language, the session the composer belongs to, and the geometry jsdom cannot
- * report on its own.
+ * language, the sessions involved, and the geometry jsdom cannot report itself.
  * @returns the fixture.
  */
 function mountOverlay(
@@ -116,6 +213,7 @@ function mountOverlay(
     readonly failWrite?: boolean
     readonly lang?: string
     readonly sessionId?: string
+    readonly activeSessionId?: string | undefined
     readonly buttonSize?: { readonly width: number; readonly height: number }
     readonly cardBox?: {
       readonly left: number
@@ -172,29 +270,103 @@ function mountOverlay(
   const registry = new SelectionAdapterRegistry()
   registry.register(adapter)
   const kernel = createSelectionKernel(registry)
-
   const feedback = createSelectionFeedback()
+  const composerTargets = createComposerTargetRegistry()
+  const sessions = activeSessions(
+    'activeSessionId' in options ? options.activeSessionId : (options.sessionId ?? SESSION_ID),
+  )
+
   const writes: string[] = []
   const submits: number[] = []
   let draft = options.draft ?? ''
+  const draftListeners = new Set<() => void>()
 
-  const props = {
-    sessionId: options.sessionId ?? SESSION_ID,
-    useInput: (selector: (value: { readonly draft: string }) => string) => selector({ draft }),
-    inputActions: {
-      setDraft: (text: string) => {
-        if (options.failWrite === true) {
-          throw new Error('composer refused the draft')
-        }
-        writes.push(text)
-        draft = text
-      },
-      submit: () => {
-        submits.push(1)
-      },
-    },
+  /**
+   * Publish a draft change to the mounted registrar.
+   *
+   * The composer's own store publishes on every edit, and the registrar re-reads
+   * its draft on every render; this is the fixture's half of that contract.
+   */
+  function publishDraft(): void {
+    for (const listener of [...draftListeners]) listener()
+  }
+
+  // The real registrar, inside the real card. It receives the store-backed hook
+  // shape the framework supplies: `useInput` re-reads the draft on every render,
+  // and the fixture re-renders it when the composer's state changes.
+  const useInput = (selector: (value: { readonly draft: string }) => string): string =>
+    selector({ draft })
+
+  function RegistrarHost(): JSX.Element {
+    useInput((value) => value.draft)
+    const rerender = useState(0)[1]
+    useEffect(() => {
+      const listener = (): void => {
+        act(() => {
+          rerender((value) => value + 1)
+        })
+      }
+      draftListeners.add(listener)
+      return () => {
+        draftListeners.delete(listener)
+      }
+    }, [])
+    return (
+      <ComposerTargetRegistrar
+        sessionId={options.sessionId ?? SESSION_ID}
+        useInput={useInput}
+        inputActions={{
+          setDraft: (text: string) => {
+            if (options.failWrite === true) {
+              throw new Error('composer refused the draft')
+            }
+            writes.push(text)
+            draft = text
+            // The composer's own store publishes on every write, so a second Ask
+            // in the same case sees the draft the first one produced.
+            publishDraft()
+          },
+        }}
+        composerTargets={composerTargets}
+      />
+    )
+  }
+
+  /**
+   * Subscribe the surface to the shell's session list.
+   *
+   * The product's `useSessions` is a `GlobalStandardProps` member the renderer
+   * binds to the session list store; this hook is that projection (`state.current`)
+   * over the fixture's store, which is the same shape and the same subscription.
+   *
+   * @param selector - the projection the component reads.
+   * @returns the projected value, re-rendered on change.
+   */
+  const useSessions = (
+    selector: (state: { readonly current: string | undefined }) => string | undefined,
+  ): string | undefined => {
+    const [value, setValue] = useState<string | undefined>(() => selector({ current: sessions.current() }))
+    // The selector is a fresh closure per render, so it is read through a ref:
+    // subscribing to it directly would rebuild the subscription on every render
+    // and report through a stale closure.
+    const selectorRef = useRef(selector)
+    selectorRef.current = selector
+    useEffect(() => {
+      const listener = (): void => {
+        setValue(selectorRef.current({ current: sessions.current() }))
+      }
+      const unsubscribe = sessions.subscribe(listener)
+      listener()
+      return unsubscribe
+    }, [])
+    return value
+  }
+
+  const surfaceProps = {
+    useSessions,
     selection: kernel,
     feedback,
+    composerTargets,
     clearSelection: () => {
       kernel.clear()
     },
@@ -203,13 +375,43 @@ function mountOverlay(
     },
   } as unknown as SelectionAskOverlayProps
 
-  const tree = mountTree(<SelectionAskOverlay {...props} />, card)
+  // The surface, in its own root, outside the card. That separation is the point
+  // of the fixture: the visible surface is no longer a descendant of the composer
+  // it writes to, so a case that only passed while it was would not be testing
+  // the production wiring.
+  const surfaceContainer = document.createElement('div')
+  document.body.appendChild(surfaceContainer)
+
+  let surfaceRoot: Root | null = null
+  act(() => {
+    surfaceRoot = createRoot(surfaceContainer)
+    surfaceRoot.render(<SelectionAskOverlay {...surfaceProps} />)
+  })
+
+  // The registrar, in its own root, inside the card — the composer's slot.
+  const registrarContainer = document.createElement('div')
+  card.appendChild(registrarContainer)
+
+  let registrarRoot: Root | null = null
+  act(() => {
+    registrarRoot = createRoot(registrarContainer)
+    registrarRoot.render(<RegistrarHost />)
+  })
+
+  function unmountRegistrar(): void {
+    const mounted = registrarRoot
+    registrarRoot = null
+    act(() => {
+      mounted?.unmount()
+    })
+  }
+
   if (active !== null) {
     // The selection arrives after the mount, which is the order the product
     // produces: the composer is mounted long before the reader drags. The
     // capture therefore also proves the subscription works, because the button
-    // can only appear if the store's notification re-rendered the component.
-    tree.act(() => {
+    // can only appear if the store's notification re-rendered the surface.
+    act(() => {
       kernel.capture(emptyContext())
     })
   }
@@ -217,13 +419,47 @@ function mountOverlay(
   return {
     kernel,
     feedback,
-    tree,
+    composerTargets,
+    sessions,
+    surfaceRoot: surfaceContainer,
+    registrarRoot: registrarContainer,
+    tree: {
+      // The surface's own container: every DOM assertion in this spec is about
+      // what the visible surface rendered, and it no longer shares a root with
+      // the composer.
+      container: surfaceContainer,
+      act(body: () => void): void {
+        act(body)
+      },
+      unmount(): void {
+        const surface = surfaceRoot
+        const registrar = registrarRoot
+        surfaceRoot = null
+        registrarRoot = null
+        act(() => {
+          surface?.unmount()
+          registrar?.unmount()
+        })
+        surfaceContainer.remove()
+        registrarContainer.remove()
+      },
+    },
     writes,
     submits,
     composer,
     nextCapture(capture: SelectionCapture): void {
       outcome = capture
     },
+    typeDraft(text: string): void {
+      draft = text
+      publishDraft()
+    },
+    selectSession(sessionId: string | undefined): void {
+      act(() => {
+        sessions.set(sessionId)
+      })
+    },
+    unmountRegistrar,
   }
 }
 
@@ -250,7 +486,7 @@ function pressAsk(fixture: OverlayFixture): HTMLElement {
  * adapter's `rejectReason` is what the capture decided, the snapshot is what it
  * produced, and `feedback` is what the browser lifecycle would report to the
  * feedback source afterwards. Driving them explicitly keeps these cases about
- * the overlay 閳?which store value it renders 閳?rather than about the lifecycle's
+ * the surface — which store value it renders — rather than about the lifecycle's
  * reporting policy, which is asserted where the lifecycle is installed.
  *
  * @param fixture - the mounted fixture.
@@ -553,6 +789,7 @@ describe('overlay style installation', () => {
     expect(sheets).toHaveLength(1)
     expect(sheets[0]?.textContent).toContain('[data-dsa-selection-ask-button]')
     expect(sheets[0]?.textContent).toContain('[data-dsa-selection-error]')
+    expect(sheets[0]?.textContent).toContain('[data-dsa-composer-target-anchor]')
 
     // A second install in the same document is a no-op, so its disposer must not
     // remove the sheet the first install owns.
@@ -625,5 +862,3 @@ describe('overlay placement', () => {
     fixture.tree.unmount()
   })
 })
-
-

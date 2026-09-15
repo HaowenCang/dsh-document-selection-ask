@@ -296,12 +296,22 @@ test.describe('real DSH 0.1.5-rc.1 smoke', () => {
     await expect(button).toBeVisible({ timeout: 15_000 })
     await expect(button).toHaveText(ASK_LABEL)
 
-    // The button must sit inside the composer card: that is what makes the focus
-    // path able to find the editable surface at all.
+    // Since Task 5C the button is deliberately **outside** the composer card: it
+    // renders in `shell.overlay`, the frame-wide floating layer, because a surface
+    // inside the composer was trapped below the expanded right column and could
+    // not be clicked. What still has to be true — and is asserted here — is that
+    // the button exists, is on screen, and is reachable by hit testing; the
+    // session-scoped half that supplies the composer contract is the registrar's
+    // anchor, which is inside the card.
     expect(
       await page.evaluate(
-        (selector) => document.querySelector(selector)?.closest('[data-composer-card]') !== null,
+        (selector) => document.querySelector(selector)?.closest('[data-shell-overlay]') !== null,
         ASK_BUTTON,
+      ),
+    ).toBe(true)
+    expect(
+      await page.evaluate(
+        () => document.querySelector('[data-dsa-composer-target-anchor]')?.closest('[data-composer-card]') !== null,
       ),
     ).toBe(true)
 

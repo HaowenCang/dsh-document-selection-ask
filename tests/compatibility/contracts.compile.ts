@@ -28,7 +28,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { DocumentPreviewProps } from '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/client'
-import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { PropsRuntime, SlotMap } from '@deepseek-ai/dsh-client-ui-slots'
 import type { InputActions } from '@deepseek-ai/dsh-client-ui-conversation/client'
 
 import type {
@@ -38,16 +38,26 @@ import type {
   ConversationInputOverlayProps,
   DocumentLoadMode,
   DocumentPreviewDefinition,
+  ShellOverlayProps,
+  ShellUseSessions,
 } from '../../src/client/dsh/contracts.js'
 import { applyClient } from '../../src/client/dsh/register.js'
+import type { SelectionAskOverlayProps } from '../../src/client/ui/SelectionAskOverlay.js'
 
 declare const ctx: Context
 declare const documentProps: DocumentPreviewProps
 declare const overlayProps: PropsRuntime<'conversation.input.overlay'>
+declare const shellOverlayProps: PropsRuntime<'shell.overlay'>
 declare const inputActions: InputActions
 
 /** The overlay props as the plugin's own contract module publishes them. */
 declare const overlayViaContracts: ConversationInputOverlayProps
+/** The shell-overlay props as the plugin's own contract module publishes them. */
+declare const shellOverlayViaContracts: ShellOverlayProps
+/** The active-session hook as the plugin's own contract module publishes it. */
+declare const shellUseSessions: ShellUseSessions
+/** The Ask surface's own prop contract, which the slot must be able to satisfy. */
+declare const askSurfaceProps: SelectionAskOverlayProps
 /** The composer action face read through the plugin's own contract module. */
 declare const composerActions: ComposerInputActions
 /** The published composer state read through the plugin's own contract module. */
@@ -123,7 +133,39 @@ export function probeDshContracts(): readonly unknown[] {
   composerActions.setDraft('contract-probe')
   const draft: string = composerState.draft
 
-  // 6. The plugin's own registrar keeps the context type the DSH web boot
+  // 6. `shell.overlay` — the frame-wide list slot the visible Ask surface moved
+  //    to in Task 5C. The annotations are the whole probe: `kind` and `scope` are
+  //    literal members of the declaration DSH publishes, so a rename, a change of
+  //    kind, or a move to session scope each fails to compile here rather than
+  //    silently changing which tree the surface renders in.
+  const shellOverlayKind: SlotMap['shell.overlay']['kind'] = 'list'
+  const shellOverlayScope: SlotMap['shell.overlay']['scope'] = 'root'
+
+  // 7. The root scope carries the global standard props, and the Ask surface's
+  //    own prop contract must be satisfiable from them: `useSessions` is declared
+  //    by `@deepseek-ai/dsh-client-ui-session` on `GlobalStandardProps`, so the
+  //    `satisfies` line below is the assertion that the active session is
+  //    readable through a published seat rather than through a private store.
+  const shellActiveSession: string | undefined = shellOverlayProps.useSessions(
+    (state) => state.current,
+  )
+  const shellActiveSessionViaContracts: string | undefined = shellOverlayViaContracts.useSessions(
+    (state) => state.current,
+  )
+  const shellActiveSessionDirect: string | undefined = shellUseSessions((state) => state.current)
+  // Explicitly annotated, not inferred: the annotation is what proves the slot's
+  // global standard props can satisfy the surface's own contract. An inferred
+  // binding would compile even if the two drifted structurally apart.
+  const askSurfaceTakeShellProps: Pick<SelectionAskOverlayProps, 'useSessions'> = {
+    useSessions: shellOverlayProps.useSessions,
+  }
+  // The surface's injected face, read through the plugin's own contract: the
+  // target table is what replaced the composer's `useInput` at this seat, so its
+  // shape is part of the slot contract rather than an implementation detail.
+  const askSurfaceDraftAtClick: string | null =
+    askSurfaceProps.composerTargets.get('contract-probe')?.readDraft() ?? null
+
+  // 8. The plugin's own registrar keeps the context type the DSH web boot
   //    hands it, so later registration calls type-check against the real
   //    client context rather than against a locally invented shape.
   const registerClient: (target: ClientContext) => void = applyClient
@@ -141,6 +183,13 @@ export function probeDshContracts(): readonly unknown[] {
     overlaySessionId,
     overlayDraftViaContracts,
     draft,
+    shellOverlayKind,
+    shellOverlayScope,
+    shellActiveSession,
+    shellActiveSessionViaContracts,
+    shellActiveSessionDirect,
+    askSurfaceTakeShellProps,
+    askSurfaceDraftAtClick,
     registerClient,
     clientCtx,
   ]

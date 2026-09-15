@@ -19,6 +19,16 @@
  * token with a literal fallback, so the overlay follows light and dark themes
  * and still renders coherently if a token is ever renamed.
  *
+ * **Stacking since Task 5C.** The visible surface lives in `shell.overlay`, whose
+ * layer is a sibling of all three columns at `z-index: 20` with
+ * `pointer-events: none` and `auto` restored on its direct children. The button
+ * paints above the columns because it is a descendant of that layer, not because
+ * of any number this sheet sets: an absolutely positioned, `z-index`ed layer
+ * paints in the positioned-descendants band, after the in-flow columns. The
+ * `pointer-events: auto` below is what restores hit testing inside a
+ * click-through layer, and it is the one declaration here the fix depends on. No
+ * rule in this sheet is an attempt to out-rank the shell.
+ *
  * The sheet is installed once per document, tagged so a hot reload replaces
  * rather than duplicates it, and removed when the plugin fiber unloads.
  */
@@ -29,15 +39,17 @@ export const STYLE_TAG_ID = 'dsh-document-selection-ask/selection-ask.css'
 /**
  * The overlay's style sheet.
  *
- * Selectors name three attributes this plugin owns and its specs assert on:
- * `data-dsa-selection-ask` on the positioning layer, `data-dsa-selection-ask-button`
- * on the button, and `data-dsa-selection-error` on the rejection notice.
+ * Selectors name four attributes this plugin owns and its specs assert on:
+ * `data-dsa-composer-target-anchor` on the registrar's inert anchor,
+ * `data-dsa-selection-ask-button` on the button, and `data-dsa-selection-error`
+ * on the rejection notice.
  */
 export const OVERLAY_CSS = `
-[data-dsa-selection-ask] {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
+[data-dsa-composer-target-anchor] {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
   pointer-events: none;
 }
 
@@ -84,6 +96,7 @@ export const OVERLAY_CSS = `
   font-size: 12px;
   line-height: 18px;
   text-align: center;
+  pointer-events: auto;
   box-shadow: var(--dsw-elevation-panel, 0 3px 8px 0 rgb(0 0 0 / 3%));
 }
 `

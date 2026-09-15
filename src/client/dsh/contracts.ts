@@ -27,9 +27,18 @@
 // `ctx.documentPreviews` and the `sidebar.right.tab.document` keyed slot: both
 // are declared by this package's `client` entry.
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/client'
+// The `shell.overlay` root-scoped list slot, the frame's own additive seat for a
+// surface that floats over the whole application. Declared by this package's
+// `client` entry, which is also the entry that renders it — an external plugin
+// cannot declare the slot itself.
+import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 // `PropsRuntime` plus the `SlotMap`/`GlobalStandardProps`/`SessionStandardProps`
 // declaration-merging tables the whole slot contract is composed from.
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
+// `useSessions` — the global standard prop the Ask surface reads the active
+// session through — and the session-scoped standard props. Declared by this
+// package's `client` entry.
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 // `ctx.slots` — the renderer-owned slot registry — and the `slots/changed`
 // event. Declared by this package's `client` entry, and the reason the client
 // half lists `slots` in its runtime `inject`: a slot contribution made before
@@ -61,6 +70,19 @@ export type { DocumentPreviewProps } from '@deepseek-ai/dsh-client-ui-sidebar-do
 
 /** Props of one occupant of the floating `conversation.input.overlay` list. */
 export type ConversationInputOverlayProps = PropsRuntime<'conversation.input.overlay'>
+
+/**
+ * Props of one occupant of the frame-wide `shell.overlay` list.
+ *
+ * The root scope carries the **global** standard props rather than the session
+ * ones, which is exactly why the Ask surface needs the target registry: the
+ * session-scoped composer contract is not available at this seat, and
+ * `useSessions` — the published route to the active session — is.
+ */
+export type ShellOverlayProps = PropsRuntime<'shell.overlay'>
+
+/** The published selector hook over the shell's session list and selection. */
+export type ShellUseSessions = ShellOverlayProps['useSessions']
 
 /** The public, stable composer action face: `setDraft`, attachments, `submit`. */
 export type ComposerInputActions = InputActions

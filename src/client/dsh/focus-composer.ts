@@ -17,15 +17,20 @@
  * `editor.getRootElement()?.focus({ preventScroll: true })`, and the element it
  * hands the editor is the one carrying `data-composer-input`.
  *
- * **Why the search starts at this overlay's own DOM.** The overlay renders
- * inside the composer card, as a sibling of the editable surface, so the card is
- * found by walking up from the overlay's own root element rather than by
- * querying the whole document. A document-wide lookup would grab whichever
- * composer happens to be first in the DOM — which, with two sessions open, is
- * how one session's quote gets typed into another session's draft. When no card
- * encloses the overlay, there is nothing safe to focus and the call is a no-op;
- * the quote is already in the draft at that point, so a missed focus degrades to
- * "the reader clicks the composer", never to a wrong composer.
+ * **Why the search starts at a session-scoped DOM anchor.** The origin is the
+ * `ComposerTargetRegistrar`'s own invisible anchor, which lives inside
+ * `[data-composer-card]` by construction because that is the slot the registrar
+ * occupies. The card is therefore found by walking up from an element that
+ * belongs to the session being written to, rather than by querying the document.
+ * A document-wide lookup would grab whichever composer happens to be first in the
+ * DOM — which, with two sessions open, is how one session's quote gets typed into
+ * another session's draft. This is also why the Ask button could move out of the
+ * composer in Task 5C without changing the focus contract: the button is no
+ * longer a descendant of the card, but the registrar still is, and the registrar
+ * is what supplies the origin. When no card encloses the origin, there is nothing
+ * safe to focus and the call is a no-op; the quote is already in the draft at
+ * that point, so a missed focus degrades to "the reader clicks the composer",
+ * never to a wrong composer.
  *
  * **What this module must not do.** It calls `focus` and nothing else. It does
  * not assign `value`, does not set `textContent`, does not dispatch an input
@@ -44,7 +49,8 @@ export const COMPOSER_INPUT_SELECTOR = '[data-composer-input]'
 /**
  * Find the editable surface of the composer that contains an element.
  *
- * @param origin - a node inside the composer card, normally the overlay root.
+ * @param origin - a node inside the composer card, normally the session
+ * registrar's anchor.
  * @returns the editable element, or `null` when the node is not inside a
  * composer card or the card has no editable surface.
  */
@@ -66,8 +72,8 @@ export function composerEditableWithin(origin: Element | null): HTMLElement | nu
  * Build a focus callback bound to one DOM origin.
  *
  * The element is resolved at call time rather than at construction, because the
- * overlay's root element does not exist when the client registration runs and
- * the card is mounted and unmounted as the session changes.
+ * anchor does not exist when the client registration runs and the composer card
+ * is mounted and unmounted as the session changes.
  *
  * @param readOrigin - returns the element the search starts from.
  * @returns a callback that focuses this composer's editable surface.
