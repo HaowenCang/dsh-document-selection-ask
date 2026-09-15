@@ -32,6 +32,53 @@ Round 14 -> Task 14 compatibility/manual smoke
 Round 15 -> Task 15 packaging/release
 ```
 
+## Per-round completion sequence
+
+Every round ends with the same ordered sequence, and a round is complete only when
+the last step succeeds:
+
+```text
+RED
+-> GREEN
+-> targeted tests
+-> full tests
+-> typecheck
+-> build
+-> diff review
+-> commit
+-> status/docs commit if applicable
+-> push to origin
+-> verify remote commit SHA
+-> report
+```
+
+```bash
+git status --short
+git log -1 --oneline
+git push
+git rev-parse HEAD
+git rev-parse '@{u}'
+```
+
+`HEAD == upstream` is the acceptance condition. If a round produced both a code
+commit and a documentation commit, both must be pushed; a round whose status
+commit stays local is not synchronized.
+
+The repository is public and MIT-licensed, so no force-push, no rewriting of
+published history and no commit amendment of an already-pushed commit is
+permitted without explicit human approval. Corrections are made with new
+commits.
+
+If the push fails — authentication, remote rejection, non-fast-forward, network,
+branch protection or a GitHub outage — the round is not PASS. It is reported as:
+
+```text
+LOCAL PASS / GITHUB SYNC BLOCKED
+```
+
+with the local HEAD, the remote state, the push error and a recommended recovery,
+and the next Task is not started.
+
 ## Human review checkpoints
 
 Mandatory review after:

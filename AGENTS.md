@@ -51,6 +51,29 @@ For each Task:
 
 Never start Task N+1 in the same round unless explicitly instructed.
 
+## GitHub synchronization
+
+This is a public MIT-licensed GitHub project.
+
+After every completed implementation Task:
+
+1. complete tests/typecheck/build;
+2. inspect the diff;
+3. commit locally;
+4. update status documentation when required;
+5. push all Task commits to `origin`;
+6. verify that `origin/<current-branch>` points at local HEAD;
+7. only then report the Task as PASS.
+
+Never force-push or rewrite published history without explicit human approval.
+
+A Task with a successful local commit but failed GitHub push is
+LOCAL PASS / GITHUB SYNC BLOCKED and must not proceed to the next Task.
+
+Documentation commits record the Task and are pushed in the same round as the
+code they describe. A round whose code commit reached `origin` while its status
+commit stayed local is not synchronized.
+
 ## Hard architecture constraints
 
 ### DSH boundary
