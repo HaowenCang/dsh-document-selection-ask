@@ -103,11 +103,14 @@ export interface SelectionSnapshot {
  * Only the size limits are surfaced to the user, since reaching them means a
  * real selection that this plugin declines to send.
  *
- * `draft-write-failed` is the one reason that describes a write rather than a
- * capture: the selection was valid and the composer refused the draft. It is
- * reported so the selection is preserved for a retry, and it exists as its own
- * value because folding it into `renderer-not-ready` would send a future
- * diagnosis after a document renderer that was never involved.
+ * Every member is a fact about **capture**: what the candidate selection or the
+ * renderer was like at the moment a snapshot would have been built. A failure
+ * that can only happen after a valid snapshot exists is not a member, however
+ * convenient the reuse would be. The composer refusing a draft is the case that
+ * matters — the snapshot is already stored and the reader can retry — and it is
+ * published as `AskFailureReason` by `dsh/composer-bridge.ts`, which is the
+ * module that owns the write. Keeping the two apart is what stops a write
+ * failure from being diagnosed as a renderer that was never involved.
  */
 export type SelectionRejectReason =
   | 'collapsed'
@@ -118,4 +121,3 @@ export type SelectionRejectReason =
   | 'too-large'
   | 'too-many-cells'
   | 'renderer-not-ready'
-  | 'draft-write-failed'

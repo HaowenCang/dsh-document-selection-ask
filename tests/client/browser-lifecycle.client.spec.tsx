@@ -3,12 +3,18 @@
  * Browser selection event wiring.
  *
  * The lifecycle is driven against a **fake document** rather than the jsdom
- * document. The subject here is the wiring itself 闁?which events are observed,
- * how often a capture runs for one gesture, what a capture is told, and what
- * teardown releases 闁?and jsdom's own `Selection` has no bearing on any of those
- * questions. A fake document also makes the timing observable: the animation
- * frame is a queue this spec drains by hand, so "coalesced into one frame" is a
- * count rather than a race.
+ * document. The subject here is the wiring itself — which events are observed,
+ * on which target each one is registered, how often a capture runs for one
+ * gesture, what a capture is told, and what teardown releases — and jsdom's own
+ * `Selection` has no bearing on any of those questions. A fake document also
+ * makes the timing observable: the animation frame is a queue this spec drains
+ * by hand, so "coalesced into one frame" is a count rather than a race.
+ *
+ * The fake document's window keeps its own listener registry because the browser
+ * does. `resize` is a window event, and a suite that registered both targets in
+ * one table would report a document-level resize listener as working wiring when
+ * no browser would ever call it; the two registries are what make that
+ * difference assertable.
  *
  * Geometry is deliberately absent. jsdom implements no layout, so a case that
  * asserted on where a rectangle lands would be asserting on the fixture. Real
@@ -72,10 +78,25 @@ interface FakeDocument {
   readonly cancelled: number[]
   /** Run every scheduled frame, as the browser would on the next paint. */
   runFrames(): void
-  /** Listener count currently installed for one event type. */
+  /** Listener count currently installed on the document for one event type. */
   listeners(type: string): number
-  /** Dispatch an event, as the browser would. */
+  /**
+   * Listener count currently installed on the document's window.
+   *
+   * The two registries are separate because the browser keeps them separate: a
+   * resize listener installed on the document is never called, so counting it as
+   * if it were the window's would make the wrong implementation look correct.
+   * @param type - the event type.
+   * @returns the number of live listeners.
+   */
+  viewListeners(type: string): number
+  /** Dispatch an event on the document, as the browser would. */
   fire(type: string, target: EventTarget | null, init?: EventInit): void
+  /**
+   * Dispatch an event on the document's window, as the browser does for `resize`.
+   * @param type - the event type.
+   */
+  fireOnView(type: string): void
 }
 
 /**
@@ -84,6 +105,7 @@ interface FakeDocument {
  */
 function fakeDocument(): FakeDocument {
   const listeners = new Map<string, Set<EventListener>>()
+  const viewListeners = new Map<string, Set<EventListener>>()
   const frames: (() => void)[] = []
   const cancelled: number[] = []
   let nextHandle = 1
@@ -119,6 +141,14 @@ function fakeDocument(): FakeDocument {
           frames.splice(index, 1)
         }
       },
+      addEventListener: (type: string, listener: EventListener): void => {
+        const set = viewListeners.get(type) ?? new Set<EventListener>()
+        set.add(listener)
+        viewListeners.set(type, set)
+      },
+      removeEventListener: (type: string, listener: EventListener): void => {
+        viewListeners.get(type)?.delete(listener)
+      },
     },
   } as unknown as Document
 
@@ -137,6 +167,9 @@ function fakeDocument(): FakeDocument {
     listeners(type: string): number {
       return listeners.get(type)?.size ?? 0
     },
+    viewListeners(type: string): number {
+      return viewListeners.get(type)?.size ?? 0
+    },
     fire(type: string, target: EventTarget | null, init: EventInit = {}): void {
       // Real event classes rather than a bare `Event` with extra fields: `key`
       // and the other init members are accessors on the prototype, so copying an
@@ -151,6 +184,16 @@ function fakeDocument(): FakeDocument {
       // dispatch would have.
       Object.defineProperty(event, 'target', { value: target, configurable: true })
       for (const listener of [...(listeners.get(type) ?? [])]) {
+        listener(event)
+      }
+    },
+    fireOnView(type: string): void {
+      const event = new Event(type, { bubbles: true, cancelable: true })
+      // A real window dispatch sets `target` to the window itself, which is not a
+      // `Node`; `null` is the closest stand-in and is what a handler that wrongly
+      // treated it as one would have to cope with.
+      Object.defineProperty(event, 'target', { value: null, configurable: true })
+      for (const listener of [...(viewListeners.get(type) ?? [])]) {
         listener(event)
       }
     },
@@ -215,12 +258,25 @@ function install(initial: SelectionCapture = { snapshot: snapshot(), rejectReaso
 }
 
 describe('lifecycle: what it observes', () => {
-  it('listens for the selection, viewport and dismissal events', () => {
+  it('listens for the selection, scroll and dismissal events on the document', () => {
     const fixture = install()
 
-    for (const type of ['selectionchange', 'pointerup', 'keyup', 'scroll', 'resize', 'keydown']) {
+    for (const type of ['selectionchange', 'pointerup', 'keyup', 'scroll', 'keydown']) {
       expect(fixture.host.listeners(type), `${type} must be observed`).toBe(1)
     }
+
+    fixture.dispose()
+  })
+
+  it('listens for resize on the window the document belongs to', () => {
+    const fixture = install()
+
+    // The two assertions are one statement: the browser dispatches `resize` at
+    // the `Window`, so a listener on the document is never called, and a suite
+    // that only counted listeners without naming the target would keep passing
+    // while the real browser did nothing.
+    expect(fixture.host.viewListeners('resize')).toBe(1)
+    expect(fixture.host.listeners('resize')).toBe(0)
 
     fixture.dispose()
   })
@@ -234,13 +290,27 @@ describe('lifecycle: what it observes', () => {
     fixture.dispose()
   })
 
-  it('removes every listener on dispose', () => {
+  it('removes every document listener on dispose', () => {
     const fixture = install()
     fixture.dispose()
 
-    for (const type of ['selectionchange', 'pointerup', 'keyup', 'scroll', 'resize', 'keydown']) {
+    for (const type of ['selectionchange', 'pointerup', 'keyup', 'scroll', 'keydown']) {
       expect(fixture.host.listeners(type), `${type} must be released`).toBe(0)
     }
+  })
+
+  it('removes the window resize listener on dispose', () => {
+    const fixture = install()
+    fixture.dispose()
+
+    expect(fixture.host.viewListeners('resize')).toBe(0)
+
+    // A listener left behind would keep capturing for a fiber that has been
+    // unloaded; the fire is what proves the entry was released rather than the
+    // count alone.
+    fixture.host.fireOnView('resize')
+    fixture.host.runFrames()
+    expect(fixture.contexts).toHaveLength(0)
   })
 })
 
@@ -394,15 +464,35 @@ describe('lifecycle: viewport revalidation', () => {
     fixture.dispose()
   })
 
-  it('re-captures on resize', () => {
+  it('re-captures on resize, which reaches it through the window', () => {
     const fixture = install()
 
     fixture.host.fire('pointerup', document.createElement('p'))
     fixture.host.runFrames()
-    fixture.host.fire('resize', document.createElement('p'))
+
+    // The event is dispatched at the window, the way the browser does it. Firing
+    // it at the document instead would exercise the path a real resize never
+    // takes, which is the defect this case exists to catch.
+    fixture.host.fireOnView('resize')
+    expect(fixture.host.frames).toHaveLength(1)
     fixture.host.runFrames()
 
     expect(fixture.contexts).toHaveLength(2)
+    fixture.dispose()
+  })
+
+  it('reports no target for a resize capture, because a window is not a node', () => {
+    const fixture = install()
+
+    fixture.host.fire('pointerup', document.createElement('p'))
+    fixture.host.runFrames()
+    fixture.host.fireOnView('resize')
+    fixture.host.runFrames()
+
+    // The selection's own endpoints are the evidence a re-anchor has; there is no
+    // preview node a resize could name, and inventing one would hand every
+    // adapter a target that resolves to no root.
+    expect(fixture.contexts[1]?.target).toBeNull()
     fixture.dispose()
   })
 
@@ -417,6 +507,24 @@ describe('lifecycle: viewport revalidation', () => {
     fixture.host.fire('scroll', document.createElement('p'))
     fixture.host.runFrames()
 
+    expect(fixture.kernel.getSnapshot()).toBeNull()
+    fixture.dispose()
+  })
+
+  it('clears the kernel when a resize finds the selection gone', () => {
+    const fixture = install()
+    fixture.host.fire('pointerup', document.createElement('p'))
+    fixture.host.runFrames()
+    expect(fixture.kernel.getSnapshot()).not.toBeNull()
+
+    fixture.nextCapture({ snapshot: null, rejectReason: 'collapsed' })
+    fixture.host.selection = null
+    fixture.host.fireOnView('resize')
+    fixture.host.runFrames()
+
+    // A viewport that shrank past the preview can leave the stored rectangles
+    // describing nothing on screen; with the selection itself gone the button
+    // must go with it rather than anchor to stale geometry.
     expect(fixture.kernel.getSnapshot()).toBeNull()
     fixture.dispose()
   })

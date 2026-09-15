@@ -33,6 +33,17 @@
  * occupies those coordinates. When the selection is gone, the kernel is cleared
  * instead.
  *
+ * The two viewport events do not share a target, and the difference is a
+ * browser contract rather than a preference. `scroll` is dispatched at the
+ * element that scrolled — a preview body with its own overflow, or the document
+ * when the page itself scrolls — so only a capture-phase listener on the
+ * document sees a descendant's scroll at all. `resize` is not a document event:
+ * the browser dispatches it at the `Window` the document belongs to, which is
+ * `doc.defaultView`, and a listener installed on the document therefore never
+ * runs in a real browser however plausible the code looks. The two are installed
+ * accordingly, and the resize listener is released from the same window it was
+ * added to.
+ *
  * The document is a constructor argument rather than a module global for the
  * same reason the kernel takes its context from the caller: a spec can drive
  * this lifecycle against a fixture document, and the plugin never assumes which
@@ -46,8 +57,23 @@ import type { SelectionKernel } from './kernel.js'
 /** The events that invalidate or re-anchor a captured selection. */
 const SELECTION_EVENTS = ['selectionchange', 'pointerup', 'keyup'] as const
 
-/** The events that move the viewport under a still-live selection. */
-const VIEWPORT_EVENTS = ['scroll', 'resize'] as const
+/**
+ * The viewport event a document can be made to report.
+ *
+ * A scroll is dispatched at the element that scrolled, so the capture-phase
+ * listener on the document is what receives a preview body's own scrolling as
+ * well as the page's.
+ */
+const SCROLL_EVENT = 'scroll'
+
+/**
+ * The viewport event only the window receives.
+ *
+ * Kept apart from {@link SCROLL_EVENT} because the listener target is part of
+ * the browser contract, not an implementation detail: `document.addEventListener('resize', …)`
+ * installs a listener that no browser ever calls.
+ */
+const RESIZE_EVENT = 'resize'
 
 /**
  * The events whose `target` is a meaningful pointer or key target.
@@ -56,11 +82,15 @@ const VIEWPORT_EVENTS = ['scroll', 'resize'] as const
  * document and the selection it reports may have been extended by the keyboard
  * with the pointer somewhere else entirely, so the node it happens to be
  * associated with is not evidence about where the selection came from. The
- * remaining events are all produced by a gesture that has a position — a pointer
- * release, a key release, a scroll — and their target is a useful hint for root
- * resolution.
+ * remaining document events are all produced by a gesture that has a position —
+ * a pointer release, a key release, a scroll — and their target is a useful hint
+ * for root resolution.
+ *
+ * A `resize` is absent for a second reason as well: its target is the `Window`,
+ * which is not a `Node`, so there is no target this lifecycle could report even
+ * if it wanted one.
  */
-const TARGETED_EVENTS: ReadonlySet<string> = new Set(['pointerup', 'keyup', 'scroll', 'resize'])
+const TARGETED_EVENTS: ReadonlySet<string> = new Set(['pointerup', 'keyup', SCROLL_EVENT])
 
 /**
  * The browser surface this lifecycle drives.
@@ -171,6 +201,21 @@ export function installBrowserSelectionLifecycle(
     refresh()
   }
 
+  /**
+   * Re-read the selection after the viewport changed size.
+   *
+   * The target is deliberately not recorded. The window dispatches this event,
+   * and a `Window` is not a `Node`, so there is no node an adapter could resolve
+   * a preview root from — the selection's own endpoints are the only evidence,
+   * which is what every adapter already prefers. Recording a target anyway would
+   * mean either a cast to `Node` that lies to the registry or a widening of
+   * `SelectionContext.target` that every adapter would then have to defend
+   * against.
+   */
+  function onViewportResize(): void {
+    refresh()
+  }
+
   /** Clear everything a live selection contributed. */
   function onEscape(): void {
     // Escape dismisses; it never edits. Cancelling the pending frame first keeps
@@ -201,10 +246,15 @@ export function installBrowserSelectionLifecycle(
   for (const type of SELECTION_EVENTS) {
     doc.addEventListener(type, onSelectionEvent, true)
   }
-  for (const type of VIEWPORT_EVENTS) {
-    doc.addEventListener(type, onSelectionEvent, true)
-  }
+  doc.addEventListener(SCROLL_EVENT, onSelectionEvent, true)
   doc.addEventListener('keydown', onKeyDown, true)
+
+  // Read through `defaultView` rather than reaching for the ambient `window`:
+  // the document this lifecycle was handed decides which window it listens to,
+  // which is what keeps the module usable against a fixture document and safe in
+  // a host that owns more than one.
+  const view = doc.defaultView
+  view?.addEventListener(RESIZE_EVENT, onViewportResize)
 
   return {
     refresh,
@@ -218,10 +268,9 @@ export function installBrowserSelectionLifecycle(
       for (const type of SELECTION_EVENTS) {
         doc.removeEventListener(type, onSelectionEvent, true)
       }
-      for (const type of VIEWPORT_EVENTS) {
-        doc.removeEventListener(type, onSelectionEvent, true)
-      }
+      doc.removeEventListener(SCROLL_EVENT, onSelectionEvent, true)
       doc.removeEventListener('keydown', onKeyDown, true)
+      view?.removeEventListener(RESIZE_EVENT, onViewportResize)
     },
   }
 }

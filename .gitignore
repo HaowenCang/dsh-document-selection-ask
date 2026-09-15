@@ -10,6 +10,19 @@ playwright-report/
 coverage/
 *.tsbuildinfo
 
+# Disposable session workspace the real-DSH browser smoke points a live instance
+# at, and the scratch directory it is served from. Its fixture files are
+# generated per run rather than committed: they exist so the shell's own file
+# reference picker and document viewer have something real to open, and a
+# committed copy would be a second, silently diverging source of the same
+# fixture text.
+#
+# The name carries no leading dot on purpose. The shell's file picker omits
+# dot-entries, so a hidden directory would be unreachable from the very UI the
+# smoke drives.
+smoke-fixtures/
+.smoke-run/
+
 # Local environment files. The plugin reads no .env at runtime; these are
 # ignored so that a developer's local secrets cannot reach a public commit.
 .env

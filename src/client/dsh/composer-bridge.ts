@@ -33,12 +33,35 @@
 
 import { appendSelectionToDraft } from '../quote/format-selection.js'
 import { validateSelectionSize } from '../selection/limits.js'
-import type { SelectionSnapshot, SelectionRejectReason } from '../selection/types.js'
+import type { SelectionSnapshot } from '../selection/types.js'
+
+/**
+ * Why an Ask transaction produced no draft.
+ *
+ * This union belongs to the writer, not to the selection pipeline, and the split
+ * is a domain statement rather than a naming one. `SelectionRejectReason` answers
+ * "why did capture produce no snapshot"; by the time either of these reasons is
+ * produced a valid snapshot exists. Folding a refused write into that union would
+ * file it beside `collapsed` and `renderer-not-ready` and invite a diagnosis of
+ * the document renderer for a failure that happened in the composer.
+ *
+ * Two members, each with a distinct consequence for the caller, and no catch-all:
+ *
+ * - `too-large` — the snapshot exceeds the documented limit. Nothing was read
+ *   and nothing was written; the selection is not quotable at all.
+ * - `draft-write-failed` — the composer refused the write. The snapshot is still
+ *   valid and still stored, so the reader keeps the button and can retry.
+ *
+ * A member is added here only when the bridge itself can prove it produces that
+ * failure. `reason: string` would move the same confusion to the type level and
+ * make every caller's handling unverifiable.
+ */
+export type AskFailureReason = 'too-large' | 'draft-write-failed'
 
 /** What the Ask transaction produced. */
 export type AskOutcome =
   | { readonly ok: true; readonly draft: string }
-  | { readonly ok: false; readonly reason: SelectionRejectReason }
+  | { readonly ok: false; readonly reason: AskFailureReason }
 
 /**
  * The composer contract the bridge writes through.
@@ -87,9 +110,14 @@ export function createComposerBridge(target: ComposerTarget): ComposerBridge {
       // bridge is the last point before a write, and a snapshot that reached it
       // must satisfy the same contract the capture path enforces. A refusal
       // writes nothing.
+      //
+      // The comparison is the one case that can actually occur, not a test for
+      // "any rejection": the limit check answers with `'too-large'` or nothing,
+      // so the branch is exhaustive by construction and no cast is needed to
+      // bring its answer into this module's own failure union.
       const reason = validateSelectionSize(snapshot)
-      if (reason !== null) {
-        return { ok: false, reason }
+      if (reason === 'too-large') {
+        return { ok: false, reason: 'too-large' }
       }
 
       const nextDraft = appendSelectionToDraft(target.readDraft(), snapshot)

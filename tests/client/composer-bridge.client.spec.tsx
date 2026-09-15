@@ -20,7 +20,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { createComposerBridge, type ComposerTarget } from '../../src/client/dsh/composer-bridge.js'
+import { createComposerBridge, type AskFailureReason, type ComposerTarget } from '../../src/client/dsh/composer-bridge.js'
 import { SELECTION_QUESTION_SUFFIX, appendSelectionToDraft, formatSelectionForDraft } from '../../src/client/quote/format-selection.js'
 import type { SelectionSnapshot } from '../../src/client/selection/types.js'
 import { snapshot } from '../unit/selection/snapshot.js'
@@ -219,5 +219,43 @@ describe('composer bridge: focus', () => {
 
     expect(composer.focuses).toBe(1)
     expect(composer.writes).toEqual([])
+  })
+})
+
+describe('composer bridge: failure domain', () => {
+  /**
+   * Record a reason the bridge reported, and prove it is a member of the
+   * bridge's own failure union.
+   *
+   * The parameter type is the whole assertion. `AskFailureReason` is the
+   * bridge's vocabulary; `SelectionRejectReason` is the capture vocabulary and
+   * no longer contains a write failure, so a bridge still reporting through the
+   * latter would not accept this call and `pnpm typecheck` would fail on it.
+   * There is no cast here for the same reason: a cast would make the check
+   * vacuous.
+   * @param reason - the reason the bridge reported.
+   * @returns the same reason, for the comparison below.
+   */
+  function asAskFailure(reason: AskFailureReason): AskFailureReason {
+    return reason
+  }
+
+  it('keeps a write failure and a size refusal in the same, writer-owned vocabulary', () => {
+    const refused = fakeComposer('', { failWrite: true })
+    const oversized = fakeComposer(EXISTING_DRAFT)
+
+    const writeOutcome = createComposerBridge(refused).appendSelection(selection())
+    const sizeOutcome = createComposerBridge(oversized).appendSelection(selection({ text: OVERSIZED_TEXT }))
+
+    if (writeOutcome.ok || sizeOutcome.ok) {
+      throw new Error('both transactions must fail')
+    }
+
+    // Two different failures, one union: the composer bridge is where a write
+    // can fail, so it is where both reasons are published.
+    expect(asAskFailure(writeOutcome.reason)).toBe('draft-write-failed')
+    expect(asAskFailure(sizeOutcome.reason)).toBe('too-large')
+    expect(refused.draft).toBe('')
+    expect(oversized.draft).toBe(EXISTING_DRAFT)
   })
 })

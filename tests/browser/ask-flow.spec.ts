@@ -11,14 +11,28 @@
  * **What is real here and what is injected.** The page is a running DSH web
  * instance with this plugin loaded: the composer, its session, the session-scoped
  * slot the overlay occupies, the browser selection, the pointer gesture, the
- * geometry, the focus behaviour, the composer write and the session-isolation
- * comparison are all the real ones. What this spec injects is the *document
- * preview body*. The shell's file-browser panel could not be reached in this
- * headless instance, so the spec renders the preview markup DSH's builtin
- * renderers emit — the same `data-` attributes the adapter reads, reproduced from
- * the installed `dsh-client-ui-sidebar-documentpreview@0.1.5-rc.1` bundle — into
- * the live page. Only the preview's provenance is synthetic; everything the
- * plugin does with it is observed in the real application.
+ * geometry, the viewport resize, the focus behaviour, the composer write and the
+ * session-isolation comparison are all the real ones. What this spec injects is
+ * the *document preview body*. The shell's file-browser panel could not be
+ * reached in this headless instance, so the spec renders the preview markup DSH's
+ * builtin renderers emit — the same `data-` attributes the adapter reads,
+ * reproduced from the installed `dsh-client-ui-sidebar-documentpreview@0.1.5-rc.1`
+ * bundle — into the live page. Only the preview's provenance is synthetic;
+ * everything the plugin does with it is observed in the real application.
+ *
+ * That injection is why this suite is **not** a real-TextPreview smoke, and the
+ * Task 5A round established why so, with evidence rather than assumption. The
+ * right column is a slot whose occupant opens itself: `ctx.layout.openRightbar`
+ * is called by the right Sidebar when it opens a resource, and nothing else
+ * writes it. So the preview DOM only exists after the shell has navigated to a
+ * file, and in this headless instance every route to that navigation is closed —
+ * the Files tab's strip is inside the collapsed right column and never becomes
+ * visible; the composer's `@` file picker does list the session workspace and
+ * does build a real reference chip, but the chip is a prompt-context decorator
+ * and clicking it performs no navigation; and no transcript row in a reachable
+ * session offers the `openFile` action. Until a route to a DSH-rendered preview
+ * is found, real TXT/code/Markdown provenance stays covered by the adapter's own
+ * client suite and not by a browser smoke.
  *
  * The instance is external: `DSH_SMOKE_URL` names a running DSH web server with
  * this plugin mounted. The spec is skipped when the variable is absent, which is
@@ -432,5 +446,96 @@ test.describe('real DSH 0.1.5-rc.1 smoke', () => {
     expect((geometry?.box.y ?? 0) + (geometry?.box.height ?? 0)).toBeLessThanOrEqual(
       (geometry?.viewport.height ?? 0) - 8 + 1,
     )
+  })
+
+  test('follows a real viewport resize with a re-anchored, still-clamped button', async ({ page }) => {
+    await openShell(page)
+
+    const sessionId = await readSessionId(page)
+    const fixture = preview(sessionId)
+
+    // A draft typed before the selection, so the same case can prove the resize
+    // did not disturb what the reader had already written.
+    const typedDraft = '\u6211\u7684\u95ee\u9898'
+    await page.locator(COMPOSER_INPUT).first().click()
+    await page.keyboard.type(typedDraft)
+    await page.waitForTimeout(700)
+
+    await injectPreview(page, fixture)
+    await selectInPreview(page, fixture.needle)
+
+    const button = page.locator(ASK_BUTTON).first()
+    await expect(button).toBeVisible({ timeout: 15_000 })
+
+    /** Read the button's box and the live selection length. */
+    const measure = () =>
+      page.evaluate((selector) => {
+        const element = document.querySelector(selector)
+        if (element === null) {
+          return null
+        }
+        const box = element.getBoundingClientRect()
+        return {
+          x: box.x,
+          y: box.y,
+          width: box.width,
+          height: box.height,
+          viewport: { width: window.innerWidth, height: window.innerHeight },
+          selectionLength: document.getSelection()?.toString().length ?? 0,
+        }
+      }, ASK_BUTTON)
+
+    const before = await measure()
+    expect(before).not.toBeNull()
+
+    // The viewport really changes size. `document.dispatchEvent(new Event('resize'))`
+    // is deliberately not used: the browser dispatches `resize` at the window, so
+    // a synthetic document event would pass against wiring that no real resize
+    // ever reaches — which is the defect this case covers.
+    const SHRUNK = { width: 800, height: 600 }
+    await page.setViewportSize(SHRUNK)
+    // The lifecycle coalesces the resize into one animation frame, so the wait is
+    // for the frame rather than for a fixed settle time.
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              resolve()
+            })
+          })
+        }),
+    )
+    await page.waitForTimeout(1200)
+
+    const after = await measure()
+
+    // The button survives the resize rather than being dropped: the selection is
+    // still live, so the action must still be offered.
+    expect(after, 'the Ask button must survive a viewport resize').not.toBeNull()
+
+    // The viewport is what changed, and the button was re-anchored rather than
+    // left at its old coordinates.
+    expect(after?.viewport).toEqual(SHRUNK)
+    expect(after?.y, 'the button must be re-anchored, not left where it was').not.toBe(before?.y)
+    expect(after?.selectionLength).toBeGreaterThan(0)
+
+    // Every edge is still inside the documented margin, measured against the new
+    // viewport rather than the old one.
+    expect(after?.x).toBeGreaterThanOrEqual(8)
+    expect(after?.y).toBeGreaterThanOrEqual(8)
+    expect((after?.x ?? 0) + (after?.width ?? 0)).toBeLessThanOrEqual((after?.viewport.width ?? 0) - 8 + 1)
+    expect((after?.y ?? 0) + (after?.height ?? 0)).toBeLessThanOrEqual((after?.viewport.height ?? 0) - 8 + 1)
+
+    // The flow still completes: a resize must not cost the reader the action it
+    // just re-anchored.
+    await button.click()
+    await page.waitForTimeout(1500)
+
+    const draft = await readDraft(page)
+    expect(draft).toContain(typedDraft)
+    expect(draft).toContain(fixture.needle)
+    expect(draft).toContain(QUESTION_SUFFIX)
+    expect(await page.evaluate(() => document.activeElement?.getAttribute('data-composer-input') !== null)).toBe(true)
   })
 })
