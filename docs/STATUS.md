@@ -21,6 +21,7 @@
   - fault-tolerant disposer aggregation; the close-out of the one remediation
     required by Task 3
 - Task 3B
+  - commit: `62c691c`
   - documentation and execution-protocol change only; no production code, no tests
   - human-facing progress notes, Task reports, deviation notes and blocker reports
     are pinned to Simplified Chinese (`AGENTS.md`, this workflow doc, and
