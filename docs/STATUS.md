@@ -11,15 +11,21 @@
   - commit: `663a134cdfab7b15760fd0e6e8b9981656f851a9`
 - Task 1A
   - commit: `a2a3f63fbc2b99a073517271728180e4d385f225`
+- Task 2
+  - commit: `227ed6f`
 
 ## Current gate
 
 - Task 1 public contracts: PASS
 - Task 1A reproducibility: PASS
+- Task 2 selection/quote unit suites: PASS (92 tests)
+- Full `pnpm test`: PASS (112 tests)
+- `pnpm typecheck`: PASS
+- `pnpm build`: PASS
 - rc.1 runtime bootstrap smoke: PASS
 - rc.2 compile-contract probe: PASS
 - rc.2 runtime smoke: NOT TESTED
 
 ## Next
 
-Task 2 — universal selection types, normalization, limits and quote formatting.
+Task 3 — scoped DOM selection capture and the adapter registry.
