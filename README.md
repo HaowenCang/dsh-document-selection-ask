@@ -15,12 +15,17 @@
 | Task 2 | COMPLETE |
 | Task 3 | COMPLETE |
 | Task 3A | COMPLETE |
-| Next task | Task 4 — DSH builtin text/Markdown/code/CSV selection adapter |
+| Task 3B | COMPLETE |
+| Task 4 | COMPLETE |
+| Task 5 | COMPLETE |
+| Task 5A | LOCAL CODE PASS / REAL DSH TEXTPREVIEW SMOKE BLOCKED |
+| Task 5B | REAL DSH TEXTPREVIEW SMOKE PASS / 已记录一处 production defect（未修） |
+| Next task | 未授权（Task 6 未开始）；先修 Ask overlay 被展开的右栏遮挡的问题 |
 | Primary runtime | DSH `0.1.5-rc.1` |
 | Forward contract target | DSH `0.1.5-rc.2` |
 | GitHub publication | ACTIVE（public） |
 
-插件功能尚未实现。仓库当前包含已批准的设计与计划、DSH public contract 骨架、可复现构建/测试入口，以及 Task 2、Task 3 建立的选择与引用核心。逐项事实与 commit 见 `docs/STATUS.md`。
+TXT / Markdown / code / CSV 的选择 → 引用 → Ask 流程已经实现，并且已在真实 DSH 预览上通过 Playwright smoke。仍存在一处 production defect：右栏展开时，composer 浮动 overlay 的 stacking context 低于右栏，Ask 按钮在屏幕上可见但无法点击（详见 `docs/STATUS.md`）。该问题不在 Task 5B 范围内修复。
 
 ## 已冻结范围
 
