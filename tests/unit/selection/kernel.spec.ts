@@ -367,7 +367,7 @@ describe('Disposer', () => {
     expect(order).toEqual(['late'])
   })
 
-  it('propagates a throwing disposer and marks the aggregation released', () => {
+  it('reports a throwing disposer after releasing the rest', () => {
     const disposer = new Disposer()
     const released: string[] = []
     disposer.add(() => {
@@ -376,19 +376,22 @@ describe('Disposer', () => {
     disposer.add(() => released.push('second'))
 
     // The exception is the disposer's own and it propagates rather than being
-    // swallowed, matching how the kernel treats a throwing listener.
+    // swallowed, matching how the kernel treats a throwing listener — but only
+    // after every other disposer has run, because the resource behind it would
+    // otherwise stay live in a component that has already been torn down.
     expect(() => {
       disposer.disposeAll()
     }).toThrow('teardown failed')
+    expect(released).toEqual(['second'])
 
-    // The aggregation is still released, so a retry cannot run any of it a
-    // second time. The task's contract is "idempotent and ordered"; a teardown
-    // that survives a throwing step needs per-step isolation, which is
-    // deliberately not built here.
+    // The aggregation is released either way, so a retry cannot run any of it a
+    // second time and does not repeat the failure. The per-case error semantics
+    // (single identity, `AggregateError` for several) are specified in
+    // `tests/unit/selection/lifecycle.spec.ts`.
     expect(() => {
       disposer.disposeAll()
     }).not.toThrow()
-    expect(released).toEqual([])
+    expect(released).toEqual(['second'])
   })
 
   it('releases a fixed list through disposeAll', () => {
