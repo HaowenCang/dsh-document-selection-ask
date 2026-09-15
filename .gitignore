@@ -7,4 +7,14 @@ node_modules/
 # Test and tooling artifacts.
 test-results/
 playwright-report/
+coverage/
 *.tsbuildinfo
+
+# Local environment files. The plugin reads no .env at runtime; these are
+# ignored so that a developer's local secrets cannot reach a public commit.
+.env
+.env.*
+
+# Editor and OS by-products.
+.DS_Store
+Thumbs.db

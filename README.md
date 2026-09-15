@@ -2,6 +2,9 @@
 
 该仓库用于使用 DSH + DeepSeek v4.1 Flash 实现一个通用文档“选中内容 → 询问 DeepSeek”插件。
 
+- 代码仓库：https://github.com/HaowenCang/dsh-document-selection-ask
+- 许可证：MIT（见 `LICENSE`，第三方组件许可证见 `THIRD_PARTY_NOTICES.md`）
+
 ## 当前状态
 
 | 项目 | 状态 |
@@ -9,11 +12,15 @@
 | Design | APPROVED |
 | Task 1 | COMPLETE |
 | Task 1A | COMPLETE |
-| Next task | Task 2 — universal selection types, normalization, limits and quote formatting |
+| Task 2 | COMPLETE |
+| Task 3 | COMPLETE |
+| Task 3A | COMPLETE |
+| Next task | Task 4 — DSH builtin text/Markdown/code/CSV selection adapter |
 | Primary runtime | DSH `0.1.5-rc.1` |
 | Forward contract target | DSH `0.1.5-rc.2` |
+| GitHub publication | ACTIVE（public） |
 
-插件功能尚未实现。仓库当前只包含已批准的设计与计划、Task 1 建立的 DSH public contract 骨架，以及 Task 1A 建立的可复现构建/测试入口。逐项事实与 commit 见 `docs/STATUS.md`。
+插件功能尚未实现。仓库当前包含已批准的设计与计划、DSH public contract 骨架、可复现构建/测试入口，以及 Task 2、Task 3 建立的选择与引用核心。逐项事实与 commit 见 `docs/STATUS.md`。
 
 ## 已冻结范围
 
@@ -108,11 +115,12 @@ Task 1 的启动指令存档在：
 Contract 编译所需的 DSH public packages 在本项目 `devDependencies` 中按同一 release 精确固定，`pnpm install` 只写本项目 `node_modules`：
 
 ```bash
-git clone <repo> && cd dsh-universal-document-selection
+git clone https://github.com/HaowenCang/dsh-document-selection-ask.git
+cd dsh-document-selection-ask
 pnpm install
 pnpm typecheck   # normative public-contract gate
 pnpm test
 pnpm build
 ```
 
-不需要、也不允许预先修复用户级 DSH 安装。`pnpm dsh:doctor` 仅做检测：比对 contract pin 与本机 DSH 安装版本，不一致时以非零退出码报告；`--runtime` 要求必须找到本机安装。
+不需要、也不允许预先修复用户级 DSH 安装。`pnpm dsh:doctor` 仅做检测：比对 contract pin 与本机 DSH 安装版本，不一致时以非零退出码报告；`--runtime` 要求必须找到本机安装。仓库不含任何机器绝对路径：全新 clone 只需 `pnpm install` 即可通过上述 gate。
