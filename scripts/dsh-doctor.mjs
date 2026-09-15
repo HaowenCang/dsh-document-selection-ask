@@ -50,10 +50,14 @@ const requireRuntime = process.argv.includes('--runtime')
  * against the published declarations. Every entry is a direct or transitive
  * `import type` reachable from `src/client/dsh/contracts.ts`; nothing here is
  * speculative, and nothing else from the DSH tree is pinned.
+ *
+ * `dsh-client-ui-renderer` joined the list in Task 5: it is the package that
+ * declares `ctx.slots`, which the Ask overlay is contributed through.
  */
 const CONTRACT_PACKAGES = [
   'cordis',
   'dsh-client-ui-slots',
+  'dsh-client-ui-renderer',
   'dsh-client-store',
   'dsh-client-ui-dockkit',
   'dsh-client-ui-session',

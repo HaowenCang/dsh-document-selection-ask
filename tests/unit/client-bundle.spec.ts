@@ -22,6 +22,7 @@
 
 import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { createRequire } from 'node:module'
 import { runInNewContext } from 'node:vm'
 import { fileURLToPath } from 'node:url'
 
@@ -32,6 +33,25 @@ const bundlePath = join(repoRoot, 'lib', 'client.js')
 
 /** The plugin id the loader registers and the DSH patch row addresses. */
 const PLUGIN_ID = 'dsh-document-selection-ask'
+
+/**
+ * Resolve a shared client module the way the DSH loader's `require` does.
+ *
+ * The factory receives a `require` for the shared runtime modules DSH itself
+ * loads — `react` and `react/jsx-runtime` for this bundle — so the spec supplies
+ * the same two from this project's own installed copies.
+ */
+const requireShared = createRequire(import.meta.url)
+
+/**
+ * Services the built client must declare in its runtime `inject`.
+ *
+ * `slots` is the renderer-owned slot registry the Ask overlay is contributed
+ * through. Declaring it is not optional: `ctx.slots.inject` throws when the
+ * registry is missing rather than waiting for it, and the failure appears only
+ * in a real boot, because nothing in this repository constructs the DSH fiber.
+ */
+const REQUIRED_SERVICES = ['slots']
 
 interface LoaderCall {
   readonly id: string
@@ -103,16 +123,43 @@ describe('built client bundle', () => {
     const calls = evaluateAsClassicScript(readFileSync(bundlePath, 'utf8'))
     const factory = calls[0]?.factory
     expect(factory).toBeDefined()
-    const exports = factory?.(() => {
-      throw new Error('the client bundle must not require anything yet')
-    }) as { apply?: unknown; inject?: unknown }
+    const exports = factory?.(requireShared) as { apply?: unknown; inject?: unknown }
     expect(typeof exports.apply).toBe('function')
     expect(Array.isArray(exports.inject)).toBe(true)
   })
 
+  it('declares every runtime service the plugin injects through', () => {
+    const calls = evaluateAsClassicScript(readFileSync(bundlePath, 'utf8'))
+    const exports = calls[0]?.factory?.(requireShared) as { inject?: unknown }
+
+    // A service reached through `ctx` without being declared here is the failure
+    // this assertion exists for: the DSH fiber would apply the plugin before the
+    // service exists, and `ctx.slots.inject` would throw in the browser with
+    // nothing in the build output to warn about it.
+    expect(exports.inject).toEqual(REQUIRED_SERVICES)
+  })
+
+  it('requires no DSH module at load time, only the shared runtime', () => {
+    const requested: string[] = []
+    const calls = evaluateAsClassicScript(readFileSync(bundlePath, 'utf8'))
+    const factory = calls[0]?.factory
+    factory?.((specifier: string) => {
+      requested.push(specifier)
+      return requireShared(specifier)
+    })
+
+    // The plugin's DSH dependencies are services and types, not runtime modules:
+    // requiring one would mean the boot had to have loaded that package before
+    // this bundle, which is a load-order contract nothing here can verify.
+    expect(requested.length).toBeGreaterThan(0)
+    for (const specifier of requested) {
+      expect(specifier.startsWith('@deepseek-ai/'), `${specifier} must not be required`).toBe(false)
+    }
+  })
+
   it('registers through the fiber effect hook and owes the fiber a disposer', () => {
     const calls = evaluateAsClassicScript(readFileSync(bundlePath, 'utf8'))
-    const exports = calls[0]?.factory?.(() => undefined) as { apply: (ctx: unknown) => void }
+    const exports = calls[0]?.factory?.(requireShared) as { apply: (ctx: unknown) => void }
     // `effect` is the fiber's own lifecycle contract: a contribution is made
     // inside the effect body and its teardown is what the body returns. The hook
     // is stubbed because the bundle runs outside a DSH fiber here, and the
@@ -123,26 +170,30 @@ describe('built client bundle', () => {
         bodies.push(execute)
         return () => undefined
       },
+      slots: {
+        inject: (_key: string, callback: () => (() => void) | void): (() => void) => {
+          const produced = callback()
+          return typeof produced === 'function' ? produced : () => undefined
+        },
+        register: (): (() => void) => () => undefined,
+      },
     }
 
     expect(() => {
       exports.apply(ctx)
     }).not.toThrow()
-    expect(bodies).toHaveLength(1)
+    expect(bodies.length).toBeGreaterThan(0)
 
-    // The body has to produce a real disposer: one that returns nothing would
+    // Every body has to produce a real disposer: one that returns nothing would
     // leave the fiber with nothing to unload, and `Fiber.effect` rejects that
     // shape with a `TypeError`.
-    const body = bodies[0]
-    expect(body).toBeDefined()
-    const produced = body?.()
-    expect(typeof produced).toBe('function')
-
-    // Teardown must then detach the registration the body made, so that
-    // unloading the plugin leaves no adapter behind.
-    expect(() => {
-      produced?.()
-    }).not.toThrow()
+    for (const body of bodies) {
+      const produced = body()
+      expect(typeof produced).toBe('function')
+      expect(() => {
+        produced?.()
+      }).not.toThrow()
+    }
   })
 
   it('fails on the shapes the loader cannot accept', () => {

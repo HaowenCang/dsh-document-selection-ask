@@ -362,6 +362,13 @@ function adapterRegistry(): SelectionAdapterRegistry {
  *
  * `effect` runs its body immediately and returns a disposer that runs whatever
  * the body returned, which is the contract `Fiber.effect` publishes.
+ *
+ * `slots` is stubbed to invoke `inject`'s callback synchronously, which is what
+ * the real registry does once the slot's parent entry has declared it: the
+ * conversation shell declares `conversation.input.overlay` during boot, so a
+ * plugin loaded afterwards contributes immediately. The callback's own disposer
+ * is recorded alongside the other effects, because the registry owns it through
+ * the same fiber.
  */
 function fakeClientContext(): { readonly ctx: ClientContext; readonly disposers: (() => void)[] } {
   const disposers: (() => void)[] = []
@@ -373,6 +380,16 @@ function fakeClientContext(): { readonly ctx: ClientContext; readonly disposers:
       }
       disposers.push(produced)
       return produced
+    },
+    slots: {
+      inject: (_key: string, callback: () => () => void): (() => void) => {
+        const produced = callback()
+        if (typeof produced === 'function') {
+          disposers.push(produced)
+        }
+        return produced
+      },
+      register: (): (() => void) => () => undefined,
     },
   } as unknown as ClientContext
 
@@ -1041,7 +1058,7 @@ describe('client registration', () => {
   it('registers the adapter on the client context and releases it on disposal', () => {
     const { ctx, disposers } = fakeClientContext()
 
-    const registry = applyClient(ctx)
+    const { registry } = applyClient(ctx)
 
     const preview = mount(
       previewShell('dsh-resource://file/session/s1/notes.txt', PLAIN_ID, plainBody([['1', 'alpha']])),
@@ -1057,10 +1074,13 @@ describe('client registration', () => {
     expect(captured.snapshot?.adapterId).toBe(ADAPTER_ID)
     expect(captured.snapshot?.fileName).toBe('notes.txt')
 
-    // One effect owns the registration, so unloading the plugin fiber removes
-    // the adapter rather than leaving it behind for the next hot reload.
-    expect(disposers).toHaveLength(1)
+    // Every contribution the fiber owns hands back a real disposer: the adapter
+    // registration, the overlay's style sheet, the browser selection lifecycle
+    // and the slot injection. Unloading the plugin fiber must release all of
+    // them rather than leaving one behind for the next hot reload.
+    expect(disposers.length).toBeGreaterThan(0)
     for (const dispose of disposers) {
+      expect(typeof dispose).toBe('function')
       dispose()
     }
 
@@ -1073,7 +1093,14 @@ describe('client registration', () => {
   it('does not touch the document preview registry for the builtin renderers', () => {
     const registered: string[] = []
     const ctx = {
-      effect: (): (() => void) => () => undefined,
+      effect: (execute: () => (() => void) | void): (() => void) => {
+        const produced = execute()
+        return typeof produced === 'function' ? produced : () => undefined
+      },
+      slots: {
+        inject: (_key: string, callback: () => () => void): (() => void) => callback(),
+        register: (): (() => void) => () => undefined,
+      },
       documentPreviews: {
         register: (definition: { readonly id: string }): (() => void) => {
           registered.push(definition.id)

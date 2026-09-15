@@ -1,6 +1,13 @@
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
+  // Vite's esbuild transform does not read `jsx` from `tsconfig.client.json`, so
+  // a spec's JSX would compile to `React.createElement` against a runtime this
+  // project never makes global. Stating the automatic runtime here keeps the
+  // specs compiling the same way the bundler compiles `src/`.
+  esbuild: {
+    jsx: 'automatic',
+  },
   test: {
     include: ['tests/unit/**/*.spec.ts', 'tests/client/**/*.spec.ts', 'tests/client/**/*.spec.tsx'],
     exclude: ['tests/browser/**', 'node_modules/**', 'lib/**'],

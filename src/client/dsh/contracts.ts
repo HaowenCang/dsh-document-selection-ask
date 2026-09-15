@@ -30,6 +30,11 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/client'
 // `PropsRuntime` plus the `SlotMap`/`GlobalStandardProps`/`SessionStandardProps`
 // declaration-merging tables the whole slot contract is composed from.
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
+// `ctx.slots` — the renderer-owned slot registry — and the `slots/changed`
+// event. Declared by this package's `client` entry, and the reason the client
+// half lists `slots` in its runtime `inject`: a slot contribution made before
+// the registry is available throws instead of waiting.
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 // `InputActions`, `InputState`, and the `conversation.input.overlay` list slot.
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 
@@ -38,6 +43,7 @@ import type {
   DocumentLoadMode,
   DocumentPreviewDefinition,
 } from '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/client'
+import type { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {
   InputActions,
@@ -46,6 +52,9 @@ import type {
 
 /** The client root context DSH hands to a plugin's browser `apply`. */
 export type ClientContext = Context
+
+/** The renderer-owned slot registry the Ask overlay registers into. */
+export type { SlotRegistry }
 
 /** Standard props every document body registered under a preview key receives. */
 export type { DocumentPreviewProps } from '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/client'

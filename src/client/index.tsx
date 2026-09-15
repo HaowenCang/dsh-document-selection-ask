@@ -11,10 +11,17 @@ import { applyClient } from './dsh/register.js'
 
 /**
  * Client services this plugin's browser half requires before `apply` runs.
- * Task 1 needs none; later tasks add the registries they actually consume, and
- * the list is deliberately explicit rather than a wildcard.
+ *
+ * `slots` is the renderer-owned slot registry, and it is listed here for the
+ * reason the runtime dependency list exists: the Ask overlay is contributed
+ * through `ctx.slots.inject`, which throws when the registry is absent rather
+ * than waiting for it. The DSH fiber resolves `inject` before calling `apply`,
+ * so a plugin that names the service loads after the renderer and never sees
+ * the failure. The list stays explicit rather than wildcard — a package
+ * dependency edge in `package.json` is not the same statement, and having the
+ * module on the graph does not make the service available.
  */
-export const inject: string[] = []
+export const inject: string[] = ['slots']
 
 /**
  * Client plugin body invoked by the DSH web boot.

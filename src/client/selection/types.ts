@@ -102,6 +102,12 @@ export interface SelectionSnapshot {
  * input, releasing over the assistant transcript — and those stay silent.
  * Only the size limits are surfaced to the user, since reaching them means a
  * real selection that this plugin declines to send.
+ *
+ * `draft-write-failed` is the one reason that describes a write rather than a
+ * capture: the selection was valid and the composer refused the draft. It is
+ * reported so the selection is preserved for a retry, and it exists as its own
+ * value because folding it into `renderer-not-ready` would send a future
+ * diagnosis after a document renderer that was never involved.
  */
 export type SelectionRejectReason =
   | 'collapsed'
@@ -112,3 +118,4 @@ export type SelectionRejectReason =
   | 'too-large'
   | 'too-many-cells'
   | 'renderer-not-ready'
+  | 'draft-write-failed'

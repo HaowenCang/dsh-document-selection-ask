@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest'
 
 import { formatProvenance } from '../../../src/client/provenance/format.js'
 import { SELECTION_QUESTION_SUFFIX, formatSelectionForDraft } from '../../../src/client/quote/format-selection.js'
+import { ZH, resolveSelectionStrings } from '../../../src/client/ui/locales.js'
 import { snapshot } from '../selection/snapshot.js'
 
 /** `请针对以上选中内容回答：` */
@@ -125,5 +126,47 @@ describe('question suffix composition', () => {
     const expected = `> ${expectedLine('a.txt', '')}\n> alpha\n\n${QUESTION_TEXT}`
 
     expect(block).toBe(expected)
+  })
+})
+
+/** `询问 DeepSeek` */
+const ASK_TEXT = String.fromCodePoint(0x8be2, 0x95ee, 0x20, 0x44, 0x65, 0x65, 0x70, 0x53, 0x65, 0x65, 0x6b)
+
+/** `选区过大` */
+const TOO_LARGE_SUBJECT = String.fromCodePoint(0x9009, 0x533a, 0x8fc7, 0x5927)
+/** `，` */
+const FULL_WIDTH_COMMA = String.fromCodePoint(0xff0c)
+/** `请缩小范围` */
+const TOO_LARGE_REQUEST = String.fromCodePoint(0x8bf7, 0x7f29, 0x5c0f, 0x8303, 0x56f4)
+
+describe('Ask UI copy', () => {
+  it('names the Ask button with exactly the documented code points', () => {
+    expect(ZH.ask).toBe(ASK_TEXT)
+    expect([...ZH.ask].map((character) => character.codePointAt(0))).toEqual([
+      0x8be2, 0x95ee, 0x20, 0x44, 0x65, 0x65, 0x70, 0x53, 0x65, 0x65, 0x6b,
+    ])
+  })
+
+  it('words the size limit with exactly the documented code points', () => {
+    const expected = TOO_LARGE_SUBJECT + FULL_WIDTH_COMMA + TOO_LARGE_REQUEST
+
+    expect(ZH.selectionTooLarge).toBe(expected)
+    expect([...ZH.selectionTooLarge].map((character) => character.codePointAt(0))).toEqual([
+      0x9009, 0x533a, 0x8fc7, 0x5927, 0xff0c, 0x8bf7, 0x7f29, 0x5c0f, 0x8303, 0x56f4,
+    ])
+  })
+
+  it('resolves Chinese as the default for an unknown or absent language', () => {
+    // The product's default must not be replaced by English merely because a host
+    // published no language at all.
+    expect(resolveSelectionStrings(undefined)).toBe(ZH)
+    expect(resolveSelectionStrings('zh')).toBe(ZH)
+    expect(resolveSelectionStrings('zh-CN')).toBe(ZH)
+    expect(resolveSelectionStrings('ZH-hant')).toBe(ZH)
+  })
+
+  it('resolves English only for a positively non-Chinese language', () => {
+    expect(resolveSelectionStrings('en').ask).toBe('Ask DeepSeek')
+    expect(resolveSelectionStrings('en-US').selectionTooLarge).not.toBe(ZH.selectionTooLarge)
   })
 })

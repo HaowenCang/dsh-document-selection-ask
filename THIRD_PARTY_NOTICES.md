@@ -25,15 +25,19 @@ plugin and are **not** shipped in the published package, which is why the
 
 | Package | Version | License | Purpose |
 | --- | --- | --- | --- |
-| `jsdom` | 30.0.1 | MIT | Test-only DOM implementation. The client specs run under the Vitest `jsdom` environment so that selection ownership, `Range` behaviour and scope checks are exercised against a real `Selection`/`Range` pair rather than against hand-written stand-ins. No `jsdom` type or value is referenced by `src/`. |
+| `jsdom` | 30.0.1 | MIT | Test-only DOM implementation. The client specs run under the Vitest `jsdom` environment so that selection ownership, `Range` behaviour and the overlay's render lifecycle are exercised against a real `Selection`/`Range` pair and a real DOM rather than against hand-written stand-ins. No `jsdom` type or value is referenced by `src/`. |
+| `@types/react-dom` | 18.3.7 | MIT | Type declarations for React DOM, required because the client specs mount components with `createRoot` (Task 5). Types only; nothing from this package reaches the bundle. |
 
 jsdom — MIT. Development/test-only dependency; not included in the runtime plugin
 bundle.
 
-The license was verified against the installed package metadata rather than
+`@types/react-dom` — MIT. Development/test-only type declarations; React DOM
+itself is supplied by the DSH boot, not by this package.
+
+The licenses were verified against the installed package metadata rather than
 against the project's documentation: `node_modules/jsdom/package.json` declares
-`"license": "MIT"`, and `node_modules/jsdom/LICENSE.txt` carries the MIT
-permission text.
+`"license": "MIT"` with the MIT text in `node_modules/jsdom/LICENSE.txt`, and
+`@types/react-dom` is published by DefinitelyTyped under MIT.
 
 The remaining `devDependencies` listed in `package.json` are the DSH client
 contract packages pinned to the verified runtime release, plus TypeScript,
