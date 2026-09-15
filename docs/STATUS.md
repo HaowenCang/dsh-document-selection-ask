@@ -135,6 +135,69 @@
     occlusion directly and triggers the button programmatically for the rest of
     the flow. Fixing it is a production change and belongs to its own round
 
+- Task 5C
+  - commit: recorded by the commit that follows this file
+  - status: `PRODUCTION DEFECT FIXED / REAL DSH TEXTPREVIEW SMOKE PASS`
+  - the fix is architectural rather than numerical. The visible Ask surface moved
+    out of `conversation.input.overlay` — which renders inside
+    `wSkVaW_composerStack`, whose `z-index: 1` traps any `z-index` the plugin
+    could set — into `shell.overlay`, the frame's own root-scoped floating layer,
+    a sibling of all three columns at `z-index: 20` with `pointer-events: none`
+    on the layer and `auto` on its entries. No `z-index` of this plugin's own was
+    raised, and no DSH file was touched
+  - the rc.1 contract was verified against the installed
+    `@deepseek-ai/dsh-client-ui-layout@0.1.5-rc.1` bundle rather than against the
+    design documents: `shell.overlay` is declared `kind: 'list'`, `scope: 'root'`
+    by that package's `client` entry, the frame renders it as
+    `<div class="…overlayLayer" data-shell-overlay>` with
+    `z-index: 20; pointer-events: none; position: absolute; inset: 0`, and the
+    slot wrapper carries `display: contents` so an entry's own box is a direct
+    child of the layer. All of it was then re-observed in the live browser
+  - the session-scoped half is retained, but it no longer draws the button.
+    `ComposerTargetRegistrar` occupies `conversation.input.overlay` and publishes
+    one `ComposerTarget` per mounted session — `readDraft`, `setDraft`, `focus`
+    and the registrar's own inert anchor — into a `ComposerTargetRegistry` that
+    `applyClient` creates per call
+  - the registry is React-free, keyed by session id, and its disposer is
+    identity-checked rather than key-deleting, so the old generation's cleanup
+    cannot evict the new generation's target during a React transition. A stale
+    disposer and a current one are separate cases in the unit suite
+  - **no document-wide composer lookup exists anywhere.** `focus` still starts at
+    an element inside the composer card — now the registrar's zero-sized
+    `data-dsa-composer-target-anchor` span instead of the overlay's own root — and
+    the only `document.querySelector('[data-composer-card]')` strings in the tree
+    are in comments explaining why it is not used. A registrar that rendered the
+    button would have defeated the whole round; the client fixture mounts the two
+    halves in **separate React roots**, the surface deliberately outside the card
+  - the surface's visibility is a three-way gate: the session parsed from the
+    snapshot's own `resourceAddress`, the session the shell has selected read
+    through the public `useSessions` global standard prop, and a session with a
+    live registered target. An `absolute` address still proves no session and
+    still hides the button, and a resident composer for another session is not
+    permission to write to it
+  - the draft is read at click time from the target, which dereferences a ref the
+    registrar keeps current from the composer's own published state, because the
+    surface can no longer call `useInput` — that hook is `useSyncExternalStore`
+    based and legal only during a render. The registration itself depends only on
+    the session id and the registry, so typing does not rebuild it
+  - `@deepseek-ai/dsh-client-ui-layout@0.1.5-rc.1` is pinned as an exact
+    `devDependency` (MIT, development/contract-only) and probed at compile time by
+    `tests/compatibility/contracts.compile.ts`, which asserts the slot's `kind`
+    and `scope` as literal members and that the slot's global standard props can
+    satisfy the surface's own `useSessions` contract. The package edge was added
+    to `dsh.client.inject`; no Cordis service was added, because the plugin never
+    reads `ctx.layout`
+  - the Task 5B occlusion assertion is **inverted, not deleted**:
+    `keeps the Ask button reachable while the right column is expanded` now
+    asserts `elementFromPoint` reaches the button, that the button is outside the
+    composer and inside `[data-shell-overlay]`, and that an ordinary Playwright
+    `locator.click()` passes its actionability check — with a comment recording
+    that the old behaviour failed there. The same two facts are asserted at
+    1600×1000 and 2560×1300 in their own cases
+  - the programmatic-click workaround is gone from the real-TextPreview smoke:
+    `pressAsk` now calls `locator.click()`, and `force`, `dispatchEvent` and
+    in-page `.click()` appear nowhere in it
+
 ## Current gate
 
 - Task 1 public contracts: PASS
@@ -156,7 +219,14 @@
 - Task 5A capture-rejection domain guard: PASS (3 unit cases; the same split is
   asserted at compile time by an exhaustive `switch` whose `default` branch
   assigns to `never`, so a ninth `SelectionRejectReason` fails `pnpm typecheck`)
-- Full `pnpm test`: PASS (393 tests)
+- Task 5C composer target registry suite: PASS (13 unit cases) — lookup, two-session
+  isolation, replacement, stale-disposer identity, idempotent disposer,
+  subscribe/unsubscribe, and anchor-scoped focus
+- Task 5C shell Ask surface suite: PASS (15 client cases) — surface outside the
+  composer card, the three-way session gate, session isolation, press-time target
+  re-resolution, latest-draft read, registration stability, matching-session focus
+- Task 5C selection overlay suite: PASS (26 client cases, rewritten for the split)
+- Full `pnpm test`: PASS (421 tests)
 - `pnpm typecheck`: PASS
 - `pnpm build`: PASS
 - `git diff --check`: PASS
@@ -165,18 +235,22 @@
 - rc.1 viewport-resize regression (Playwright, live instance): PASS, and verified
   to discriminate — the case fails against the pre-fix listener with the button
   left at its old `y`
-- rc.1 real DSH TextPreview smoke (Playwright, live instance): PASS (6 cases) —
+- rc.1 real DSH TextPreview smoke (Playwright, live instance): PASS (8 cases) —
   TXT line 2 with exact provenance, code rows 2–3 with exact provenance, Markdown
   body with file-only provenance, Markdown code fence file-only through a real
-  Shiki block, and the occlusion defect recorded as a live assertion
-- rc.1 real DSH TextPreview smoke against a second profile boot: PASS (6 cases)
+  Shiki block, and three occlusion-regression cases that assert the expanded right
+  column no longer reaches the button's pixel. **Every one of them presses the
+  button with an ordinary `locator.click()`**
+- rc.1 stacking regression at 1600×1000 and 2560×1300: PASS with the right column
+  expanded and the real TextPreview mounted
 - smoke-profile duplicate-loader-entry regression: PASS (`prepare` twice reports
   `rows=unchanged`; `validate` clean; two consecutive boots succeed)
 - production-bundle isolation: PASS (no smoke marker in `lib/client.js`,
   `lib/index.mjs`, or the published `files` list)
 - rc.2 compile-contract probe: PASS
 - rc.2 runtime smoke: NOT TESTED
-- production defect: Ask overlay occluded by the expanded right column — OPEN
+- production defect: Ask overlay occluded by the expanded right column — FIXED in
+  Task 5C, with the inverted assertion kept as the regression guard
 
 ## Open source
 
@@ -186,8 +260,8 @@
 - Task 5 — PASS
 - Task 5A — LOCAL CODE PASS / REAL DSH TEXTPREVIEW SMOKE BLOCKED
 - Task 5B — REAL DSH TEXTPREVIEW SMOKE PASS / PRODUCTION DEFECT RECORDED
-  (the Ask overlay is occluded by the expanded right column; no `src/` change was
-  made in this round)
+- Task 5C — PASS (the defect is fixed; the Ask surface renders in `shell.overlay`
+  and is reachable by a real click while the right column is expanded)
 - GitHub publication — ACTIVE
 - Repository visibility — public
 - License — MIT
@@ -202,27 +276,45 @@ metadata.
 
 ## Next
 
-Fixing the recorded production defect — the Ask overlay cannot be clicked while a
-document preview is open — before Task 6. Task 6 is not authorized in this round.
+Task 6 and the format renderers (PDF, DOCX, PPTX, XLSX) are next and are **not
+authorized in this round**. The Ask flow is complete for the builtin text,
+Markdown, code and CSV previews and is now reachable while a document preview is
+open, which was the last blocker in front of them.
 
-The candidate fixes, in order of how much of the plugin they disturb:
+The production defect Task 5B recorded is closed. The chosen fix was option 2 of
+the three candidates Task 5B listed — moving the surface into a slot that is a
+sibling of both columns — and the cost that option was said to carry did not
+materialize in the form anticipated. The focus path did **not** have to start from
+the document: the session-scoped registrar that replaced the overlay inside the
+composer supplies its own DOM anchor, so `focus-composer.ts` still finds
+`[data-composer-card]` by walking up from an element inside the composer the
+selection belongs to. The two rejected options remain rejected for the reasons
+recorded there: raising the overlay's `z-index` needs a stacking context the
+plugin does not own, and clamping the button to the centre column would have been
+cosmetic and left the same defect for every other floating surface.
 
-1. raise the composer's floating overlay above the right column. That requires a
-   stacking context the plugin does not own: the overlay's own `z-index: 20` is
-   trapped inside `wSkVaW_composerStack` (`z-index: 1`), so the change would be a
-   DSH-side one;
-2. move the Ask surface out of `conversation.input.overlay` into a slot that is a
-   sibling of both columns (`shell.overlay` is one, at `z-index: 20` on
-   `[data-shell-overlay]`). This is a plugin-local change, but it costs the
-   composer-descendant relationship the focus path currently relies on:
-   `focus-composer.ts` searches for `[data-composer-card]` from the overlay's own
-   anchor, so the search would have to start from the document instead;
-3. clamp the button to the centre column rather than the viewport. This is
-   cosmetic — the button would stop being occluded without the column moving —
-   and it would leave the same defect for any other floating surface.
+Carried forward from Task 5C:
 
-Option 2 is the one that keeps the fix inside this repository, and it needs its own
-round with its own failing browser case.
+- the composer half of the contract is now a published object rather than a
+  closure inside the component. Anything that later needs the draft, the action
+  face or the caret from outside the composer should go through
+  `ComposerTargetRegistry` — keyed by session id — and not through a DOM lookup;
+  `document.querySelector('[data-composer-card]')` returns whichever composer the
+  DOM puts first, which is not provably the one the selection belongs to;
+- a disposer obtained from that registry is identity-checked. A caller that holds
+  one past its own unmount may call it freely: it removes nothing once its token
+  has been superseded, which is what makes a React transition safe;
+- `shell.overlay` is at `z-index: 20` on `[data-shell-overlay]` and the layer is
+  click-through. Any future surface added there must restore `pointer-events:
+  auto` on its own root element, or it will render and be unpressable — the
+  original defect in a new costume;
+- the surface reads the active session through the public `useSessions` global
+  standard prop. A root-scoped slot has no session scope, so this is the only
+  published route; `ctx.sessions` is not read and no private store is touched;
+- the real-DSH smoke's row selection retries the same real gesture when the
+  browser reports a selection shorter than the row. The document column animates
+  in, and a drag anchored while it is still moving lands on a different glyph. The
+  retry is a property of the shell's animation, not of the plugin.
 
 Task 5B notes carried forward:
 

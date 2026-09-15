@@ -20,12 +20,13 @@
 | Task 5 | COMPLETE |
 | Task 5A | LOCAL CODE PASS / REAL DSH TEXTPREVIEW SMOKE BLOCKED |
 | Task 5B | REAL DSH TEXTPREVIEW SMOKE PASS / 已记录一处 production defect（未修） |
-| Next task | 未授权（Task 6 未开始）；先修 Ask overlay 被展开的右栏遮挡的问题 |
+| Task 5C | COMPLETE — production defect 已修复（Ask surface 迁至 `shell.overlay`） |
+| Next task | 未授权（Task 6 未开始） |
 | Primary runtime | DSH `0.1.5-rc.1` |
 | Forward contract target | DSH `0.1.5-rc.2` |
 | GitHub publication | ACTIVE（public） |
 
-TXT / Markdown / code / CSV 的选择 → 引用 → Ask 流程已经实现，并且已在真实 DSH 预览上通过 Playwright smoke。仍存在一处 production defect：右栏展开时，composer 浮动 overlay 的 stacking context 低于右栏，Ask 按钮在屏幕上可见但无法点击（详见 `docs/STATUS.md`）。该问题不在 Task 5B 范围内修复。
+TXT / Markdown / code / CSV 的选择 → 引用 → Ask 流程已经实现，并且已在真实 DSH 预览上通过 Playwright smoke。Task 5B 记录的那处 production defect 已由 Task 5C 修复：可见的 Ask surface 现在位于 `shell.overlay`（root scope，是三个栏位的兄弟节点），不再受 `wSkVaW_composerStack` 的 stacking context 限制，因此右栏展开且真实 TextPreview 挂载时，按钮仍可被真实鼠标点击。composer 侧的契约由 `conversation.input.overlay` 中的 `ComposerTargetRegistrar` 通过 `ComposerTargetRegistry` 按 session 提供；遮挡回归、draft 读取时机与会话隔离规则见 `docs/STATUS.md`。
 
 ## 已冻结范围
 
