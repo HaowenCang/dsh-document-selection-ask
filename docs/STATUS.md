@@ -68,6 +68,25 @@
   - the overlay's style sheet is a runtime-injected `style[data-plugin-css]`
     element rather than a `*.module.css` import, because tsdown drops that import
     silently and the components would then read class names from `undefined`
+- Task 5A
+  - commit: recorded by the commit that follows this file
+  - status: `LOCAL CODE PASS / REAL DSH TEXTPREVIEW SMOKE BLOCKED`
+  - closes the `resize` listener ownership defect: the browser dispatches
+    `resize` at the `Window` a document belongs to, so the listener is installed
+    on `doc.defaultView` and released from the same target, while `scroll` stays a
+    document capture listener because that is the only way a preview body's own
+    scrolling reaches the lifecycle. A viewport resize therefore reports no
+    `SelectionContext.target` at all — a `Window` is not a `Node`, and the
+    selection's own endpoints are the evidence a re-anchor has
+  - restores `SelectionRejectReason` to the eight capture-domain reasons of
+    Task 2. `draft-write-failed` was a write failure filed in the capture
+    vocabulary; it now belongs to `AskFailureReason`, declared by
+    `dsh/composer-bridge.ts`, which is the module that owns the write.
+    `validateSelectionSize` returns `'too-large' | null` rather than the whole
+    capture union, so the bridge's narrowing is exhaustive by construction and no
+    cast is needed to reach its own failure type
+  - the real-TextPreview browser smoke remains unachieved; the reason is recorded
+    under `Next` rather than worked around
 
 ## Current gate
 
@@ -85,12 +104,22 @@
 - Task 5 overlay placement suite: PASS (18 client cases)
 - Task 5 Ask copy integrity: PASS (code-point assertions for both strings)
 - Task 5 resource-address suite: PASS (15 unit cases)
-- Full `pnpm test`: PASS (378 tests)
+- Task 5A composer bridge suite: PASS (11 client cases)
+- Task 5A browser selection lifecycle suite: PASS (28 client cases)
+- Task 5A capture-rejection domain guard: PASS (3 unit cases; the same split is
+  asserted at compile time by an exhaustive `switch` whose `default` branch
+  assigns to `never`, so a ninth `SelectionRejectReason` fails `pnpm typecheck`)
+- Full `pnpm test`: PASS (386 tests)
 - `pnpm typecheck`: PASS
 - `pnpm build`: PASS
 - `git diff --check`: PASS
 - rc.1 runtime bootstrap smoke: PASS
-- rc.1 Ask flow smoke (Playwright, live instance): PASS (6 cases)
+- rc.1 Ask flow smoke (Playwright, live instance): PASS (7 cases)
+- rc.1 viewport-resize regression (Playwright, live instance): PASS, and verified
+  to discriminate — the case fails against the pre-fix listener with the button
+  left at its old `y`
+- rc.1 real DSH TextPreview smoke (TXT / code / Markdown): BLOCKED, no reachable
+  route to a shell-opened document in a headless instance
 - rc.2 compile-contract probe: PASS
 - rc.2 runtime smoke: NOT TESTED
 
@@ -100,6 +129,7 @@
 - Task 3B — PASS
 - Task 4 — PASS
 - Task 5 — PASS
+- Task 5A — LOCAL CODE PASS / REAL DSH TEXTPREVIEW SMOKE BLOCKED
 - GitHub publication — ACTIVE
 - Repository visibility — public
 - License — MIT
@@ -143,7 +173,9 @@ Task 5 notes carried forward:
   and an injected preview root reproduces the `data-` contract the adapter reads.
   Selection, gesture, geometry, focus, the composer write and the
   session-isolation comparison are all the real ones. Driving the preview from
-  the shell's own file panel remains unverified;
+  the shell's own file panel remains unverified, and Task 5A established why it is
+  unreachable in this instance rather than merely unfound — see the Task 5A note
+  below;
 - the smoke requests `zh-CN`. DSH resolves its own locale from the browser's
   language list and writes it to `<html lang>`, and this plugin reads that
   attribute; Playwright's default `en-US` would put the whole application in
@@ -151,6 +183,41 @@ Task 5 notes carried forward:
 - the smoke needs a running instance: `DSH_SMOKE_URL` names it, and the spec is
   skipped without it, so `pnpm test:browser` stays usable on a machine with no
   DSH installed.
+
+Task 5A notes carried forward — why the real-TextPreview smoke is blocked:
+
+- the right column is a slot whose **occupant opens itself**. `ctx.layout`
+  publishes `openRightbar`/`closeRightbar`, and only the right Sidebar calls
+  them, on opening a resource; nothing else writes that state. The document
+  preview DOM therefore cannot be made to exist by any external step — it is a
+  consequence of a navigation the shell itself has to perform;
+- and in a headless instance with a fresh session, every route to that navigation
+  was closed, each one verified rather than assumed:
+  - the Files tab exists and is registered, but its tab strip
+    (`[data-dockkit-add-tab]`, `[data-dockkit-split-button]`,
+    `[data-sidebar-right-toggle]`) sits inside the collapsed right column and
+    reports `visibility: hidden` at every viewport tried, including 2560 px wide,
+    both in this instance and in the GUI on this machine. It is never clickable,
+    so the tab cannot be opened;
+  - the composer's `@` file reference picker **does** work and **is** real: it
+    lists the session workspace, it is rooted there, it navigates into
+    directories, and committing an option builds a genuine
+    `[data-composer-chip="reference"]` decorator. But that chip is prompt-context
+    metadata — clicking it, double-clicking it and right-clicking it perform no
+    navigation, and the transcript's own reference crumb never rendered in a
+    session that was still reachable afterwards;
+  - no reachable session exposed a transcript row offering the `openFile` action
+    (`dsh-client-ui-chat` wires `openFile` to `ctx.sidebarRight.openResource`), so
+    the shell's own file-link path had nothing to click;
+- the fixture directory is `smoke-fixtures/` at the repository root and is
+  ignored by git. The name carries no leading dot on purpose: the picker omits
+  dot-entries, so a hidden directory is unreachable from the very UI the smoke
+  would drive — which is how this was established;
+- the shell's client runtime does not publish its `Context` on the page. The
+  public service route (`ctx.sidebarRight.openResource`) is reachable only from
+  inside a client plugin, so reaching it from a test would mean either
+  monkey-patching a client plugin at runtime or a private DOM/React path. Both are
+  excluded by this project's DSH boundary, so neither was used.
 
 Task 4 notes carried forward:
 
