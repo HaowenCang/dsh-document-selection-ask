@@ -110,14 +110,38 @@ describe('built client bundle', () => {
     expect(Array.isArray(exports.inject)).toBe(true)
   })
 
-  it('activates without throwing and registers nothing yet', () => {
+  it('registers through the fiber effect hook and owes the fiber a disposer', () => {
     const calls = evaluateAsClassicScript(readFileSync(bundlePath, 'utf8'))
     const exports = calls[0]?.factory?.(() => undefined) as { apply: (ctx: unknown) => void }
-    // Task 1 registers no contribution; the assertion is that activation is
-    // inert rather than that it is empty, so it survives later tasks unchanged
-    // only until the first registration lands.
+    // `effect` is the fiber's own lifecycle contract: a contribution is made
+    // inside the effect body and its teardown is what the body returns. The hook
+    // is stubbed because the bundle runs outside a DSH fiber here, and the
+    // assertion is on that boundary rather than on the body's contents.
+    const bodies: (() => (() => void) | void)[] = []
+    const ctx = {
+      effect: (execute: () => (() => void) | void): (() => void) => {
+        bodies.push(execute)
+        return () => undefined
+      },
+    }
+
     expect(() => {
-      exports.apply({})
+      exports.apply(ctx)
+    }).not.toThrow()
+    expect(bodies).toHaveLength(1)
+
+    // The body has to produce a real disposer: one that returns nothing would
+    // leave the fiber with nothing to unload, and `Fiber.effect` rejects that
+    // shape with a `TypeError`.
+    const body = bodies[0]
+    expect(body).toBeDefined()
+    const produced = body?.()
+    expect(typeof produced).toBe('function')
+
+    // Teardown must then detach the registration the body made, so that
+    // unloading the plugin leaves no adapter behind.
+    expect(() => {
+      produced?.()
     }).not.toThrow()
   })
 
