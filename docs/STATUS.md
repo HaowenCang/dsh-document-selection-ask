@@ -198,6 +198,86 @@
     `pressAsk` now calls `locator.click()`, and `force`, `dispatchEvent` and
     in-page `.click()` appear nowhere in it
 
+- Task 6
+  - commit: `9cdf62ef0606c495bf6674b6078c463671277762` — PASS
+  - status: `PASS`
+  - the shared OOXML archive preflight exists: `src/client/ooxml/preflight.ts`
+    publishes `preflightOoxml(bytes, limits?, signal?)`, which resolves with
+    nothing or rejects with `OoxmlPreflightError` carrying a stable `code`. It
+    returns no `ZipReader`, no entry array and no central-directory object —
+    Task 6 is a security gate, not an archive session, and the lifecycle of an
+    archive whose parts are actually read belongs to the tasks that read them
+  - **the rule the whole module exists for is enforced from metadata alone.**
+    No entry is extracted: `Entry.getData`, `TextWriter`, `BlobWriter`,
+    `Uint8ArrayWriter`, `node:fs`, `node:path`, `fetch(`, `XMLParser` and
+    `DOMParser` appear nowhere in `src/client/ooxml/`, and the greps that
+    establish it are recorded in the round's report rather than left as a claim
+  - `@zip.js/zip.js` 2.15.0 is pinned exactly as a `dependencies` entry — a
+    runtime dependency, because the renderers will call the preflight in the
+    browser. BSD-3-Clause, zero dependencies, verified against both
+    `npm view @zip.js/zip.js@2.15.0 version license dependencies` and the
+    installed package's own manifest. Only the public package export is
+    imported; no `lib/` private path
+  - the four limits are the documented four (`10_000`, 512 MiB, 128 MiB, `200`)
+    and are validated **before the bytes are touched**, so a caller-supplied
+    bound that is zero, negative, `NaN`, `Infinity`, fractional or beyond the
+    safe-integer range is refused as `invalid-limits` instead of silently
+    disabling the comparison it was supposed to make
+  - `ZipReader` is constructed with `filenameValidation: 'tolerant'` and
+    `useWebWorkers: false`, both stated rather than defaulted. The first makes
+    this project's own path rule the only one that decides which names an
+    archive may carry — zip.js's own `balanced` mode rejects malicious paths
+    during `getEntries`, and leaving it on would have made the module's path
+    rule dead code that still reads as enforced. The second keeps a
+    metadata-only gate from depending on a worker asset the host's CSP may
+    refuse to load
+  - the parse boundary is one call wide. `getEntries` is the only statement
+    inside the `try`, so a `TypeError` from this module's own loop cannot be
+    relabelled `invalid-archive`; the entry array is validated outside that
+    boundary and a non-array result is a `TypeError` rather than a verdict about
+    the caller's file
+  - the reader is closed on every path — acceptance, every refusal, abort — and
+    a cleanup failure never replaces a refusal. When the archive was accepted
+    there is no verdict to protect, so a `close` failure propagates rather than
+    being swallowed into an unobservable leak. Asserted against zip.js's own
+    `ZipReader.prototype.close`, because the seam that receives a reader does
+    not own it and the real entry point is the only place cleanup happens
+  - abort is checked before the reader is constructed, after enumeration and
+    between entries, and it rejects with an `AbortError` rather than an
+    `OoxmlPreflightError`. `signal.throwIfAborted()` is deliberately not used:
+    it rethrows `signal.reason` verbatim, so a signal aborted with a string
+    would surface a `string` from a function whose contract says cancellation is
+    an `AbortError`
+  - **zip.js 2.15.0 exposes no `signal` option on `ZipReader` or `getEntries`.**
+    Its `AbortSignal` support is on the write side and on `Entry.getData` — the
+    two surfaces this task does not use. Abort is therefore cooperative at the
+    boundaries this module controls, which for a bounded metadata walk is the
+    whole traversal. Recorded as an API observation for the tasks that do read
+    entry data
+  - **zip.js reports declared sizes and does not verify them against the data.**
+    A crafted archive whose central directory understates its compressed size
+    reaches this gate as that understatement. The declared numbers are what the
+    ZIP format lets a preflight bound, and this is recorded as a hard
+    requirement for Task 9/10/11 rather than a defect here: the reader that
+    extracts an entry must enforce the size limit on the *actual* byte count,
+    because `Entry.getData` is not bounded by anything this module measured
+  - a measured, not assumed, bundle finding: `lib/client.js` is unchanged at
+    105,747 bytes, because no shipping entry point reaches `src/client/ooxml/`
+    yet. An isolated build of the module measures its contribution at about
+    26.6 kB raw and 9.3 kB gzipped when a renderer does import it. **The client
+    bundle leaves `@zip.js/zip.js` as an external `require`**, which the DSH
+    loader cannot resolve — so the task that first imports this module into the
+    client graph must inline the dependency in `tsdown.config.ts` (a
+    `noExternal`/`deps` statement on the client entry) in the same commit, and
+    verify the emitted bundle contains no `require("@zip.js/zip.js")`
+  - `THIRD_PARTY_NOTICES.md` now records the dependency with its real
+    BSD-3-Clause license, its upstream copyright notice and its no-endorsement
+    clause, and it is now in the published `files` list: a package that ships a
+    BSD-3-Clause library must ship the notice, and the manifest previously
+    omitted it. Verified through `npm pack --dry-run`
+  - no renderer, no selection adapter, no Office XML validation, no filesystem
+    extraction, no worker, no CDN and no UI were added
+
 ## Current gate
 
 - Task 1 public contracts: PASS
@@ -226,7 +306,20 @@
   composer card, the three-way session gate, session isolation, press-time target
   re-resolution, latest-draft read, registration stability, matching-session focus
 - Task 5C selection overlay suite: PASS (26 client cases, rewritten for the split)
-- Full `pnpm test`: PASS (421 tests)
+- Task 6 OOXML preflight suite: PASS (133 unit cases) — the four documented
+  limits and their exact boundaries, thirteen rejected limit shapes, entry count,
+  single-entry and aggregate byte bounds, ratio at and one byte over the bound,
+  the zero-compressed-size rule on both sides, fifteen accepted and fourteen
+  refused path spellings, NUL in both raw and normalized form, an empty name,
+  a non-string name, encrypted entries from both a real writer and a crafted
+  central directory, ten unusable values for each declared size, the abort
+  contract at four positions, and the reader-close policy on all four outcomes
+- Task 6 bundle isolation: PASS (`lib/client.js` unchanged at 105,747 bytes; the
+  module is not reachable from any shipping entry point yet)
+- Task 6 dependency review: PASS (`@zip.js/zip.js` 2.15.0 pinned exactly,
+  BSD-3-Clause, zero dependencies, public export only, notice shipped in the
+  published tarball)
+- Full `pnpm test`: PASS (554 tests)
 - `pnpm typecheck`: PASS
 - `pnpm build`: PASS
 - `git diff --check`: PASS
@@ -262,6 +355,8 @@
 - Task 5B — REAL DSH TEXTPREVIEW SMOKE PASS / PRODUCTION DEFECT RECORDED
 - Task 5C — PASS (the defect is fixed; the Ask surface renders in `shell.overlay`
   and is reachable by a real click while the right column is expanded)
+- Task 6 — PASS (the shared OOXML archive preflight exists and is metadata-only;
+  `@zip.js/zip.js` 2.15.0 is a pinned runtime dependency)
 - GitHub publication — ACTIVE
 - Repository visibility — public
 - License — MIT
@@ -269,17 +364,44 @@
 
 `LICENSE` is the standard MIT text with the copyright holder taken from the
 authenticated GitHub account. `package.json` declares `"license": "MIT"`.
-`THIRD_PARTY_NOTICES.md` records each dependency's own license separately: the
-shipped package still bundles no third-party code, and `jsdom` (30.0.1) is
-recorded as MIT, development/test-only, verified against the installed package
-metadata.
+`THIRD_PARTY_NOTICES.md` records each dependency's own license separately, and it
+is now part of the published package. `@zip.js/zip.js` (2.15.0) is the first
+entry under "shipped": BSD-3-Clause rather than MIT, with the upstream copyright
+notice and no-endorsement clause recorded. `jsdom` (30.0.1) is recorded as MIT,
+development/test-only, verified against the installed package metadata.
 
 ## Next
 
-Task 6 and the format renderers (PDF, DOCX, PPTX, XLSX) are next and are **not
-authorized in this round**. The Ask flow is complete for the builtin text,
-Markdown, code and CSV previews and is now reachable while a document preview is
-open, which was the last blocker in front of them.
+**Task 7 — selectable PDF renderer with PDF.js Canvas + TextLayer.**
+
+Task 6 and the format renderers (PDF, DOCX, PPTX, XLSX) follow in that order; the
+plan's sequence puts the PDF renderer next, not a DOCX renderer. The Ask flow is
+complete for the builtin text, Markdown, code and CSV previews and is reachable
+while a document preview is open, which was the last blocker in front of the
+renderers.
+
+Task 6 carried forward into the renderer tasks:
+
+- the tasks that actually read OOXML parts own the archive lifecycle. The
+  preflight deliberately returns nothing, so Task 9/10/11 each decide when an
+  archive is opened, which entries are read and when the reader is closed;
+- **the preflight bounds declared sizes, not actual bytes.** zip.js reports the
+  central directory's own numbers and does not check them against the data, so a
+  crafted archive can understate its compressed size and reach this gate as that
+  understatement. Every reader that extracts an entry must enforce its own limit
+  on the bytes it actually receives;
+- the task that first imports `src/client/ooxml/` into the client graph must
+  inline `@zip.js/zip.js` in the client bundle. The bundler currently leaves it
+  as an external `require`, which the DSH loader cannot resolve; `lib/client.js`
+  stays honest only because nothing shipping reaches the module yet. Verify the
+  emitted bundle contains no `require("@zip.js/zip.js")`;
+- `ZipReader` 2.15.0 accepts no `AbortSignal`. Its abort support is on the write
+  side and on `Entry.getData`, so a reader that extracts entries can pass the
+  signal to the extraction call and get real cancellation there;
+- the four public limits are validated by `validateOoxmlLimits` in
+  `src/client/ooxml/limits.ts`, which the public entry point calls before the
+  bytes are touched. A caller that supplies its own limits gets the same
+  fail-closed check as the defaults.
 
 The production defect Task 5B recorded is closed. The chosen fix was option 2 of
 the three candidates Task 5B listed — moving the surface into a slot that is a
