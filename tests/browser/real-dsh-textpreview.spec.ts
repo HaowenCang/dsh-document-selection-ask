@@ -55,6 +55,8 @@ import { fileURLToPath } from 'node:url'
 import { expect, test } from '@playwright/test'
 import type { Locator, Page } from '@playwright/test'
 
+import { ensureWorkspace } from './helpers/shell.js'
+
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url))
 
 /** The running DSH instance this smoke drives. */
@@ -155,6 +157,13 @@ function fixture(key: FixtureKey): { path: string; text: string } {
  * The composer is the anchor: the driver's control occupies a session-scoped
  * slot, so it only exists once a session is on screen.
  *
+ * The workspace is then pointed at this repository. A `dsh-resource://file/
+ * session/<id>/<path>` address resolves against the Session's workspace root, and
+ * the instance keeps whichever workspace its last user selected — a run against
+ * the wrong root fails with `workspace-file/not-found` for every fixture, which
+ * reads like a renderer defect rather than a setup one. The routine is shared
+ * with the Task 7 PDF suite; see `tests/browser/helpers/shell.ts`.
+ *
  * @param page - the browser page.
  */
 async function openShell(page: Page): Promise<void> {
@@ -162,6 +171,7 @@ async function openShell(page: Page): Promise<void> {
   await page.waitForTimeout(12_000)
   await expect(page.locator(COMPOSER_INPUT).first()).toBeVisible({ timeout: 30_000 })
   await expect(page.locator(DRIVER).first()).toBeVisible({ timeout: 30_000 })
+  await ensureWorkspace(page)
 }
 
 /**

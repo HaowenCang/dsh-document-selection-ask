@@ -34,21 +34,49 @@
  */
 export interface SmokeFixture {
   /** Stable key; also the value of the control's `data-dsa-smoke-open`. */
-  readonly key: 'txt' | 'code' | 'markdown'
+  readonly key: 'txt' | 'code' | 'markdown' | 'pdf-single' | 'pdf-two' | 'pdf-cjk' | 'pdf-image'
   /** Control label, ASCII so the smoke locates it independently of the UI locale. */
   readonly label: string
   /** Path relative to the repository root, which is the Session's workspace. */
   readonly path: string
-  /** Exact file contents, written by the smoke bootstrap. */
-  readonly text: string
+  /** Exact file contents, for the fixtures the bootstrap writes; absent for a copied one. */
+  readonly text?: string
+  /**
+   * The right-Sidebar **tab kind** `openResource` should name, or `undefined` to
+   * let the tab registry rank the types that claim the address.
+   *
+   * This is a statement about which *tab type* opens the address, and nothing
+   * about how the file is read. The two are separate contracts in rc.1: the tab
+   * kind decides which panel occupies the column, while the document preview
+   * decides its own content mode from the rank of the **renderer definition** it
+   * selects — and the PDF renderer registers `loading: 'bytes-complete'`, so the
+   * preview reads the complete file and hands the body a `Uint8Array`. Nothing
+   * the driver passes can make a PDF be read as text.
+   *
+   * Every fixture therefore names the product's document preview, and the reason
+   * is measured rather than a preference. On this machine's profiles
+   * `dsh-better-sidebar` takes over **every** `dsh-resource://file/**` address: it
+   * registers an editor at `priority: 'extension'` with that glob and
+   * `canOpen: parseFileAddress(address) !== undefined`, which outranks the
+   * document preview's own `fallback` band and is registered later, so it wins
+   * the tie. A bare `openResource` for any file — text or PDF — lands in that
+   * plugin's editor, whose own fetch answers `HTTP 400`, and no document preview
+   * is mounted at all. The probes recorded exactly that for both a `.txt` and a
+   * `.pdf`.
+   */
+  readonly tabKind?: string
 }
 
 /**
- * The three fixtures, with their contents fixed by the Task 5B contract.
+ * The fixtures, with their paths and contents fixed by the smoke contract.
  *
  * The Markdown fixture is written with `\n` escapes rather than a template
  * literal so both the paragraph and the fenced block are visible in review and
- * cannot be altered by an editor that re-indents the file.
+ * cannot be altered by an editor that re-indents the file. The PDF entries carry
+ * no `text`: their bytes live in `tests/fixtures/pdf/`, they are committed rather
+ * than generated per run, and the profile bootstrap copies them into the
+ * session's workspace — a binary written from a string literal here would be a
+ * second, drifting copy of a file that already exists.
  */
 export const SMOKE_FIXTURES: readonly SmokeFixture[] = [
   {
@@ -56,12 +84,14 @@ export const SMOKE_FIXTURES: readonly SmokeFixture[] = [
     label: 'Open smoke TXT',
     path: 'smoke-fixtures/task5b-smoke.txt',
     text: 'alpha\nbeta\ngamma\n',
+    tabKind: 'text',
   },
   {
     key: 'code',
     label: 'Open smoke Code',
     path: 'smoke-fixtures/task5b-smoke.ts',
     text: 'const alpha = 1\nconst beta = 2\nconst gamma = 3\n',
+    tabKind: 'text',
   },
   {
     key: 'markdown',
@@ -78,7 +108,48 @@ export const SMOKE_FIXTURES: readonly SmokeFixture[] = [
       '```',
       '',
     ].join('\n'),
+    tabKind: 'text',
   },
+  {
+    key: 'pdf-single',
+    label: 'Open PDF single',
+    path: 'smoke-fixtures/task7-single-page.pdf',
+    tabKind: 'text',
+  },
+  {
+    key: 'pdf-two',
+    label: 'Open PDF two pages',
+    path: 'smoke-fixtures/task7-two-page.pdf',
+    tabKind: 'text',
+  },
+  {
+    key: 'pdf-cjk',
+    label: 'Open PDF cjk',
+    path: 'smoke-fixtures/task7-cjk.pdf',
+    tabKind: 'text',
+  },
+  {
+    key: 'pdf-image',
+    label: 'Open PDF image only',
+    path: 'smoke-fixtures/task7-image-only.pdf',
+    tabKind: 'text',
+  },
+]
+
+/**
+ * The PDF fixtures, by key: the committed source file and the workspace name it
+ * is copied to.
+ *
+ * The profile bootstrap writes from this table, and `tests/unit/smoke-profile.spec.ts`
+ * asserts that it and `SMOKE_FIXTURES` name the same files — so a divergence
+ * fails the unit suite rather than producing a browser smoke that opens a file
+ * nobody copied.
+ */
+export const PDF_FIXTURE_SOURCES: readonly { readonly key: SmokeFixture['key']; readonly source: string }[] = [
+  { key: 'pdf-single', source: 'tests/fixtures/pdf/single-page.pdf' },
+  { key: 'pdf-two', source: 'tests/fixtures/pdf/two-page.pdf' },
+  { key: 'pdf-cjk', source: 'tests/fixtures/pdf/cjk.pdf' },
+  { key: 'pdf-image', source: 'tests/fixtures/pdf/image-only.pdf' },
 ]
 
 /**

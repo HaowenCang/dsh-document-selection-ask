@@ -46,12 +46,15 @@ const requireShared = createRequire(import.meta.url)
 /**
  * Services the built client must declare in its runtime `inject`.
  *
- * `slots` is the renderer-owned slot registry the Ask overlay is contributed
- * through. Declaring it is not optional: `ctx.slots.inject` throws when the
- * registry is missing rather than waiting for it, and the failure appears only
- * in a real boot, because nothing in this repository constructs the DSH fiber.
+ * `slots` is the renderer-owned slot registry both of this plugin's slot
+ * contributions go through. `documentPreviews` is the extension-renderer registry
+ * the PDF renderer registers its implementation into; the service is a Cordis
+ * getter that refuses to be read before its provider has loaded, so declaring it
+ * is what orders the call. Declaring either is not optional: the failure appears
+ * only in a real boot, because nothing in this repository constructs the DSH
+ * fiber.
  */
-const REQUIRED_SERVICES = ['slots']
+const REQUIRED_SERVICES = ['slots', 'documentPreviews']
 
 interface LoaderCall {
   readonly id: string

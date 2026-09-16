@@ -69,6 +69,55 @@ function trackedFiles(): readonly string[] {
     .filter((line) => line !== '')
 }
 
+/**
+ * Read a `const NAME = [ … ]` table out of a module's source as data.
+ *
+ * Both tables this suite compares are plain object literals, and importing either
+ * module would run a command switch (the bootstrap) or a bundler transform (the
+ * driver). The literal is located by its own declaration and evaluated with the
+ * ordinary expression reader, so the comparison is between the declared values
+ * rather than between two spellings of the same text.
+ *
+ * @param source - the module's source text.
+ * @param name - the constant's name.
+ * @returns the table's entries.
+ * @throws Error when the declaration is missing or its literal is not closed.
+ */
+function readDataTable(source: string, name: string): readonly Record<string, unknown>[] {
+  // The lookbehind excludes a backticked mention inside a doc comment: the
+  // driver's module comment names this very constant, and matching that first
+  // would read a type's annotation instead of the table. The array literal is
+  // then found after the declaration's `=`, not after the declaration itself —
+  // a TypeScript row carries a type annotation between the two, and its own `[]`
+  // is a closed empty array.
+  const declaration = new RegExp(`(?<!\`)(?:export )?const ${name}\\s*[:=]`)
+  const match = declaration.exec(source)
+  if (match === null) throw new Error(`no \`const ${name}\` declaration was found`)
+
+  const assignment = source.indexOf('=', match.index + match[0].length - 1)
+  if (assignment < 0) throw new Error(`the ${name} declaration has no initializer`)
+  const start = source.indexOf('[', assignment)
+  if (start < 0) throw new Error(`the ${name} declaration has no array literal`)
+  let depth = 0
+  let end = -1
+  for (let index = start; index < source.length; index += 1) {
+    if (source[index] === '[' || source[index] === '{') depth += 1
+    if (source[index] === ']' || source[index] === '}') {
+      depth -= 1
+      if (depth === 0) {
+        end = index
+        break
+      }
+    }
+  }
+  if (end < 0) throw new Error(`the ${name} table is not closed`)
+
+  const evaluate = new Function(`return ${source.slice(start, end + 1)}`) as () => Record<string, unknown>[]
+  const entries = evaluate()
+  if (!Array.isArray(entries) || entries.length === 0) throw new Error(`the ${name} table is empty`)
+  return entries
+}
+
 describe('smoke profile tooling', () => {
   it('declares the driver as a DSH client plugin with its own loader row', () => {
     const manifest = JSON.parse(read('tests/browser/smoke-driver/package.json')) as {
@@ -171,6 +220,57 @@ describe('smoke profile tooling', () => {
     for (const forbidden of ['selection-ask', 'SelectionKernel', 'SelectionAskOverlay', 'createDshTextAdapter']) {
       expect(entry.includes(forbidden), `the driver entry must not reference ${forbidden}`).toBe(false)
     }
+  })
+
+  it('agrees with the driver about which PDF fixtures exist and where they go', () => {
+    // The PDF fixtures are committed rather than written from a string, so the
+    // bootstrap copies them: `tests/fixtures/pdf/<stem>.pdf` becomes
+    // `smoke-fixtures/task7-<stem>.pdf` in the session workspace. The bootstrap
+    // owns that mapping and the driver owns the destination it opens, so the two
+    // have to agree — a divergence produces a smoke that opens a file nobody
+    // copied. This is the assertion that makes them agree.
+    //
+    // Both tables are read as data rather than matched as text: the driver's
+    // module comment names a repository path in prose, and a string search would
+    // confuse that with a declaration.
+    const bootstrap = read('scripts/dsh-smoke-profile.mjs')
+    const driver = read('tests/browser/smoke-driver/src/client/fixtures.ts')
+
+    const sources = readDataTable(bootstrap, 'PDF_FIXTURE_SOURCES') as { key: string; source: string }[]
+    expect(sources.length, 'the bootstrap must declare the PDF fixture sources').toBeGreaterThan(0)
+    expect(new Set(sources.map((entry) => entry.source)).size, 'no source may be listed twice').toBe(sources.length)
+
+    const driverFixtures = readDataTable(driver, 'SMOKE_FIXTURES') as {
+      key: string
+      path: string
+      tabKind?: string
+    }[]
+    const byKey = new Map(driverFixtures.map((entry) => [entry.key, entry]))
+
+    for (const entry of sources) {
+      const stem = entry.source.slice(entry.source.lastIndexOf('/') + 1).replace(/\.pdf$/u, '')
+      const destination = `smoke-fixtures/task7-${stem}.pdf`
+
+      expect(existsSync(join(repoRoot, entry.source)), `${entry.source} is not committed`).toBe(true)
+      // The bootstrap derives the destination rather than restating it.
+      expect(bootstrap, `the bootstrap must derive ${destination}`).toContain('`smoke-fixtures/task7-${stem}.pdf`')
+
+      const declared = byKey.get(entry.key)
+      expect(declared, `the driver declares no ${entry.key} fixture`).toBeDefined()
+      expect(declared?.path, `the driver must open the file the bootstrap copies`).toBe(destination)
+      // The tab kind is a tab-type statement, not a content-mode one, and every
+      // fixture names the product's document preview — see `SmokeFixture.tabKind`
+      // for the measurement behind that.
+      expect(declared?.tabKind).toBe('text')
+    }
+
+    // The four committed fixtures, which the browser spec opens by key.
+    for (const name of ['single-page', 'two-page', 'cjk', 'image-only']) {
+      expect(existsSync(join(repoRoot, 'tests', 'fixtures', 'pdf', `${name}.pdf`)), `${name}.pdf is missing`).toBe(
+        true,
+      )
+    }
+    expect(sources.map((entry) => entry.key).sort()).toEqual(['pdf-cjk', 'pdf-image', 'pdf-single', 'pdf-two'])
   })
 
   it('keeps the smoke out of the shipping bundle and out of the published file list', () => {

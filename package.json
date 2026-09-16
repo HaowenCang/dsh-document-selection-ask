@@ -67,11 +67,13 @@
     "@deepseek-ai/dsh-client-ui-sidebar-documentpreview": "0.1.5-rc.1",
     "@deepseek-ai/dsh-client-ui-sidebar-right": "0.1.5-rc.1",
     "@deepseek-ai/dsh-client-ui-slots": "0.1.5-rc.1",
+    "@pdf-lib/fontkit": "1.1.1",
     "@playwright/test": "1.63.0",
     "@types/node": "22.20.0",
     "@types/react": "18.3.27",
     "@types/react-dom": "18.3.7",
     "jsdom": "30.0.1",
+    "pdf-lib": "1.17.1",
     "playwright": "1.63.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
@@ -80,6 +82,7 @@
     "vitest": "3.2.4"
   },
   "dependencies": {
-    "@zip.js/zip.js": "2.15.0"
+    "@zip.js/zip.js": "2.15.0",
+    "pdfjs-dist": "6.3.289"
   }
 }

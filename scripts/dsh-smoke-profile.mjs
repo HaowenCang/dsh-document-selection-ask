@@ -80,7 +80,7 @@ const MAIN_PLUGIN_DIR = REPO_ROOT
 const DRIVER_DIR = join(REPO_ROOT, 'tests', 'browser', 'smoke-driver')
 
 /**
- * The fixture set, written by `prepare`.
+ * The text fixture set, written by `prepare`.
  *
  * This table is the writer's single source. The driver carries its own copy of
  * the keys and paths because it is bundled separately for the browser, and
@@ -111,6 +111,37 @@ const SMOKE_FIXTURES = [
     ].join('\n'),
   },
 ]
+
+/**
+ * The PDF fixtures, **copied** rather than written.
+ *
+ * Their bytes are committed under `tests/fixtures/pdf/` because they are
+ * generated once and reviewed, and because a PDF cannot be restated as a string
+ * literal here without becoming a second, drifting copy. The driver's own table
+ * — `PDF_FIXTURE_SOURCES` in `tests/browser/smoke-driver/src/client/fixtures.ts`
+ * — carries the same source and destination paths, and the unit suite asserts
+ * that the two agree.
+ */
+const PDF_FIXTURE_SOURCES = [
+  { key: 'pdf-single', source: 'tests/fixtures/pdf/single-page.pdf' },
+  { key: 'pdf-two', source: 'tests/fixtures/pdf/two-page.pdf' },
+  { key: 'pdf-cjk', source: 'tests/fixtures/pdf/cjk.pdf' },
+  { key: 'pdf-image', source: 'tests/fixtures/pdf/image-only.pdf' },
+]
+
+/**
+ * The workspace path one PDF fixture is copied to.
+ *
+ * It is derived from the driver's own naming convention rather than restated:
+ * `task7-<name>.pdf`, where `<name>` is the source file's stem.
+ *
+ * @param source - the committed source path, repository-relative.
+ * @returns the path inside the session workspace.
+ */
+function pdfFixturePath(source) {
+  const stem = source.slice(source.lastIndexOf('/') + 1).replace(/\.pdf$/u, '')
+  return `smoke-fixtures/task7-${stem}.pdf`
+}
 
 /** Exit status: `0` clean, `1` a diagnosed problem, `2` a usage error. */
 const EXIT_USAGE = 2
@@ -364,7 +395,14 @@ function validateProfile(dir) {
 
 /**
  * Write the smoke fixtures, creating the directory when needed.
+ *
+ * The text fixtures are written from this script's own table; the PDF fixtures
+ * are copied from their committed sources. A source that is missing is a hard
+ * failure rather than a skipped fixture: a smoke that silently opened nothing
+ * would report a green run for a file that was never there.
+ *
  * @returns the paths written, relative to the repository root.
+ * @throws Error when a committed PDF fixture is missing.
  */
 function writeFixtures() {
   const written = []
@@ -374,6 +412,21 @@ function writeFixtures() {
     writeFileSync(absolute, fixture.text, 'utf8')
     written.push(fixture.path)
   }
+
+  for (const fixture of PDF_FIXTURE_SOURCES) {
+    const source = join(REPO_ROOT, fixture.source)
+    if (!existsSync(source)) {
+      throw new Error(
+        `${fixture.source} is missing; run \`node scripts/generate-pdf-fixtures.mjs\` to produce it`,
+      )
+    }
+    const destination = pdfFixturePath(fixture.source)
+    const absolute = join(REPO_ROOT, destination)
+    mkdirSync(dirname(absolute), { recursive: true })
+    writeFileSync(absolute, readFileSync(source))
+    written.push(destination)
+  }
+
   return written
 }
 
@@ -509,6 +562,14 @@ function describe(dir) {
     const size = existsSync(absolute) ? statSync(absolute).size : -1
     console.log(`dsh-smoke-profile: fixture ${fixture.path} = ${size < 0 ? 'missing' : `${size} bytes`}`)
   }
+
+  for (const fixture of PDF_FIXTURE_SOURCES) {
+    for (const path of [fixture.source, pdfFixturePath(fixture.source)]) {
+      const absolute = join(REPO_ROOT, path)
+      const size = existsSync(absolute) ? statSync(absolute).size : -1
+      console.log(`dsh-smoke-profile: fixture ${path} = ${size < 0 ? 'missing' : `${size} bytes`}`)
+    }
+  }
 }
 
 /**
@@ -555,7 +616,12 @@ switch (command) {
       fail(`${dir}/package.json does not exist; create the profile with \`dsh --profile ${PROFILE_NAME} --from-default-profile web\` first`)
     }
 
-    const written = writeFixtures()
+    let written
+    try {
+      written = writeFixtures()
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error))
+    }
     console.log(`dsh-smoke-profile: fixtures written = ${written.join(', ')}`)
 
     const linksDir = join(dir, 'node_modules')

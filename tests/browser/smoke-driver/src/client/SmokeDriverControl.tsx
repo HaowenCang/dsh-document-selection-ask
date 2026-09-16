@@ -90,9 +90,8 @@ const BUTTON_STYLE = {
 } as const
 
 /**
- * The registry kind of the product's document preview.
- *
- * Read from the installed
+ * The registry kind of the product's document preview, as Task 5B established
+ * it. Read from the installed
  * `@deepseek-ai/dsh-client-ui-sidebar-documentpreview@0.1.5-rc.1` bundle, where
  * it is the `TEXTPREVIEW_KIND` constant the `text` tab definition registers
  * under, and where `TEXTPREVIEW_ID` is
@@ -100,8 +99,25 @@ const BUTTON_STYLE = {
  * registry key rather than an internal name: `openResource` documents
  * `options.kind` as "name the opening type instead of letting the registry rank
  * claims".
+ *
+ * It names the **tab** type, and says nothing about how the opened file is read.
+ * A PDF opened through this tab still reaches the renderer registry, which ranks
+ * this plugin's `priority: 'extension'` PDF definition above the builtin one and
+ * reads the file according to that definition's `loading: 'bytes-complete'`. See
+ * `SmokeFixture.tabKind` for why every fixture names it.
  */
 const PRODUCT_PREVIEW_KIND = 'text'
+
+/**
+ * The options one fixture's navigation passes.
+ *
+ * @param tabKind - the tab kind the fixture names, or `undefined` to let the tab
+ * registry rank the types that claim the address.
+ * @returns the options argument, or nothing at all when the fixture names none.
+ */
+function openOptions(tabKind: string | undefined): { kind: string } | undefined {
+  return tabKind === undefined ? undefined : { kind: tabKind }
+}
 
 /**
  * Render the fixture controls.
@@ -125,12 +141,13 @@ export function SmokeDriverControl(props: SmokeDriverProps): JSX.Element {
           style={BUTTON_STYLE}
           onClick={() => {
             // The whole navigation. `openResource` claims the address, places
-            // the tab and reveals the column in one step, so the driver asks
-            // for nothing else; `kind` selects the implementation under test
-            // (see the module comment).
-            ctx.sidebarRight.openResource(smokeFixtureAddress(sessionId, fixture.path), {
-              kind: PRODUCT_PREVIEW_KIND,
-            })
+            // the tab and reveals the column in one step, so the driver asks for
+            // nothing else. Which renderer then draws the file is decided by the
+            // document preview's own registry, not by anything here.
+            const address = smokeFixtureAddress(sessionId, fixture.path)
+            const options = openOptions(fixture.tabKind)
+            if (options === undefined) ctx.sidebarRight.openResource(address)
+            else ctx.sidebarRight.openResource(address, options)
           }}
         >
           {fixture.label}

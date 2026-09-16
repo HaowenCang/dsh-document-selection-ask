@@ -1090,7 +1090,7 @@ describe('client registration', () => {
     })
   })
 
-  it('does not touch the document preview registry for the builtin renderers', () => {
+  it('registers no replacement renderer for the builtin text classes', () => {
     const registered: string[] = []
     const ctx = {
       effect: (execute: () => (() => void) | void): (() => void) => {
@@ -1112,7 +1112,11 @@ describe('client registration', () => {
     applyClient(ctx)
 
     // Task 4 reuses the builtin renderers; registering a replacement for text,
-    // Markdown, code or CSV would replace the very DOM this adapter reads.
-    expect(registered).toEqual([])
+    // Markdown, code or CSV would replace the very DOM this adapter reads. Task 7
+    // added one extension renderer for PDF, which is a class no builtin adapter
+    // reads — so the set is asserted exactly rather than as "nothing at all",
+    // which would have to be loosened again by every later renderer task and
+    // would stop meaning anything.
+    expect(registered).toEqual(['dsh-document-selection-ask/pdf'])
   })
 })
