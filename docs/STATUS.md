@@ -278,6 +278,143 @@
   - no renderer, no selection adapter, no Office XML validation, no filesystem
     extraction, no worker, no CDN and no UI were added
 
+- Task 7
+  - commit: `48940016fd216164ca905bf7ea64ae9f127db32e` — PASS
+  - status: `PASS`
+  - the plugin now renders a real PDF: DSH reads the fixture's bytes, ranks this
+    plugin's renderer, mounts it under the keyed document slot, and the body draws
+    a canvas plus a **selectable** text layer per page. The end-to-end path is
+    asserted against a live instance — seven Playwright cases open `.pdf` files
+    through the public `ctx.sidebarRight.openResource` call made by the test-only
+    driver, and every `data-dsa-pdf-*` node they read is produced by DSH and the
+    registered renderer
+  - **rc.1 has no selectable PDF.** The installed
+    `@deepseek-ai/dsh-client-ui-sidebar-documentpreview@0.1.5-rc.1` builtin PDF
+    renderer draws one `<canvas>` per page and nothing else: `PdfBody` renders a
+    canvas with `role="img"`, and the bundle's `TextLayer` class is PDF.js's own
+    library code, never constructed by that renderer. Browser text selection over
+    a DSH PDF preview was therefore impossible before this task, which is what
+    makes a second renderer worth registering rather than a duplicate of one that
+    already worked
+  - **`priority: 'extension'` is a real ranking rule, not a preference.** The
+    installed registry's `matchingDocumentPreviews` computes
+    `rank = definition.priority === 'builtin' ? 0 : 1` and sorts descending, so an
+    external implementation outranks the builtin whatever order they registered
+    in. The plugin registers `dsh-document-selection-ask/pdf` at that band and
+    **leaves the builtin registered**:
+    `@deepseek-ai/dsh-client-ui-sidebar-documentpreview/pdf` is still a live
+    candidate, so disabling the plugin restores the product preview exactly
+  - `pdfjs-dist` is pinned to **6.3.289**, the exact version the installed rc.1
+    package declares and was compiled against — the installed bundle contains
+    `pdfjsVersion = 6.3.289`, `pdfjsBuild = 1c8020a7d` and a source comment naming
+    `pdfjs-dist@6.3.289`. Apache-2.0. It is a `dependencies` entry and it is
+    **inside** `lib/client.js`: `tsdown.config.ts` names it in `deps.alwaysBundle`,
+    because the DSH loader's `require` resolves the shared runtime only and a
+    surviving `require("pdfjs-dist")` would be a runtime failure with no compiler
+    error in front of it
+  - **the worker is created explicitly, and there is no silent fallback.** PDF.js's
+    own worker path contains `#setupFakeWorker()`, which parses on the main thread
+    when the script cannot be fetched or the handshake fails. The renderer starts a
+    native module worker itself from a `Blob` over the build-embedded
+    `pdf.worker.min.mjs` and hands it to PDF.js as a port —
+    `PDFWorker.create({ port })` takes `#initializeFromPort`, which has no fallback
+    branch. A worker that cannot start raises the typed `PdfWorkerFailure`, and the
+    browser case asserts the failure is visible **and** that `getDocument` was
+    never called
+  - the worker source and the CMap, standard-font and wasm families are embedded
+    by `tsdown.config.ts` reading the installed package, not copied into the
+    repository: a `?raw` virtual module for the worker and a `virtual:pdfjs-assets`
+    table of base64 for the assets. The asset table is decoded **on demand**, one
+    file per PDF.js request, through a plugin-owned `BinaryDataFactory`; a name the
+    table does not hold throws `PdfAssetFailure`. `useWorkerFetch: false` and the
+    absent `cMapUrl`/`standardFontDataUrl`/`wasmUrl` leave the document no address
+    it could reach the network through
+  - **the CSS survived, and that was checked rather than assumed.** Task 5
+    recorded that a `*.module.css` import through this bundler is dropped
+    silently, so the TextLayer rules are a runtime-injected
+    `style[data-plugin-css]` element under a second tag id, and
+    `tests/unit/pdf-bundle.spec.ts` asserts the rules are present in the built
+    artifact as well as in the document
+  - one number keeps the canvas and its text aligned. PDF.js lays a span out at
+    `transform × viewport.scale × devicePixelRatio` and divides the result back
+    down through `--total-scale-factor`; a canvas rendered at `factor` device
+    pixels per CSS pixel therefore has to be paired with
+    `--total-scale-factor = factor / devicePixelRatio`, and the same value is
+    written from JavaScript. This is the one DSH does not have to solve, because
+    its renderer has no text layer; the browser suite asserts a span's rectangle
+    lies inside its canvas box, before and after a real viewport resize
+  - the frozen raster limits are `MAX_CANVAS_DIMENSION = 16_384` and
+    `MAX_CANVAS_PIXELS = 64 * 1024 * 1024`, applied as
+    `factor = min(requested, MAX_DIMENSION / max(w, h), sqrt(MAX_PIXELS / (w × h)))`
+    with the **CSS geometry untouched**: a page that exceeds a cap is rendered at
+    a smaller backing scale rather than displayed smaller. Both bounds, the tier
+    rule and the degenerate inputs are covered by pure arithmetic cases, because
+    exercising the pixel cap through a real canvas would need a 64-megapixel
+    allocation per case
+  - a page is one render operation that owns both of its renders.
+    `PDFPageProxy.cleanup()` releases the caches the text layer reads, so cleaning
+    up when only the canvas had finished would leave the text spans empty and make
+    a text page look like a scan. The operation starts both, waits for both, and
+    cleans up once — and it tracks that it never cleaned while a render was
+    pending
+  - pages render lazily, and the margin is a **distance rather than a
+    percentage**. `100% 0px` would be measured against the scroll container, whose
+    height is a consequence of how many pages have rendered: page 1 alone leaves
+    it about one viewport tall and six pages grow it to several, so the observer
+    would be measuring a box its own output changes and the whole document would
+    render on open while still looking lazy in the code. The probe measured
+    exactly that. The margin is now a fixed 1200 CSS pixels against the viewport,
+    which is stable under its own effect; page 1 is still immediate
+  - the renderer publishes the DOM contract Task 8 will read:
+    `[data-dsa-document-kind="pdf"]` with the exact `resourceAddress` from the
+    public props, and a stable **1-based** `[data-dsa-pdf-page="<n>"]` wrapper per
+    page. Nothing in this task reads those attributes; the address is copied
+    verbatim rather than recovered from the shell's DOM, and the scrollport is
+    reported through the framework's own `scrollportRef`
+  - an image-only PDF produces a canvas and an **empty** text layer: no OCR, no
+    filename-as-text, no synthesised placeholder. The fixture is built with drawn
+    shapes and no text operator at all, so the assertion cannot pass by accident
+  - `scripts/generate-pdf-fixtures.mjs` writes four deterministic fixtures into
+    the committed `tests/fixtures/pdf/`, using `pdf-lib` (MIT) and
+    `@pdf-lib/fontkit` (MIT) as development-only dependencies. The document
+    metadata is pinned and no timestamp is written, so two runs are byte-identical
+    — verified by comparing hashes across two runs. The generator refuses to write
+    a file containing `/URI`, `http://` or `https://`
+  - **the CJK font is not committed; the subset is.** The generator resolves a
+    font from a documented local list, verifies **from the font's own `name` and
+    `OS/2` tables** that it is freely licensed and permits embedding and
+    subsetting, and embeds a subset. The committed `cjk.pdf` was generated from
+    Noto Sans SC (SIL OFL 1.1, `fsType` permitting embedding), and the provenance
+    is recorded in `tests/fixtures/pdf/README.md` and in
+    `THIRD_PARTY_NOTICES.md`. A font that forbids embedding, or whose license
+    string is not recognised, is refused rather than embedded
+  - **one real boot defect was found and fixed.** The first run after the
+    renderer was registered failed with
+    `cannot get property "documentPreviews" without inject`: `ctx.documentPreviews`
+    is a Cordis getter that refuses to be read before its provider has loaded, and
+    the module's runtime `inject` named only `slots`. `src/client/index.tsx` now
+    declares `['slots', 'documentPreviews']`, and the second entry is asserted at
+    compile time by `tests/unit/client-bundle.spec.ts`
+  - measured bundle growth: `lib/client.js` goes from 105,747 bytes to 6,842,908
+    bytes raw (2,971,762 gzipped), which is PDF.js, its worker and its three asset
+    families. The artifact contains no `require("pdfjs-dist")`, no
+    `require("@zip.js/zip.js")`, no CDN host and no remote worker default; its only
+    bare requires are the loader's own `react` and `react/jsx-runtime` plus one
+    `require("url")` inside PDF.js's `if (isNodeJS)` branch
+  - `THIRD_PARTY_NOTICES.md` now records `pdfjs-dist` per embedded family — the
+    API bundle, the Adobe CMaps, the Foxit and Liberation standard fonts, and the
+    JBIG2, OpenJPEG, QCMS and QuickJS wasm modules each with their own license file
+    in the package — plus the TextLayer CSS attribution
+    (`pdfjs-dist 6.3.289`, `web/pdf_viewer.css`, Apache-2.0) and the CJK fixture
+    font's provenance. `npm pack --dry-run` confirms the file is in the tarball
+  - a shared browser helper, `tests/browser/helpers/shell.ts`, points the smoke
+    instance at this repository before either real-DSH suite runs. The fixtures are
+    addressed by a session-scoped `dsh-resource://file/session/<id>/<path>` URL,
+    which resolves against the Session's workspace root, and the instance keeps
+    whichever workspace its last user chose — a run against the wrong root fails
+    with `workspace-file/not-found` for every fixture, which reads like a renderer
+    defect. No plugin code chooses or reads a workspace
+
 ## Current gate
 
 - Task 1 public contracts: PASS
@@ -319,7 +456,45 @@
 - Task 6 dependency review: PASS (`@zip.js/zip.js` 2.15.0 pinned exactly,
   BSD-3-Clause, zero dependencies, public export only, notice shipped in the
   published tarball)
-- Full `pnpm test`: PASS (554 tests)
+- Task 7 PDF registration suite: PASS (8 unit cases) — the definition's exact
+  metadata, `extension` beating `builtin` in **either** registration order under
+  the installed rc.1 ranking rule, the builtin retained as a live candidate, a
+  non-PDF path and a compound suffix refused, the keyed body registered under the
+  definition's own id, both contributions made inside an effect body, and a
+  missing registry reported rather than thrown
+- Task 7 PDF page geometry suite: PASS (17 unit cases) — the requested factor at
+  1× and as `finest`/`normal` at 2×, the dimension cap, the pixel cap and which
+  binds first, both caps held for every degenerate input, a non-finite dimension
+  refused as `RangeError`, an unusable device pixel ratio normalised to the
+  identity, and the text-layer factor for each tier and for a capped raster
+- Task 7 PDF runtime suite: PASS (25 client cases) — one native module worker
+  created from a blob URL, the host bytes copied before PDF.js may transfer them,
+  the network-free configuration asserted field by field, page sizes read once,
+  a worker failure raised as `PdfWorkerFailure` with `getDocument` never called,
+  a worker that dies after the load reported, teardown releasing the loading task,
+  the bridge, the native worker and the blob URL, `dispose()` idempotent across
+  three callers, the ready handshake detached and the failure listeners retained,
+  abort during open, abort before open, no unhandled rejection, the asset factory
+  answering a bundled name and refusing an unbundled one with a fresh buffer per
+  request, the canvas sized from the cap with the CSS box unchanged, real DOM text
+  spans, an image-only page with an empty layer, both renders cancelled with the
+  page cleaned exactly once and never while a render was pending, and a page
+  failure reported rather than resolved
+- Task 7 PDF style sheet suite: PASS (4 client cases) — the TextLayer rules the
+  spans are laid out against, the page and canvas rules, one tagged `style`
+  element installed and removed, and a second install adding nothing
+- Task 7 built-artifact suite: PASS (8 unit cases) — PDF.js inside
+  `lib/client.js` rather than required, the only bare requires being the loader's
+  own `react`/`react/jsx-runtime` and PDF.js's `isNodeJS`-guarded `url`, the
+  worker source embedded with no package URL, the TextLayer CSS present under its
+  tag id, one asset per family present by exact filename, no CDN host and no
+  remote worker default, the DSH runtime and `@zip.js/zip.js` absent, and the
+  artifact's size reported
+- Task 7 smoke-profile agreement: PASS (1 unit case) — the bootstrap's PDF fixture
+  sources and the driver's own table naming the same destinations, each source
+  committed, the destination derived rather than restated, and every PDF fixture
+  opening through the product's document preview tab
+- Full `pnpm test`: PASS (617 tests)
 - `pnpm typecheck`: PASS
 - `pnpm build`: PASS
 - `git diff --check`: PASS
@@ -334,12 +509,24 @@
   Shiki block, and three occlusion-regression cases that assert the expanded right
   column no longer reaches the button's pixel. **Every one of them presses the
   button with an ordinary `locator.click()`**
+- rc.1 real DSH PDF renderer smoke (Playwright, live instance): PASS (7 cases) —
+  a real `.pdf` opened through the public resource path with this plugin's
+  renderer selected over the builtin, a canvas and a selectable text layer, a real
+  browser selection taking the page's text, alignment of a span inside its canvas
+  before and after a real viewport resize, lazy rendering of a page that is out of
+  range until it is scrolled to, CJK text selected by the browser, an image-only
+  page with no invented text, no PDF.js asset request and no request leaving the
+  instance, and a refused worker reported visibly with nothing rendered
 - rc.1 stacking regression at 1600×1000 and 2560×1300: PASS with the right column
   expanded and the real TextPreview mounted
 - smoke-profile duplicate-loader-entry regression: PASS (`prepare` twice reports
   `rows=unchanged`; `validate` clean; two consecutive boots succeed)
+- PDF fixture determinism: PASS (two generator runs produce byte-identical files;
+  each generated file asserted free of `/URI`, `http://` and `https://`)
 - production-bundle isolation: PASS (no smoke marker in `lib/client.js`,
   `lib/index.mjs`, or the published `files` list)
+- published-tarball content: PASS (`npm pack --dry-run`: 56 files, 3.0 MB packed,
+  `THIRD_PARTY_NOTICES.md` included)
 - rc.2 compile-contract probe: PASS
 - rc.2 runtime smoke: NOT TESTED
 - production defect: Ask overlay occluded by the expanded right column — FIXED in
@@ -357,6 +544,9 @@
   and is reachable by a real click while the right column is expanded)
 - Task 6 — PASS (the shared OOXML archive preflight exists and is metadata-only;
   `@zip.js/zip.js` 2.15.0 is a pinned runtime dependency)
+- Task 7 — PASS (a real PDF renders with a canvas and a selectable text layer;
+  `pdfjs-dist` 6.3.289 is a pinned runtime dependency and is bundled; the builtin
+  renderer is retained as the viewer's other candidate)
 - GitHub publication — ACTIVE
 - Repository visibility — public
 - License — MIT
@@ -365,20 +555,53 @@
 `LICENSE` is the standard MIT text with the copyright holder taken from the
 authenticated GitHub account. `package.json` declares `"license": "MIT"`.
 `THIRD_PARTY_NOTICES.md` records each dependency's own license separately, and it
-is now part of the published package. `@zip.js/zip.js` (2.15.0) is the first
-entry under "shipped": BSD-3-Clause rather than MIT, with the upstream copyright
-notice and no-endorsement clause recorded. `jsdom` (30.0.1) is recorded as MIT,
-development/test-only, verified against the installed package metadata.
+is now part of the published package. `pdfjs-dist` (6.3.289, Apache-2.0) and
+`@zip.js/zip.js` (2.15.0, BSD-3-Clause) are the two shipped runtime dependencies;
+the first is bundled with its worker and its three asset families, each of which
+carries its own license file in the package and its own row in the notices.
+`jsdom` (30.0.1) is recorded as MIT, development/test-only, verified against the
+installed package metadata, as are `pdf-lib` (1.17.1) and `@pdf-lib/fontkit`
+(1.1.1), which are the fixture generator's own dependencies.
 
 ## Next
 
-**Task 7 — selectable PDF renderer with PDF.js Canvas + TextLayer.**
+**Task 8 — PDF selection provenance and Ask integration.**
 
-Task 6 and the format renderers (PDF, DOCX, PPTX, XLSX) follow in that order; the
-plan's sequence puts the PDF renderer next, not a DOCX renderer. The Ask flow is
-complete for the builtin text, Markdown, code and CSV previews and is reachable
-while a document preview is open, which was the last blocker in front of the
-renderers.
+Task 7 built the renderer and stopped at the DOM contract. Selecting text in the
+PDF preview is a real browser selection that the kernel currently rejects —
+correctly — as living outside every supported preview, so the Ask button stays
+absent. Task 8 adds `createPdfSelectionAdapter()`, `src/client/provenance/page-range.ts`,
+and the registration that puts the adapter ahead of the DSH text adapter, then
+extends the real browser case to take a selection across pages 1–2 of
+`two-page.pdf`, press Ask through an ordinary click, and assert the composer
+receives `[来源：two-page.pdf，第 1–2 页]` followed by the selected text.
+
+What Task 7 hands Task 8:
+
+- the renderer root publishes `data-dsa-document-kind="pdf"` and the exact
+  `resourceAddress`, and each page wrapper publishes a stable **1-based**
+  `data-dsa-pdf-page`; nothing in Task 7 reads them, and they are the whole
+  provenance contract;
+- the page wrappers are the elements a Range endpoint resolves against, and they
+  carry the two layers — `[data-dsa-pdf-canvas]` and `.textLayer` — so
+  `closest('[data-dsa-pdf-page]')` from either endpoint is the page rule;
+- a page that has not rendered yet keeps its box and an empty text layer, so a
+  selection can never name a page whose spans do not exist;
+- the adapter must be registered **before** the DSH text adapter in
+  `applyClient`, because that adapter's fallback treats an unrecognized preview
+  root as plain text and would otherwise quote the PDF's spans as a text document
+  with no page provenance.
+
+Task 7 leaves two things for the renderer tasks that follow it:
+
+- the renderer is deliberately not a source of *text* for any other format. The
+  `textLayer` class names it emits are PDF.js's own, and the adapter must resolve
+  provenance from the plugin's own `data-dsa-*` attributes rather than from
+  `.textLayer`, which a future DOCX or PPTX renderer will also produce;
+- the asset table is keyed by exact filename, so a `pdfjs-dist` version bump
+  changes it. `pnpm build` re-reads the installed package, so the artifact follows
+  the pin; `tests/unit/pdf-bundle.spec.ts` asserts one representative asset per
+  family and would fail loudly if a family disappeared.
 
 Task 6 carried forward into the renderer tasks:
 
@@ -402,6 +625,53 @@ Task 6 carried forward into the renderer tasks:
   `src/client/ooxml/limits.ts`, which the public entry point calls before the
   bytes are touched. A caller that supplies its own limits gets the same
   fail-closed check as the defaults.
+
+Task 7 notes carried forward:
+
+- **a Cordis service a plugin reads must be named in its runtime `inject`.** The
+  first real boot after the PDF renderer was registered failed with
+  `cannot get property "documentPreviews" without inject`; the package edge in
+  `dsh.client.inject` composes the module into the graph, and the exported
+  `inject` array is what orders the *call*. Any later task that reaches a new
+  service has the same two statements to make, and a unit suite cannot catch a
+  missing one — only a real boot can;
+- **PDF.js's own worker path falls back to the main thread** and this project does
+  not. `PDFWorker.#initialize` calls `#setupFakeWorker()` when the script cannot be
+  fetched or the handshake fails; the renderer therefore creates the native worker
+  itself and hands PDF.js a port, which takes a branch with no fallback at all.
+  Any later renderer that starts a worker should follow the same shape;
+- **`--total-scale-factor` is not optional for a PDF.js text layer.** PDF.js lays a
+  span out at `transform × viewport.scale × devicePixelRatio` and divides the
+  result back down through that custom property, so a canvas rendered at `factor`
+  device pixels per CSS pixel must be paired with `factor / devicePixelRatio`. The
+  rule is in `src/client/renderers/pdf/geometry.ts`, the value is written by
+  `text-layer.ts`, and the browser suite asserts the alignment;
+- **a percentage `rootMargin` is not safe under its own effect.** A `100% 0px`
+  margin is measured against the scroll container, whose height is a consequence
+  of how many pages have rendered, so the first page's render expands the margin
+  until the next page is inside it — the probe measured the whole document
+  rendering on open while the code still read as lazy. The margin is now a fixed
+  1200 CSS pixels against the viewport;
+- **`PDFPageProxy.cleanup()` releases what the text layer reads.** Canvas and text
+  must be one operation that cleans up after both have settled; cleaning up when
+  only the canvas has finished leaves the spans empty and makes a text page look
+  like a scan. `render-page.ts` states this and the client suite asserts it;
+- the asset table is keyed by exact filename from the pinned package, so a
+  `pdfjs-dist` bump changes it. `pnpm build` re-reads the installed package, so the
+  artifact follows the pin automatically, and `tests/unit/pdf-bundle.spec.ts`
+  asserts one representative asset per family;
+- the real-DSH suites address fixtures by a session-scoped
+  `dsh-resource://file/session/<id>/<path>` URL, which resolves against the
+  Session's workspace root. `tests/browser/helpers/shell.ts` points the instance
+  at this repository before either suite runs, because a fresh browser context has
+  no selection of its own and the wrong root fails every fixture with
+  `workspace-file/not-found` — which reads like a renderer defect;
+- `tests/fixtures/pdf/` is committed, and its `README.md` records each fixture's
+  provenance. The CJK fixture's font is **not** committed: the generator resolves
+  a locally installed font, verifies from the font's own `name` and `OS/2` tables
+  that it may be embedded and subset, and embeds a subset. A machine with none of
+  the documented candidates fails the generator rather than producing a fixture
+  nobody can explain.
 
 The production defect Task 5B recorded is closed. The chosen fix was option 2 of
 the three candidates Task 5B listed — moving the surface into a slot that is a
