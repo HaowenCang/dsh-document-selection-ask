@@ -415,6 +415,62 @@
     with `workspace-file/not-found` for every fixture, which reads like a renderer
     defect. No plugin code chooses or reads a workspace
 
+- Task 7A — PASS
+  - commit: `bb6c9f311bb6ba8d97f97a76c9c680267a38f7be` — `fix: release pdf render abort listeners`
+  - status: `PASS`
+  - Closes:
+    - per-render AbortSignal listener retention
+    - stale lazy-loading source comment
+  - **the retention defect.** `renderPdfPage` registered one `abort` listener on
+    the signal it was handed and never released it. That signal is the **tab's**,
+    which outlives every page, every resize re-render and every page that scrolls
+    back out of the lazy range, so `{ once: true }` bought nothing: it releases the
+    listener only when the tab finally aborts, and until then every finished render
+    operation — its `PDFPageProxy`, its `RenderTask`, its `PdfTextRender` — stayed
+    reachable from the tab signal. Twenty drags of the right column's edge left
+    twenty finished closures attached. `cancel()` now detaches **first**, so an
+    explicit cancel unlinks the operation at the moment it is asked to stop rather
+    than when `done` settles, and the operation's settlement `finally` detaches on
+    every other path — completion, raster failure, text failure and abort alike.
+    `detachAbort` is idempotent and never throws; an already-aborted signal still
+    registers nothing at all
+  - **the cancellation contract is unchanged.** Releasing a listener releases no
+    page earlier: `page.cleanup()` still runs only after both render paths have
+    settled, `cleanedUpWhileRendering` is still `false` on every case, the canvas
+    task and the text layer are still cancelled by the same `cancel()`, and
+    `cancel()` is still idempotent. The listener is released before the two
+    renders, which is the one ordering change and is about the signal, not the page
+  - **the two listeners are counted separately.** `renderPdfPage` and the text
+    layer each attach an `onAbort` to the same event on the same signal, so the new
+    client suite separates them by identity rather than by name: the outer one is
+    the listener present the moment `renderPdfPage` returns, because it attaches
+    before the function's first `await`. `text-layer.ts` is not touched; its own
+    release was already correct and remains out of scope
+  - the stand-in `TextLayer` now pulls its stream, as PDF.js's own pump does, so a
+    stream that errors rejects the layer's promise. Without that, the text path's
+    failure mode was unreachable from the suite and the "text failure detaches"
+    case would have been nominal; `PageControl.textError` is the script for it
+  - `SelectablePdfBody`'s header comment described a `100% 0px` margin rooted at
+    the body's own scroll container, which the implementation had already stopped
+    doing in Task 7. It now states the fixed `1200px 0px` margin against the
+    viewport. `LAZY_ROOT_MARGIN` and the observer's own `root` are unchanged
+  - no `SelectionAdapter`, no page provenance resolver, no PDF Ask integration, no
+    `SelectionSnapshot` or quote change, no bundler, manifest, lockfile, notices or
+    PDF.js asset change. Selecting PDF text still raises no Ask button, which is
+    the correct state until Task 8
+  - Task 7A listener lifecycle suite: PASS (7 client cases) — completion, raster
+    failure, text failure, explicit cancel asserted **while `done` is still
+    pending**, tab abort, an already-aborted signal registering nothing, and 20
+    sequential renders on one live signal with one registration and one release per
+    render. No case calls `abort()` to prove a release
+  - Task 7A targeted runtime suite: PASS (25 client cases, unchanged)
+  - Task 7A: full `pnpm test`: PASS (624 tests), `pnpm typecheck`: PASS,
+    `pnpm build`: PASS, `git diff --check`: PASS
+  - Task 7A real DSH PDF renderer smoke (Playwright, live instance): PASS (7 cases,
+    re-run after the change) — including the resize re-render and the lazy page
+  - Task 7A real DSH TextPreview smoke (Playwright, live instance): PASS (8 cases,
+    re-run after the change)
+
 ## Current gate
 
 - Task 1 public contracts: PASS
@@ -494,7 +550,12 @@
   sources and the driver's own table naming the same destinations, each source
   committed, the destination derived rather than restated, and every PDF fixture
   opening through the product's document preview tab
-- Full `pnpm test`: PASS (617 tests)
+- Task 7A listener lifecycle suite: PASS (7 client cases) — the outer page-render
+  abort listener is identified separately from the text layer's own and is proven
+  released on completion, raster failure, text failure, explicit cancel (asserted
+  before `done` settles), and tab abort, with 20 sequential renders on one live
+  signal accumulating nothing
+- Full `pnpm test`: PASS (624 tests)
 - `pnpm typecheck`: PASS
 - `pnpm build`: PASS
 - `git diff --check`: PASS
@@ -547,6 +608,10 @@
 - Task 7 — PASS (a real PDF renders with a canvas and a selectable text layer;
   `pdfjs-dist` 6.3.289 is a pinned runtime dependency and is bundled; the builtin
   renderer is retained as the viewer's other candidate)
+- Task 7A — PASS (the per-render abort listener is released at the operation's own
+  settlement boundary rather than at the tab's, so repeated renders on one tab
+  signal retain nothing; the lazy-loading source comment matches the fixed
+  `1200px 0px` viewport-rooted observer it describes)
 - GitHub publication — ACTIVE
 - Repository visibility — public
 - License — MIT
@@ -591,6 +656,12 @@ What Task 7 hands Task 8:
   `applyClient`, because that adapter's fallback treats an unrecognized preview
   root as plain text and would otherwise quote the PDF's spans as a text document
   with no page provenance.
+
+What Task 7A changes for Task 8: nothing it reads. The page wrappers, their
+1-based attribute and the text spans are untouched; what changed is who owns a
+render's abort listener and when it is released. Task 8's adapter resolves
+provenance from the DOM, not from the renderer's lifetime, so it can be built
+against the same contract Task 7 published.
 
 Task 7 leaves two things for the renderer tasks that follow it:
 
@@ -656,6 +727,13 @@ Task 7 notes carried forward:
   must be one operation that cleans up after both have settled; cleaning up when
   only the canvas has finished leaves the spans empty and makes a text page look
   like a scan. `render-page.ts` states this and the client suite asserts it;
+- **a listener registered on the tab's signal belongs to the operation, not to the
+  tab.** `{ once: true }` is not a release strategy when the signal outlives the
+  work: it defers every registration to the tab's own abort, which for a signal
+  that lives as long as a preview does means a finished operation stays reachable
+  from it for as many times as the page re-rendered. Task 7A is the instance, and
+  the rule generalizes to any later renderer that takes the tab signal directly:
+  attach in the operation, detach at `cancel()` and at settlement;
 - the asset table is keyed by exact filename from the pinned package, so a
   `pdfjs-dist` bump changes it. `pnpm build` re-reads the installed package, so the
   artifact follows the pin automatically, and `tests/unit/pdf-bundle.spec.ts`
