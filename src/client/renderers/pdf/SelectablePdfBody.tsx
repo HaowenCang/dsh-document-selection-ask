@@ -27,10 +27,10 @@
  * ## Page lifecycle
  *
  * Page 1 renders immediately; every later page renders when an
- * `IntersectionObserver` with a `100% 0px` root margin — rooted at this body's
- * own scroll container, not at the window — says it is within one viewport of
- * that container. A page that has not rendered keeps its full box, so the
- * document's scroll height is correct from the first frame and a page cannot
+ * `IntersectionObserver` with a fixed `1200px 0px` root margin and the **viewport**
+ * as its root — not this body's own scroll container — says it is within that
+ * distance of the viewport. A page that has not rendered keeps its full box, so
+ * the document's scroll height is correct from the first frame and a page cannot
  * oscillate in and out of the observer's range as it renders.
  *
  * ## Resize

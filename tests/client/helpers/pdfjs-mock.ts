@@ -45,6 +45,8 @@ export interface PageControl {
   readonly text: readonly string[]
   /** When set, `render()` fails with this error instead of drawing. */
   readonly renderError: Error | undefined
+  /** When set, the text stream errors instead of delivering items. */
+  readonly textError: Error | undefined
   /** When true, `render()` stays pending until `control.releaseRender()` is called. */
   readonly holdRender: boolean
   /** How many times `cleanup()` ran on the page object. */
@@ -102,6 +104,7 @@ export function addPage(text: readonly string[], overrides: Partial<PageControl>
     rotation: 0,
     text,
     renderError: undefined,
+    textError: undefined,
     holdRender: false,
     cleanups: 0,
     cleanedUpWhileRendering: false,
@@ -315,8 +318,16 @@ export class FakePage {
    */
   streamTextContent(): ReadableStream<{ readonly items: readonly { readonly str: string }[] }> {
     const items = this.script.text.map((str) => ({ str }))
+    const failure = this.script.textError
     return new ReadableStream({
       start(controller) {
+        // A real text stream fails this way — a damaged content stream, a font
+        // PDF.js cannot decode — and PDF.js's own `TextLayer.render()` rejects
+        // its capability with whatever the reader rejected with.
+        if (failure !== undefined) {
+          controller.error(failure)
+          return
+        }
         controller.enqueue({ items })
         controller.close()
       },
@@ -367,8 +378,8 @@ export class FakeTextLayer {
   readonly container: HTMLElement
   /** The viewport the layer was laid out against. */
   readonly viewport: FakeViewport
-  /** The text the layer lays out. */
-  readonly items: readonly string[]
+  /** The stream `PDFPageProxy.streamTextContent()` handed over. */
+  readonly textContentSource: ReadableStream<{ readonly items: readonly { readonly str: string }[] }>
   private cancelled = false
 
   /**
@@ -385,8 +396,7 @@ export class FakeTextLayer {
     FakeTextLayer.instances.push(this)
     this.container = parameters.container
     this.viewport = parameters.viewport
-    this.items = pagesInUse.at(-1)?.text ?? []
-    void parameters.textContentSource
+    this.textContentSource = parameters.textContentSource
   }
 
   /**
@@ -396,16 +406,27 @@ export class FakeTextLayer {
    * before any span exists — which is what makes cancellation a real possibility
    * rather than a race the test always loses.
    *
-   * @returns when every span is appended.
+   * The read follows PDF.js's own pump: the first chunk is pulled before anything
+   * is appended, and a stream that errors rejects the returned promise with that
+   * error. That is the whole of the text path's failure mode, and a stand-in that
+   * resolved regardless would hide it.
+   *
+   * @returns when every span is appended, or rejects with the stream's error.
    */
   async render(): Promise<void> {
     if (this.cancelled) return
-    await Promise.resolve()
-    if (this.cancelled) return
-    for (const text of this.items) {
-      const span = document.createElement('span')
-      span.textContent = text
-      this.container.append(span)
+    const reader = this.textContentSource.getReader()
+    try {
+      const first = await reader.read()
+      if (this.cancelled) return
+      const items = first.done ? [] : first.value.items
+      for (const { str } of items) {
+        const span = document.createElement('span')
+        span.textContent = str
+        this.container.append(span)
+      }
+    } finally {
+      reader.releaseLock()
     }
   }
 

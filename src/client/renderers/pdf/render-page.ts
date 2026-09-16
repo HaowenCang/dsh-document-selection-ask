@@ -19,6 +19,20 @@
  * `cleanup()` while a render is in flight is not a cancellation at all. Both are
  * driven from the same signal here, and the operation's promise stays settled
  * once it has settled, so an abort cannot both reject and resolve.
+ *
+ * ## The listener this operation attaches
+ *
+ * The signal is the tab's, which outlives every page and every resize re-render,
+ * so the listener cannot be left to the signal's own `{ once: true }`: that
+ * releases it only when the tab finally aborts, which would leave one finished
+ * operation — its page proxy, render task and text render — reachable from the tab
+ * for as many times as the column has been resized. The operation therefore
+ * releases its own registration at both ends of its life: `cancel()` detaches as
+ * its first act, so an explicit cancel unlinks the operation immediately rather
+ * than when `done` settles, and the `finally` detaches on every other path —
+ * success, raster failure, text failure and abort alike. `detachAbort` is
+ * idempotent and never throws, and `page.cleanup()` still waits for both render
+ * paths to settle; releasing a listener does not release the page earlier.
  */
 
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist'
@@ -51,6 +65,10 @@ export interface PdfPageRender {
  * React; this function only writes into them. Cleanup of the page object is its
  * own responsibility, because the page object is what this function obtained.
  *
+ * One listener is registered on `signal` for the life of the operation and is
+ * released when the operation settles, whichever way it settled; see the module
+ * note above.
+ *
  * @param document - the loaded document.
  * @param pageNumber - the 1-based page to render.
  * @param hosts - the canvas and the text-layer element for that page.
@@ -72,20 +90,40 @@ export function renderPdfPage(
   let canvasTask: RenderTask | undefined
   let text: PdfTextRender | undefined
 
+  // Releasing the listener can never fail the render it is releasing, so it is
+  // idempotent and swallows whatever the signal raises: an operation that has
+  // already finished has nothing left to do about it.
+  let detachAbort = (): void => {}
+
   const cancel = (): void => {
     if (cancelled) return
     cancelled = true
-    // The text layer first: it is what a half-finished layout leaves visible.
+    // Before the two renders, so an explicit cancel unlinks this operation from
+    // the tab's lifetime at the moment it is asked to stop.
+    detachAbort()
+    // The text layer next: it is what a half-finished layout leaves visible.
     text?.cancel()
     canvasTask?.cancel()
   }
 
+  let attached = false
   if (signal.aborted) cancel()
   else {
     const onAbort = (): void => {
       cancel()
     }
     signal.addEventListener('abort', onAbort, { once: true })
+    attached = true
+    detachAbort = (): void => {
+      if (!attached) return
+      attached = false
+      try {
+        signal.removeEventListener('abort', onAbort)
+      } catch {
+        // A releasing operation cannot report a failure, and there is no
+        // registration left to make.
+      }
+    }
   }
 
   const done = (async (): Promise<void> => {
@@ -136,7 +174,9 @@ export function renderPdfPage(
     } finally {
       // Reached on success, on cancellation and on failure alike. A cancelled
       // `getPage` may still resolve later, but by then `page` is either cleaned
-      // up or was never obtained.
+      // up or was never obtained. The listener goes with the same boundary, so
+      // nothing of this operation outlives it on the tab's signal.
+      detachAbort()
       page?.cleanup()
     }
   })()
