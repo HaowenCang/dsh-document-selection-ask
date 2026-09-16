@@ -11,11 +11,52 @@ a permissive project license is not a claim about anything it depends on.
 
 ## Shipped in the plugin package
 
-None yet. The plugin's own runtime code is first-party, and no third-party
-library is bundled into `lib/` at this point. The parsers the design names for
-the format renderers (PDF.js, docx-preview, the PPTX renderer, the XLSX viewer,
-`@zip.js/zip.js`) are added, with their notices, by the tasks that introduce
-them.
+`@zip.js/zip.js` is this repository's first runtime dependency. It is declared in
+`dependencies`, not `devDependencies`, because the shared OOXML preflight runs in
+the browser and the format renderers will call it from the client bundle. The
+built `lib/client.js` does not contain it yet — nothing in the shipping entry
+point reaches `src/client/ooxml/` until a renderer does — but it is a runtime
+dependency from the moment it is declared, and it is recorded here as one.
+
+| Package | Version | License | Purpose |
+| --- | --- | --- | --- |
+| `@zip.js/zip.js` | 2.15.0 | BSD-3-Clause | OOXML ZIP central-directory metadata validation and later OOXML archive reading. It reads the central directory of a DOCX, PPTX or XLSX package so the preflight can bound the entry count, the declared sizes, the compression ratio and the entry names before any renderer touches the archive. |
+
+Task 6 introduced this dependency, recorded with the required fields:
+
+```text
+package:  @zip.js/zip.js
+version:  2.15.0
+license:  BSD-3-Clause
+runtime/test-only: runtime dependency
+```
+
+The version is pinned exactly — `"@zip.js/zip.js": "2.15.0"`, with no `^`, `~` or
+range — because this project requires reproducible builds and a security
+preflight is not a place where a patch release should arrive unannounced. The
+lockfile records the same specifier and a single resolved version.
+
+The license is **BSD-3-Clause, not MIT**. The two are both permissive and are not
+interchangeable statements, so the package's own license text is what governs its
+use and is retained unmodified in `node_modules/@zip.js/zip.js/LICENSE` in any
+installation of this project. That file carries the copyright notice
+(`Copyright (c) 2023, Gildas Lormeau`) and the three clauses including the
+no-endorsement clause, which the BSD-3-Clause requires be kept with a
+redistribution; redistributing this plugin therefore means redistributing that
+notice with it. The installed `LICENSE` is the authoritative copy and nothing in
+this repository rewrites or renames it.
+
+Both facts were verified against real package metadata rather than against this
+project's documentation: `npm view @zip.js/zip.js@2.15.0 version license
+dependencies` reports `2.15.0`, `BSD-3-Clause` and no dependencies at all, and
+`node_modules/@zip.js/zip.js/package.json` independently declares
+`"license": "BSD-3-Clause"` with no `dependencies` and no `peerDependencies`,
+which is why the package adds exactly one module to the install graph.
+
+`@zip.js/zip.js` is imported only through its public package export
+(`import { Uint8ArrayReader, ZipReader } from '@zip.js/zip.js'`). No private
+`lib/` path is imported, so no part of this project depends on a module the
+package does not publish as API.
 
 ## Development and test only
 
@@ -85,6 +126,9 @@ Recorded here so that a release check can verify the claims:
 - no CDN- or network-loaded asset is a dependency of the plugin;
 - no parser or renderer library is imported by `src/client/selection/`, which is
   format-independent by construction;
+- `src/client/ooxml/` is the one module that depends on `@zip.js/zip.js`, and it
+  reads archive metadata only: it calls no entry-extraction API, imports no
+  filesystem module, parses no XML and starts no worker;
 - the XLSX, PDF, DOCX and PPTX renderer dependencies remain unimplemented in the
   current task sequence, and their licenses are recorded when they are added.
 - no dependency is currently used under a copyleft, source-available or

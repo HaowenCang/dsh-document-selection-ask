@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      '@zip.js/zip.js':
+        specifier: 2.15.0
+        version: 2.15.0
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: 4.0.2
@@ -800,6 +804,10 @@ packages:
 
   '@yuku-toolchain/types@0.9.5':
     resolution: {integrity: sha512-KiuLNNgX9uNealaWAR+G3/cMXnRk9x4TY2EkYe/KIag+UPdwiA0RRf1hr1WAxzTP8KGzCTkqUdLPvqh32sEO3w==}
+
+  '@zip.js/zip.js@2.15.0':
+    resolution: {integrity: sha512-hYAuHAaWjt0axbofaDL5XUlmrQPsBDcK3f45ApZuh6N+8UGVk26GoGdtGDvcvzahsHytTQ6DtBVXwG9IcCMjjQ==}
+    engines: {bun: '>=0.7.0', deno: '>=1.0.0', node: '>=18.0.0'}
 
   assertion-error@2.0.1:
     resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
@@ -1739,6 +1747,8 @@ snapshots:
     optional: true
 
   '@yuku-toolchain/types@0.9.5': {}
+
+  '@zip.js/zip.js@2.15.0': {}
 
   assertion-error@2.0.1: {}
 
