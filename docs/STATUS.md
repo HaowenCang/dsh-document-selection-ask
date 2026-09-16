@@ -199,7 +199,7 @@
     in-page `.click()` appear nowhere in it
 
 - Task 6
-  - commit: `9cdf62ef0606c495bf6674b6078c463671277762` — PASS
+  - commit: `ffec81eac5b29f7ae31019ab91d73396d766adef` — PASS
   - status: `PASS`
   - the shared OOXML archive preflight exists: `src/client/ooxml/preflight.ts`
     publishes `preflightOoxml(bytes, limits?, signal?)`, which resolves with
