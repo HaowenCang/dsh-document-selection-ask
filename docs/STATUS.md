@@ -640,13 +640,25 @@ Security review:
 - HTTP/HTTPS hardened with noopener/noreferrer
 - altChunk gate remains independent
 
+- Task 9S — PASS
+
+OOXML security pipeline:
+- central-directory metadata preflight (`preflightOoxml`)
+- bounded streaming extraction verification (`verifyOoxmlExtraction`)
+- actual output must equal declared size into a discarding counting sink
+- third-party Office renderer runs only after both gates
+- zero retention of decompressed bytes
+- forged declared size mismatch rejected early during extraction
+- third-party renderer never called on forged archive
+
 Next:
 Task 10 — PPTX HTML/SVG renderer and slide provenance
 
 ## Current gate
 
+- Task 9S OOXML streaming extraction bounds verification suite: PASS (10 client cases)
+- Task 9S DOCX engine & forged-size rejection suite: PASS (13 client cases)
 - Task 9R DOCX hyperlink security client suite: PASS (14 client cases)
-- Task 9R DOCX engine detached staging & security suite: PASS (12 client cases)
 - Task 9 DOCX page markers client suite: PASS (5 client cases)
 - Task 9 DOCX selection adapter client suite: PASS (19 client cases)
 - Task 9 DOCX bundling integrity unit suite: PASS (2 unit cases)

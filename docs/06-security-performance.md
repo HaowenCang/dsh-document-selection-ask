@@ -28,11 +28,26 @@
 
 依赖的 worker/WASM/字体资源必须随插件包提供或由安装时依赖提供。
 
-## 3. OOXML preflight
+## 3. OOXML 安全管线与提取验证 (OOXML Pipeline)
 
-在 DOCX/PPTX/XLSX renderer 调用前：
+在 DOCX/PPTX/XLSX renderer 调用前，必须经过两道安全门禁：
 
-`@zip.js/zip.js` 仅读取 entry metadata。
+1. **Central-directory metadata preflight (`preflightOoxml`)**：
+   `@zip.js/zip.js` 仅读取 central directory 元数据，不展开任何 entry 正文。
+   校验 declared entry count、declared compressed/uncompressed sizes、compression ratio (<= 200)、unsafe paths、encrypted entries 等。
+   这是廉价元数据门禁，但 declared uncompressed size 是不可信声明。
+
+2. **Bounded streaming extraction verification (`verifyOoxmlExtraction`)**：
+   在第三方 renderer（如 docx-preview / JSZip）解压前，必须证明 actual decompressed size == declared uncompressed size。
+   使用 `WritableStream` 计数丢弃槽（discarding sink），不保留解压数据，边流式解压边检查：
+   - 一旦 actualEntryBytes > declaredUncompressedSize，立即中断并拒绝；
+   - 一旦超过 single-entry 或 aggregate 限制，立即中断；
+   - 解压结束时要求 actualEntryBytes === declaredUncompressedSize（防御 actual < declared）；
+   - 检验 entry CRC-32 / signature 与重叠 entry。
+
+3. **Format renderer**：
+   仅当上述两道门禁全部通过后，第三方 renderer 才能在独立 detached staging 中执行。
+   注意：此流程引入了双重解压（double decompression）的安全与性能折衷，但消除了恶意伪造声明尺寸绕过 preflight 的 ZIP bomb 攻击面。
 
 建议硬限制：
 
