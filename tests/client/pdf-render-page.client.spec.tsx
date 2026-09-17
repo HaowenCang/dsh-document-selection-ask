@@ -331,4 +331,105 @@ describe('the per-render abort listener', () => {
     expect(control.pages[0]?.cleanups).toBe(20)
     expect(control.pages[0]?.cleanedUpWhileRendering).toBe(false)
   })
+
+  describe('selectable DOM invalidation callback contract', () => {
+    it('notifies synchronously when replacing a populated text layer', async () => {
+      addPage(['Alpha'])
+      const signal = new AbortController().signal
+      const h = hosts()
+      const span = document.createElement('span')
+      span.textContent = 'old generation'
+      h.textLayer.appendChild(span)
+
+      const onSelectableDomInvalidated = vi.fn()
+      const render = renderPdfPage(loadedDocument(), 1, h, 816, 1, signal, {
+        onSelectableDomInvalidated,
+      })
+
+      expect(h.textLayer.childNodes.length).toBe(0)
+      expect(onSelectableDomInvalidated).toHaveBeenCalledTimes(1)
+
+      await render.done
+    })
+
+    it('does not notify when initial text layer is empty', async () => {
+      addPage(['Alpha'])
+      const signal = new AbortController().signal
+      const h = hosts()
+      expect(h.textLayer.childNodes.length).toBe(0)
+
+      const onSelectableDomInvalidated = vi.fn()
+      const render = renderPdfPage(loadedDocument(), 1, h, 816, 1, signal, {
+        onSelectableDomInvalidated,
+      })
+
+      expect(onSelectableDomInvalidated).toHaveBeenCalledTimes(0)
+      await render.done
+    })
+
+    it('notifies exactly once on second generation when layer was populated by first generation', async () => {
+      addPage(['Alpha'])
+      const signal = new AbortController().signal
+      const h = hosts()
+      const doc = loadedDocument()
+
+      const onFirst = vi.fn()
+      const first = renderPdfPage(doc, 1, h, 816, 1, signal, {
+        onSelectableDomInvalidated: onFirst,
+      })
+      expect(onFirst).toHaveBeenCalledTimes(0)
+      await first.done
+
+      expect(h.textLayer.childNodes.length).toBeGreaterThan(0)
+
+      const onSecond = vi.fn()
+      const second = renderPdfPage(doc, 1, h, 816, 1, signal, {
+        onSelectableDomInvalidated: onSecond,
+      })
+      expect(onSecond).toHaveBeenCalledTimes(1)
+      await second.done
+    })
+
+    it('does not notify for empty or image-only layer across generations', async () => {
+      addPage([])
+      const signal = new AbortController().signal
+      const h = hosts()
+      const doc = loadedDocument()
+
+      const onFirst = vi.fn()
+      const first = renderPdfPage(doc, 1, h, 816, 1, signal, {
+        onSelectableDomInvalidated: onFirst,
+      })
+      expect(onFirst).toHaveBeenCalledTimes(0)
+      await first.done
+
+      expect(h.textLayer.childNodes.length).toBe(0)
+
+      const onSecond = vi.fn()
+      const second = renderPdfPage(doc, 1, h, 816, 1, signal, {
+        onSelectableDomInvalidated: onSecond,
+      })
+      expect(onSecond).toHaveBeenCalledTimes(0)
+      await second.done
+    })
+
+    it('swallows errors thrown by onSelectableDomInvalidated without failing render', async () => {
+      addPage(['Alpha'])
+      const signal = new AbortController().signal
+      const h = hosts()
+      const span = document.createElement('span')
+      span.textContent = 'old generation'
+      h.textLayer.appendChild(span)
+
+      const throwingCallback = vi.fn(() => {
+        throw new Error('lifecycle failure')
+      })
+      const render = renderPdfPage(loadedDocument(), 1, h, 816, 1, signal, {
+        onSelectableDomInvalidated: throwingCallback,
+      })
+
+      expect(throwingCallback).toHaveBeenCalledTimes(1)
+      await expect(render.done).resolves.toBeUndefined()
+    })
+  })
 })

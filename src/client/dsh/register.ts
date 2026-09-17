@@ -58,8 +58,10 @@
  */
 
 import { createDshTextAdapter } from '../adapters/dsh-text/adapter.js'
+import { createPdfSelectionAdapter } from '../adapters/pdf/adapter.js'
 import { registerPdfRenderer } from '../renderers/pdf/register.js'
 import { installBrowserSelectionLifecycle } from '../selection/browser-lifecycle.js'
+import type { BrowserSelectionLifecycle } from '../selection/browser-lifecycle.js'
 import { createSelectionFeedback } from '../selection/feedback.js'
 import type { SelectionFeedbackSource } from '../selection/feedback.js'
 import { createSelectionKernel } from '../selection/kernel.js'
@@ -142,18 +144,16 @@ export function applyClient(ctx: ClientContext): ClientRuntime {
   const composerTargets = createComposerTargetRegistry()
 
   ctx.effect(
+    () => registry.register(createPdfSelectionAdapter()),
+    'dsh-document-selection-ask: pdf selection adapter',
+  )
+
+  ctx.effect(
     () => registry.register(createDshTextAdapter()),
     'dsh-document-selection-ask: builtin text selection adapter',
   )
 
-  // Task 7: the selectable PDF body. It registers metadata in the document
-  // preview registry and a keyed body in the document slot; both are owned by the
-  // fiber through their own `ctx.effect` bodies inside the call. No selection
-  // adapter is registered for PDF — that is Task 8, and until it exists a browser
-  // selection inside this renderer is correctly rejected as outside every
-  // supported preview rather than quoted without page provenance.
-  registerPdfRenderer(ctx)
-
+  let lifecycle: BrowserSelectionLifecycle | undefined
   const doc: Document | undefined = globalThis.document
   if (doc !== undefined) {
     // The style sheet is installed from here rather than from a component, so it
@@ -161,10 +161,10 @@ export function applyClient(ctx: ClientContext): ClientRuntime {
     // is removed with the plugin fiber.
     ctx.effect(() => installOverlayStyles(doc), 'dsh-document-selection-ask: overlay styles')
 
-    const lifecycle = installBrowserSelectionLifecycle(doc, kernel, feedback)
+    lifecycle = installBrowserSelectionLifecycle(doc, kernel, feedback)
     ctx.effect(
       () => () => {
-        lifecycle.dispose()
+        lifecycle?.dispose()
       },
       'dsh-document-selection-ask: browser selection lifecycle',
     )
@@ -172,6 +172,17 @@ export function applyClient(ctx: ClientContext): ClientRuntime {
     registerComposerTarget(ctx, composerTargets)
     registerAskSurface(ctx, kernel, feedback, composerTargets)
   }
+
+  // Task 7: the selectable PDF body. It registers metadata in the document
+  // preview registry and a keyed body in the document slot; both are owned by the
+  // fiber through their own `ctx.effect` bodies inside the call. Task 8 contributes
+  // the PDF selection adapter above so selections inside this renderer capture
+  // source page provenance.
+  // Task 8A: connect TextLayer replacement to the selection lifecycle refresh so
+  // stale selections are cleared when Chromium silently collapses them.
+  registerPdfRenderer(ctx, () => {
+    lifecycle?.refresh()
+  })
 
   return { registry, kernel, feedback, composerTargets }
 }

@@ -40,3 +40,6 @@ export const PDF_RESOURCE_ADDRESS_ATTRIBUTE = 'data-dsa-resource-address'
 
 /** Value of `PDF_DOCUMENT_KIND_ATTRIBUTE` for this renderer's root. */
 export const PDF_DOCUMENT_KIND = 'pdf'
+
+/** Text-layer attribute marking selectable text within a page. */
+export const PDF_TEXT_LAYER_ATTRIBUTE = 'data-dsa-pdf-text'

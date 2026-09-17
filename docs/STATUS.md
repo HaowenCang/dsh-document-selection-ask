@@ -591,15 +591,44 @@
   - Task 7B real DSH TextPreview smoke (Playwright, live instance): PASS (8
     cases, re-run after the change)
   - no `SelectionAdapter`, no page-provenance resolver, no PDF Ask integration,
-    no `data-dsa-*` text-layer attribute, no bundler, manifest, lockfile, notices
-    or PDF.js asset change. `pdfjs-dist` stays at 6.3.289 and its DOM contract is
+    no bundler, manifest, lockfile, notices or PDF.js asset change (`data-dsa-pdf-text`
+    已由 Task 7 renderer 存在，Task 7B 没有新增或改变该 DOM contract). `pdfjs-dist` stays at 6.3.289 and its DOM contract is
     untouched: the text layer is still the React element with
     `class="textLayer"`, so every selector `.textLayer span` and the
     `> :not(.markedContent)` rule PDF.js's own stylesheet relies on still resolve
     exactly as before. PDF selection still raises no Ask button, which remains
     the correct state until Task 8
 
+- Task 8 — `d1ad92e35c24e5264353cb0fb2f6ef53bf7481ec` — PASS
+
+PDF:
+- native TextLayer selection captured
+- source page provenance
+- same/cross-page Ask
+- real DSH verified
+
+- Task 8A — PASS
+
+Root cause:
+- renderer replaced selectable DOM after resize-time lifecycle capture
+- Chromium collapsed native Selection without selectionchange
+- kernel therefore retained stale snapshot
+
+Fix:
+- renderer publishes selectable-DOM invalidation
+- BrowserSelectionLifecycle.refresh performs authoritative recapture
+- collapsed selection clears stale snapshot
+- unaffected valid selection is recaptured rather than blindly cleared
+
+Next:
+Task 9 — DOCX high-fidelity renderer and rendered-page provenance
+
 ## Current gate
+
+- Task 8A selection invalidation & lifecycle refresh: PASS
+- Task 8 PDF selection adapter client suite: PASS (32 client cases)
+- Task 8 page range provenance unit suite: PASS (22 unit cases)
+- Task 8 real DSH PDF renderer smoke (Playwright, live instance): PASS (10 cases) — single-page Ask, cross-page Ask, CJK Ask, image-only no Ask, live selection across viewport resize, network asset isolation
 
 - Task 1 public contracts: PASS
 - Task 1A reproducibility: PASS
@@ -764,6 +793,7 @@
   stacking it, and a generation that fails or is cancelled leaves none of its
   predecessor's text behind. No generation token was needed, and the reason is
   recorded)
+- Task 8 — PASS (PDF native TextLayer selection captured with source page provenance, same/cross-page Ask, composer draft integration, and real DSH verification)
 - GitHub publication — ACTIVE
 - Repository visibility — public
 - License — MIT
@@ -820,7 +850,7 @@ most. A selection over a PDF page now reads the page's text **once** however man
 times the page has been re-rendered, so the quote an adapter takes from
 `getSelection()` is the page's text rather than one copy per generation. The DOM
 itself is unchanged — `.textLayer` is still the React element, its spans are still
-its direct children, and no `data-dsa-*` attribute was added — so the selectors,
+its direct children, and no new `data-dsa-*` attribute was added (`data-dsa-pdf-text` 已由 Task 7 renderer 存在，Task 7B 没有新增或改变该 DOM contract) — so the selectors,
 the page wrappers and the 1-based page attribute Task 8 resolves against are
 exactly what Task 7 published. The generation cleanup is expressed as
 `clearTextLayer` in `text-layer.ts` and is not part of Task 8's contract: an

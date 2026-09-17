@@ -45,6 +45,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 
+import { clearTextLayer } from '../../src/client/renderers/pdf/text-layer.js'
 import { renderPdfPage } from '../../src/client/renderers/pdf/render-page.js'
 import { FakePage, addPage, addScriptedPage, control } from './helpers/pdfjs-mock.js'
 import type { PageControl } from './helpers/pdfjs-mock.js'
@@ -288,5 +289,19 @@ describe('what a render leaves in the layer when it does not finish', () => {
     expect(layerText(elements)).toBe('PartialAlphaBeta')
     expect(spanTexts(elements)).toEqual(['Partial', 'Alpha', 'Beta'])
     expect(page().cleanedUpWhileRendering).toBe(false)
+  })
+
+  it('reports whether clearTextLayer removed any child nodes', () => {
+    const container = document.createElement('div')
+    expect(clearTextLayer(container)).toBe(false)
+
+    const span = document.createElement('span')
+    span.textContent = 'text'
+    container.appendChild(span)
+    expect(container.childNodes.length).toBe(1)
+
+    expect(clearTextLayer(container)).toBe(true)
+    expect(container.childNodes.length).toBe(0)
+    expect(clearTextLayer(container)).toBe(false)
   })
 })

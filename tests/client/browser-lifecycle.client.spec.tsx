@@ -209,6 +209,7 @@ interface LifecycleFixture {
   readonly feedback: SelectionFeedbackSource
   readonly contexts: SelectionContext[]
   readonly captures: SelectionCapture[]
+  readonly lifecycle: import('../../src/client/selection/browser-lifecycle.js').BrowserSelectionLifecycle
   /** Script the adapter's next verdict. */
   nextCapture(capture: SelectionCapture): void
   dispose(): void
@@ -248,6 +249,7 @@ function install(initial: SelectionCapture = { snapshot: snapshot(), rejectReaso
     feedback,
     contexts,
     captures,
+    lifecycle,
     nextCapture(capture: SelectionCapture): void {
       outcome = capture
     },
@@ -647,6 +649,43 @@ describe('lifecycle: manual refresh', () => {
     fixture.host.runFrames()
 
     expect(fixture.contexts).toHaveLength(0)
+  })
+
+  it('recaptures unaffected valid selection on refresh rather than blindly clearing', () => {
+    const fixture = install()
+    const validSnapshot = snapshot({ text: 'unaffected selection' })
+    fixture.nextCapture({ snapshot: validSnapshot, rejectReason: null })
+
+    fixture.lifecycle.refresh()
+    fixture.host.runFrames()
+    expect(fixture.kernel.getSnapshot()).toEqual(validSnapshot)
+
+    // A renderer invalidation occurs elsewhere while this selection is still valid:
+    fixture.nextCapture({ snapshot: validSnapshot, rejectReason: null })
+    fixture.lifecycle.refresh()
+    fixture.host.runFrames()
+
+    // Snapshot remains valid and is not blindly cleared
+    expect(fixture.kernel.getSnapshot()).toEqual(validSnapshot)
+    fixture.dispose()
+  })
+
+  it('clears kernel snapshot when refresh captures a collapsed selection after DOM replacement', () => {
+    const fixture = install()
+    const validSnapshot = snapshot({ text: 'stale selection' })
+    fixture.nextCapture({ snapshot: validSnapshot, rejectReason: null })
+
+    fixture.lifecycle.refresh()
+    fixture.host.runFrames()
+    expect(fixture.kernel.getSnapshot()).toEqual(validSnapshot)
+
+    // DOM was replaced and Chromium collapsed selection: refresh captures rejection
+    fixture.nextCapture({ snapshot: null, rejectReason: 'collapsed' })
+    fixture.lifecycle.refresh()
+    fixture.host.runFrames()
+
+    expect(fixture.kernel.getSnapshot()).toBeNull()
+    fixture.dispose()
   })
 })
 
