@@ -620,11 +620,26 @@ Fix:
 - collapsed selection clears stale snapshot
 - unaffected valid selection is recaptured rather than blindly cleared
 
+- Task 9 — `b4c86b4685ff86ffec0a99dd71fc71cecfd3ba1d` — PASS
+
+DOCX:
+- preflight before render
+- high-fidelity docx-preview DOM
+- native selection
+- rendered-page provenance when reliable
+- file-only fallback otherwise
+- real DSH Ask verified
+
 Next:
-Task 9 — DOCX high-fidelity renderer and rendered-page provenance
+Task 10 — PPTX HTML/SVG renderer and slide provenance
 
 ## Current gate
 
+- Task 9 DOCX page markers client suite: PASS (5 client cases)
+- Task 9 DOCX selection adapter client suite: PASS (19 client cases)
+- Task 9 DOCX engine & OOXML security gate suite: PASS (8 client cases)
+- Task 9 DOCX bundling integrity unit suite: PASS (2 unit cases)
+- Task 9 real DSH DOCX renderer smoke (Playwright, live instance): PASS (5 cases) — paragraphs Ask, manual page break cross-page rendered provenance, table & embedded image without remote requests, headers & footers, viewport resize selection stability
 - Task 8A selection invalidation & lifecycle refresh: PASS
 - Task 8 PDF selection adapter client suite: PASS (32 client cases)
 - Task 8 page range provenance unit suite: PASS (22 unit cases)
