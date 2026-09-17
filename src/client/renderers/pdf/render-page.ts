@@ -33,13 +33,25 @@
  * success, raster failure, text failure and abort alike. `detachAbort` is
  * idempotent and never throws, and `page.cleanup()` still waits for both render
  * paths to settle; releasing a listener does not release the page earlier.
+ *
+ * ## The text layer this operation inherits
+ *
+ * The text-layer element is React's and is the same element on every re-render of
+ * the page, while PDF.js appends into whatever container it is given and does not
+ * remove what a previous layer appended. This operation is therefore also the
+ * generation boundary for that element: it empties it synchronously, before its
+ * first `await`, so the text on screen belongs to this generation from the moment
+ * this generation exists — including when it fails before it ever reaches the
+ * text layer, and including when its signal has already aborted. The raster's
+ * canvas has no equivalent problem: `page.render()` draws into the canvas it is
+ * given and its cancellation is a `RenderTask.cancel()`.
  */
 
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist'
 
 import type { PdfBackingGeometry } from './geometry.js'
 import { pageBackingGeometry } from './geometry.js'
-import { configureTextLayer, renderTextLayer } from './text-layer.js'
+import { clearTextLayer, configureTextLayer, renderTextLayer } from './text-layer.js'
 import type { PdfTextRender } from './text-layer.js'
 
 /** The DOM nodes one page render fills. */
@@ -85,6 +97,14 @@ export function renderPdfPage(
   devicePixelRatio: number,
   signal: AbortSignal,
 ): PdfPageRender {
+  // The generation boundary, and the first statement rather than the last: the
+  // caller has cancelled the operation this one replaces, so the text still in
+  // this element belongs to a generation that no longer exists. Emptying it here
+  // — synchronously, before the first `await` and before the abort check below —
+  // is what makes the layer's contents this operation's responsibility on every
+  // path out of it, including the one where it never obtains a page at all.
+  clearTextLayer(hosts.textLayer)
+
   let cancelled = false
   let page: PDFPageProxy | undefined
   let canvasTask: RenderTask | undefined

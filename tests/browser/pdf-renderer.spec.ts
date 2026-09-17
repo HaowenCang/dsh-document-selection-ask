@@ -355,6 +355,169 @@ async function measureAlignment(
   )
 }
 
+/** What one page's text layer holds, as a reader would take it. */
+interface LayerSnapshot {
+  /** The layer's `textContent`, i.e. every character its spans hold. */
+  readonly text: string
+  /** How many elements the layer holds, spans and line breaks alike. */
+  readonly nodes: number
+}
+
+/**
+ * Read one page's text layer.
+ *
+ * `textContent` rather than `innerText`: it is what a selection reads and what
+ * copy takes, and it does not depend on layout. The node count is read beside it
+ * as corroboration — PDF.js is free to group items into spans differently, so the
+ * count is evidence and never the contract.
+ *
+ * @param page - the browser page.
+ * @param pageNumber - the 1-based page number.
+ * @returns the layer's text and node count.
+ */
+async function readLayer(page: Page, pageNumber: number): Promise<LayerSnapshot> {
+  return page.evaluate(
+    ([selector]: readonly [string]) => {
+      const layer = document.querySelector(`[data-dsa-pdf-page="${selector}"] [data-dsa-pdf-text]`)
+      return { text: layer?.textContent ?? '', nodes: layer?.childElementCount ?? 0 }
+    },
+    [String(pageNumber)] as const,
+  )
+}
+
+/**
+ * One page's canvas as the renderer sized it: its CSS box and its backing store.
+ * @param page - the browser page.
+ * @param pageNumber - the 1-based page number.
+ * @returns the box width in CSS pixels and the backing width in device pixels.
+ */
+async function canvasGeometry(
+  page: Page,
+  pageNumber: number,
+): Promise<{ readonly box: number; readonly backing: number }> {
+  return page.evaluate(
+    ([selector]: readonly [string]) => {
+      const canvas = document.querySelector<HTMLCanvasElement>(`[data-dsa-pdf-page="${selector}"] canvas`)
+      return { box: canvas?.getBoundingClientRect().width ?? 0, backing: canvas?.width ?? 0 }
+    },
+    [String(pageNumber)] as const,
+  )
+}
+
+/** The attribute this suite stamps on the spans of the generation it is replacing. */
+const PROBE_ATTRIBUTE = 'data-dsa-probe-previous'
+
+/**
+ * Stamp every span the layer currently holds.
+ *
+ * The stamp is this suite's own bookkeeping, not renderer output: PDF.js builds
+ * fresh span elements for every render, so a span that still carries the stamp is
+ * a span the **previous** generation put there. That is how a case can tell that
+ * the text it is looking at has actually been replaced rather than merely not yet
+ * touched.
+ *
+ * @param page - the browser page.
+ * @param pageNumber - the 1-based page number.
+ */
+async function stampCurrentSpans(page: Page, pageNumber: number): Promise<void> {
+  await page.evaluate(
+    ([selector, attribute]: readonly [string, string]) => {
+      const layer = document.querySelector(`[data-dsa-pdf-page="${selector}"] [data-dsa-pdf-text]`)
+      for (const span of layer?.querySelectorAll('span') ?? []) {
+        span.setAttribute(attribute, 'previous')
+      }
+    },
+    [String(pageNumber), PROBE_ATTRIBUTE] as const,
+  )
+}
+
+/**
+ * Whether the layer holds laid-out text and none of it is the previous
+ * generation's.
+ *
+ * @param page - the browser page.
+ * @param pageNumber - the 1-based page number.
+ * @returns whether every span the layer holds was built after the last stamping.
+ */
+async function layerWasRebuilt(page: Page, pageNumber: number): Promise<boolean> {
+  return page.evaluate(
+    ([selector, attribute]: readonly [string, string]) => {
+      const spans = [
+        ...(document.querySelector(`[data-dsa-pdf-page="${selector}"] [data-dsa-pdf-text]`)?.querySelectorAll('span') ??
+          []),
+      ]
+      return spans.length > 0 && spans.every((span) => !span.hasAttribute(attribute))
+    },
+    [String(pageNumber), PROBE_ATTRIBUTE] as const,
+  )
+}
+
+/**
+ * Resize the viewport and wait until the renderer has re-rendered the page.
+ *
+ * The canvas is the signal, and it is a sound one: `renderPdfPage` writes the
+ * canvas's box, writes its backing size, configures the text layer and starts the
+ * layer in **one synchronous block**, before its first `await`. A canvas whose
+ * box and backing size both moved is therefore a page whose text layer was
+ * rebuilt for the new geometry as well. A run where the page never follows the
+ * viewport fails here rather than passing on the previous generation's numbers.
+ *
+ * @param page - the browser page.
+ * @param pageNumber - the 1-based page number.
+ * @param size - the viewport to set.
+ * @param previous - the canvas geometry before this resize.
+ * @returns the canvas geometry after the re-render.
+ */
+async function resizeViewport(
+  page: Page,
+  pageNumber: number,
+  size: { readonly width: number; readonly height: number },
+  previous: { readonly box: number; readonly backing: number },
+): Promise<{ readonly box: number; readonly backing: number }> {
+  await page.setViewportSize({ width: size.width, height: size.height })
+  await expect
+    .poll(async () => canvasGeometry(page, pageNumber), {
+      timeout: 30_000,
+      message: `the page never followed the ${String(size.width)}×${String(size.height)} viewport`,
+    })
+    .not.toEqual(previous)
+  return canvasGeometry(page, pageNumber)
+}
+
+/**
+ * Resize the viewport and wait until a page with text has laid that text out
+ * again.
+ *
+ * The extra wait over `resizeViewport` is the one that matters for a page that
+ * has text: every span must have been built after the stamp, so the assertions
+ * that follow are about the new generation's text rather than about a layer that
+ * is still the old one — or, with the defect this suite guards, about a layer
+ * that now holds both.
+ *
+ * @param page - the browser page.
+ * @param pageNumber - the 1-based page number.
+ * @param size - the viewport to set.
+ * @param previous - the canvas geometry before this resize.
+ * @returns the canvas geometry after the re-render.
+ */
+async function resizeAndAwaitRerender(
+  page: Page,
+  pageNumber: number,
+  size: { readonly width: number; readonly height: number },
+  previous: { readonly box: number; readonly backing: number },
+): Promise<{ readonly box: number; readonly backing: number }> {
+  const geometry = await resizeViewport(page, pageNumber, size, previous)
+  await expect
+    .poll(async () => layerWasRebuilt(page, pageNumber), {
+      timeout: 30_000,
+      message:
+        'the layer still holds spans from the generation this resize replaced, so the page’s text ' +
+        'accumulates instead of being re-rendered',
+    })
+    .toBe(true)
+  return geometry
+}
+
 /** A plain rectangle, so the result survives the page boundary. */
 interface DOMRectLike {
   readonly x: number
@@ -463,6 +626,61 @@ test.describe('real DSH 0.1.5-rc.1 selectable PDF renderer', () => {
     expect(snapshot.created.length).toBeGreaterThan(0)
   })
 
+  test('keeps one generation of text across four real viewport resizes', async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 1000 })
+    await openShell(page)
+    await openPdfFixture(page, 'pdf-single')
+    await waitForPage(page, 1)
+
+    // The reference the whole case is measured against: the text of the first
+    // render, as a reader would take it, the number of nodes that carry it, and
+    // what a real browser selection makes of it.
+    const initial = await readLayer(page, 1)
+    expect(initial.text).toContain('Alpha Beta Gamma')
+    expect(initial.nodes).toBeGreaterThan(0)
+    const initialSelection = await selectPageText(page, 1)
+    expect(initialSelection).toContain('Alpha Beta Gamma')
+    expect(initialSelection.trim().length).toBeGreaterThan(0)
+
+    // Four real viewport changes. Each one narrows or widens the preview column,
+    // and `resizeAndAwaitRerender` refuses to return until the page has actually
+    // been re-rendered into the same text-layer element — so every assertion below
+    // is about a re-render that happened, not about one that was skipped.
+    const sizes = [
+      { width: 1200, height: 900 },
+      { width: 1900, height: 1200 },
+      { width: 1000, height: 800 },
+      { width: 1700, height: 1100 },
+    ]
+    let geometry = await canvasGeometry(page, 1)
+    for (const size of sizes) {
+      await stampCurrentSpans(page, 1)
+      geometry = await resizeAndAwaitRerender(page, 1, size, geometry)
+
+      const settled = await readLayer(page, 1)
+      // The contract: the text exists once. Not twice, not once per resize.
+      expect(settled.text, `after ${String(size.width)}×${String(size.height)}`).toBe(initial.text)
+      // Corroboration for a deterministic fixture: the node count is unchanged
+      // rather than N, 2N, 3N, 4N.
+      expect(settled.nodes, `after ${String(size.width)}×${String(size.height)}`).toBe(initial.nodes)
+
+      const selection = await selectPageText(page, 1)
+      expect(selection, `selection after ${String(size.width)}×${String(size.height)}`).toBe(initialSelection)
+      // A selection that had accumulated generations would read the page's text
+      // twice even where the overlapping spans happen to hide it.
+      expect(selection).not.toMatch(/Alpha[\s\S]*Alpha/)
+      expect(selection.match(/Gamma/gu) ?? []).toHaveLength(1)
+
+      // The text still sits on the canvas it selects.
+      expectAligned(await measureAlignment(page, 1), `after ${String(size.width)}×${String(size.height)}`)
+    }
+
+    // Task boundary, re-asserted after every one of those re-renders: no PDF
+    // selection adapter exists yet, so selecting this text raises no Ask button.
+    await page.waitForTimeout(1200)
+    expect(await page.locator(ASK_BUTTON).count()).toBe(0)
+  })
+
   test('renders later pages only after they are scrolled to', async ({ page }) => {
     await openShell(page)
     await openPdfFixture(page, 'pdf-two')
@@ -507,6 +725,10 @@ test.describe('real DSH 0.1.5-rc.1 selectable PDF renderer', () => {
   })
 
   test('renders CJK text that a real browser selection can take', async ({ page }) => {
+    // A viewport the preview column actually responds to, which is what makes the
+    // re-renders below real ones: at the default size the column's width is the
+    // same at 1280 and at 1300, and the renderer is never asked to paint again.
+    await page.setViewportSize({ width: 1600, height: 1000 })
     await openShell(page)
     await openPdfFixture(page, 'pdf-cjk')
     await waitForPage(page, 1)
@@ -522,6 +744,26 @@ test.describe('real DSH 0.1.5-rc.1 selectable PDF renderer', () => {
     expect(selected).toContain('第二行')
 
     expectAligned(await measureAlignment(page, 1), 'cjk page')
+
+    // Re-rendered twice, and the CJK text is not duplicated by either: a doubled
+    // generation would show up here as every character appearing twice, which a
+    // `toContain` assertion would not notice.
+    const initial = await readLayer(page, 1)
+    const initialSelection = await selectPageText(page, 1)
+    let geometry = await canvasGeometry(page, 1)
+    for (const size of [
+      { width: 1200, height: 900 },
+      { width: 1900, height: 1200 },
+    ]) {
+      await stampCurrentSpans(page, 1)
+      geometry = await resizeAndAwaitRerender(page, 1, size, geometry)
+
+      expect((await readLayer(page, 1)).text, `after ${String(size.width)}`).toBe(initial.text)
+      const resized = await selectPageText(page, 1)
+      expect(resized, `selection after ${String(size.width)}`).toBe(initialSelection)
+      expect(resized.match(/中文选段测试/gu) ?? []).toHaveLength(1)
+      expect(resized.match(/第二行/gu) ?? []).toHaveLength(1)
+    }
 
     // No adapter yet, so still no Ask.
     await page.waitForTimeout(1200)
@@ -544,6 +786,21 @@ test.describe('real DSH 0.1.5-rc.1 selectable PDF renderer', () => {
     await expect(page.locator(`[data-dsa-pdf-page="1"] ${TEXT_SPAN}`)).toHaveCount(0)
     expect(await page.locator(`[data-dsa-pdf-page="1"] ${TEXT_LAYER}`).innerText()).toBe('')
     expect(await selectPageText(page, 1)).toBe('')
+
+    // And re-rendering it does not invent one either: the reset belongs to every
+    // generation, and a page with no text has an empty layer on each of them.
+    let geometry = await canvasGeometry(page, 1)
+    for (const size of [
+      { width: 1250, height: 900 },
+      { width: 1750, height: 1100 },
+    ]) {
+      geometry = await resizeViewport(page, 1, size, geometry)
+      const settled = await readLayer(page, 1)
+      expect(settled.text, `after ${String(size.width)}`).toBe('')
+      expect(settled.nodes, `after ${String(size.width)}`).toBe(0)
+      await expect(page.locator(`[data-dsa-pdf-page="1"] ${TEXT_SPAN}`)).toHaveCount(0)
+      expect(await selectPageText(page, 1)).toBe('')
+    }
 
     await page.waitForTimeout(1200)
     expect(await page.locator(ASK_BUTTON).count()).toBe(0)
