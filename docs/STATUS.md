@@ -630,16 +630,27 @@ DOCX:
 - file-only fallback otherwise
 - real DSH Ask verified
 
+- Task 9R — PASS
+
+Security review:
+- docx-preview 0.4.0 copies external relationship targets into anchor href
+- renderer now sanitizes all published hyperlink schemes
+- unsafe rendered DOM never reaches live preview before hardening
+- javascript/data/file/custom schemes blocked
+- HTTP/HTTPS hardened with noopener/noreferrer
+- altChunk gate remains independent
+
 Next:
 Task 10 — PPTX HTML/SVG renderer and slide provenance
 
 ## Current gate
 
+- Task 9R DOCX hyperlink security client suite: PASS (14 client cases)
+- Task 9R DOCX engine detached staging & security suite: PASS (12 client cases)
 - Task 9 DOCX page markers client suite: PASS (5 client cases)
 - Task 9 DOCX selection adapter client suite: PASS (19 client cases)
-- Task 9 DOCX engine & OOXML security gate suite: PASS (8 client cases)
 - Task 9 DOCX bundling integrity unit suite: PASS (2 unit cases)
-- Task 9 real DSH DOCX renderer smoke (Playwright, live instance): PASS (5 cases) — paragraphs Ask, manual page break cross-page rendered provenance, table & embedded image without remote requests, headers & footers, viewport resize selection stability
+- Task 9R real DSH DOCX renderer smoke (Playwright, live instance): PASS (6 cases) — paragraphs Ask, manual page break cross-page rendered provenance, table & embedded image without remote requests, headers & footers, viewport resize selection stability, external hyperlink scheme security hardening & Ask over blocked link text
 - Task 8A selection invalidation & lifecycle refresh: PASS
 - Task 8 PDF selection adapter client suite: PASS (32 client cases)
 - Task 8 page range provenance unit suite: PASS (22 unit cases)
