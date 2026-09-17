@@ -98,6 +98,24 @@ const PREVIEW_IDENTITY_ATTRIBUTE = 'data-document-preview'
 /** This plugin's renderer id, as `register.ts` publishes it. */
 const PLUGIN_RENDERER = 'dsh-document-selection-ask/pdf'
 
+/** The Ask button's accessible name. */
+const ASK_LABEL = '\u8be2\u95ee DeepSeek'
+
+/** The question suffix an appended block must close with. */
+const QUESTION_SUFFIX = '\u8bf7\u9488\u5bf9\u4ee5\u4e0a\u9009\u4e2d\u5185\u5bb9\u56de\u7b54\uff1a'
+
+/**
+ * Read the composer's rendered draft text.
+ * @param page - the browser page.
+ * @returns the draft text.
+ */
+async function readDraft(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const element = document.querySelector('[data-composer-input]')
+    return element === null ? '' : element.textContent ?? ''
+  })
+}
+
 /**
  * The init script that instruments the platform constructors.
  *
@@ -558,8 +576,15 @@ function expectAligned(measured: { span: DOMRectLike; canvas: DOMRectLike } | nu
 }
 
 test.describe('real DSH 0.1.5-rc.1 selectable PDF renderer', () => {
-  test('renders a real PDF with a canvas and a selectable text layer, and raises no Ask', async ({ page }) => {
+  test('renders a real PDF with a canvas and a selectable text layer, raises Ask, and quotes with single-page provenance', async ({ page }) => {
     await openShell(page)
+
+    // A draft the reader typed before selecting: the ask must preserve it.
+    const typedDraft = 'existing pdf draft'
+    await page.locator(COMPOSER_INPUT).first().click()
+    await page.keyboard.type(typedDraft)
+    await page.waitForTimeout(500)
+
     const address = await openPdfFixture(page, 'pdf-single')
 
     // The renderer DSH selected is this plugin's, at the extension band, and the
@@ -611,11 +636,24 @@ test.describe('real DSH 0.1.5-rc.1 selectable PDF renderer', () => {
     expect(selected).toContain('Alpha Beta Gamma')
     expect(selected.trim().length).toBeGreaterThan(0)
 
-    // Task boundary: no PDF selection adapter exists yet, so selecting this text
-    // must not raise the Ask button. A button here would mean an adapter had
-    // claimed a renderer that cannot yet supply page provenance.
+    // Task 8: PDF selection adapter claims the selection and raises the Ask button.
+    const button = page.locator(ASK_BUTTON).first()
+    await expect(button).toBeVisible({ timeout: 15_000 })
+    await expect(button).toHaveText(ASK_LABEL)
+
+    const turnsBefore = await page.locator('[data-chat-turn]').count()
+    await button.click()
     await page.waitForTimeout(1200)
-    expect(await page.locator(ASK_BUTTON).count()).toBe(0)
+
+    const draft = await readDraft(page)
+    expect(draft).toContain(typedDraft)
+    expect(draft).toMatch(/\[来源：(?:task7-)?single-page\.pdf，第 1 页\]/)
+    expect(draft).toContain('Alpha Beta')
+    expect(draft).toContain(QUESTION_SUFFIX)
+
+    // No auto-submit and focus restored to composer.
+    expect(await page.locator('[data-chat-turn]').count()).toBe(turnsBefore)
+    expect(await page.evaluate(() => document.activeElement?.getAttribute('data-composer-input') !== null)).toBe(true)
 
     // A native worker ran, from a blob URL, as a module.
     const snapshot = await probe(page)
@@ -675,10 +713,8 @@ test.describe('real DSH 0.1.5-rc.1 selectable PDF renderer', () => {
       expectAligned(await measureAlignment(page, 1), `after ${String(size.width)}×${String(size.height)}`)
     }
 
-    // Task boundary, re-asserted after every one of those re-renders: no PDF
-    // selection adapter exists yet, so selecting this text raises no Ask button.
-    await page.waitForTimeout(1200)
-    expect(await page.locator(ASK_BUTTON).count()).toBe(0)
+    // Task 8: After live selection in the final re-render, the Ask button appears.
+    await expect(page.locator(ASK_BUTTON).first()).toBeVisible({ timeout: 15_000 })
   })
 
   test('renders later pages only after they are scrolled to', async ({ page }) => {
@@ -765,9 +801,25 @@ test.describe('real DSH 0.1.5-rc.1 selectable PDF renderer', () => {
       expect(resized.match(/第二行/gu) ?? []).toHaveLength(1)
     }
 
-    // No adapter yet, so still no Ask.
+    // Task 8: Ask button appears for CJK selection, quotes with page 1 provenance.
+    const button = page.locator(ASK_BUTTON).first()
+    await expect(button).toBeVisible({ timeout: 15_000 })
+    await expect(button).toHaveText(ASK_LABEL)
+
+    const turnsBefore = await page.locator('[data-chat-turn]').count()
+    await button.click()
     await page.waitForTimeout(1200)
-    expect(await page.locator(ASK_BUTTON).count()).toBe(0)
+
+    const draft = await readDraft(page)
+    expect(draft).toMatch(/\[来源：(?:task7-)?cjk\.pdf，第 1 页\]/)
+    expect(draft).toContain('中文选段测试')
+    expect(draft).toContain(QUESTION_SUFFIX)
+    // Verify CJK selection occurs once in the draft
+    expect(draft.match(/中文选段测试/gu) ?? []).toHaveLength(1)
+
+    // No auto-submit and focus restored to composer
+    expect(await page.locator('[data-chat-turn]').count()).toBe(turnsBefore)
+    expect(await page.evaluate(() => document.activeElement?.getAttribute('data-composer-input') !== null)).toBe(true)
   })
 
   test('draws an image-only PDF and invents no selectable text', async ({ page }) => {
@@ -902,6 +954,104 @@ test.describe('real DSH 0.1.5-rc.1 selectable PDF renderer', () => {
     expect(snapshot.created.length).toBeGreaterThan(0)
     for (const url of snapshot.created) {
       expect(snapshot.revoked, `${url} was never released`).toContain(url)
+    }
+  })
+
+  test('appends from a real cross-page selection with source range provenance', async ({ page }) => {
+    await openShell(page)
+
+    const typedDraft = 'existing cross draft'
+    await page.locator(COMPOSER_INPUT).first().click()
+    await page.keyboard.type(typedDraft)
+    await page.waitForTimeout(500)
+
+    await openPdfFixture(page, 'pdf-two')
+    await waitForPage(page, 1)
+    await page.locator('[data-dsa-pdf-page="2"]').scrollIntoViewIfNeeded()
+    await waitForPage(page, 2)
+
+    // Create a real cross-page Selection using standard browser Selection/Range APIs.
+    const selectedText = await page.evaluate(() => {
+      const p1 = document.querySelector('[data-dsa-pdf-page="1"]')
+      const p2 = document.querySelector('[data-dsa-pdf-page="2"]')
+      if (!p1 || !p2) throw new Error('pages 1 and 2 must exist')
+
+      const spans1 = [...p1.querySelectorAll('.textLayer span')].filter(
+        (s) => (s.textContent ?? '').trim() !== '',
+      )
+      const spans2 = [...p2.querySelectorAll('.textLayer span')].filter(
+        (s) => (s.textContent ?? '').trim() !== '',
+      )
+      if (spans1.length === 0 || spans2.length === 0) throw new Error('text layer spans must exist')
+
+      const span1 = spans1.find((s) => s.textContent?.includes('Alpha page one')) ?? spans1[0]
+      const span2 = spans2.find((s) => s.textContent?.includes('Beta page two')) ?? spans2[0]
+
+      const range = document.createRange()
+      range.setStartBefore(span1 as Node)
+      range.setEndAfter(span2 as Node)
+
+      const sel = window.getSelection()
+      sel?.removeAllRanges()
+      sel?.addRange(range)
+
+      return sel?.toString() ?? ''
+    })
+
+    expect(selectedText).toContain('Alpha page one')
+    expect(selectedText).toContain('Beta page two')
+
+    const button = page.locator(ASK_BUTTON).first()
+    await expect(button).toBeVisible({ timeout: 15_000 })
+    await expect(button).toHaveText(ASK_LABEL)
+
+    const turnsBefore = await page.locator('[data-chat-turn]').count()
+    await button.click()
+    await page.waitForTimeout(1200)
+
+    const draft = await readDraft(page)
+    expect(draft).toContain(typedDraft)
+    expect(draft).toMatch(/\[来源：(?:task7-)?two-page\.pdf，第 1–2 页\]/)
+    expect(draft).toContain('Alpha page one')
+    expect(draft).toContain('Beta page two')
+    expect(draft).toContain(QUESTION_SUFFIX)
+
+    // No auto-submit and focus restored to composer.
+    expect(await page.locator('[data-chat-turn]').count()).toBe(turnsBefore)
+    expect(await page.evaluate(() => document.activeElement?.getAttribute('data-composer-input') !== null)).toBe(true)
+  })
+
+  test('handles live selection across viewport resize without sending stale pre-rerender data', async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 1000 })
+    await openShell(page)
+    await openPdfFixture(page, 'pdf-single')
+    await waitForPage(page, 1)
+
+    // Select text on page 1
+    const selected = await selectPageText(page, 1)
+    expect(selected).toContain('Alpha Beta Gamma')
+
+    const button = page.locator(ASK_BUTTON).first()
+    await expect(button).toBeVisible({ timeout: 15_000 })
+
+    // Resize viewport causing PDF rerender
+    const geometry = await canvasGeometry(page, 1)
+    await stampCurrentSpans(page, 1)
+    await resizeAndAwaitRerender(page, 1, { width: 1100, height: 900 }, geometry)
+
+    // When the TextLayer DOM generation is cleared and replaced by rerender,
+    // browser selection is either collapsed/cleared (Ask hidden), or if re-anchored,
+    // it must not quote stale/duplicate content.
+    await page.waitForTimeout(1500)
+    const buttonCount = await page.locator(ASK_BUTTON).count()
+    if (buttonCount > 0) {
+      await button.click()
+      await page.waitForTimeout(1000)
+      const draft = await readDraft(page)
+      expect(draft).toMatch(/\[来源：(?:task7-)?single-page\.pdf，第 1 页\]/)
+      expect(draft.match(/Alpha Beta Gamma/gu) ?? []).toHaveLength(1)
+    } else {
+      expect(buttonCount).toBe(0)
     }
   })
 })

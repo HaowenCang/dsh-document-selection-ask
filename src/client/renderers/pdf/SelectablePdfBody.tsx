@@ -55,6 +55,7 @@ import {
   PDF_DOCUMENT_KIND_ATTRIBUTE,
   PDF_PAGE_ATTRIBUTE,
   PDF_RESOURCE_ADDRESS_ATTRIBUTE,
+  PDF_TEXT_LAYER_ATTRIBUTE,
 } from './identity.js'
 import { renderPdfPage } from './render-page.js'
 import type { PdfPageRender } from './render-page.js'
@@ -437,7 +438,7 @@ function PdfPage(props: PdfPageProps): JSX.Element {
       style={pageStyle}
     >
       <canvas ref={canvas} data-dsa-pdf-canvas="" />
-      <div ref={textLayer} className="textLayer" data-dsa-pdf-text="" />
+      <div ref={textLayer} className="textLayer" {...{ [PDF_TEXT_LAYER_ATTRIBUTE]: '' }} />
       {!painted && failure === undefined && <div data-dsa-pdf-placeholder="">{LOADING_TEXT}</div>}
       {failure !== undefined && (
         <div data-dsa-pdf-placeholder="" role="alert">

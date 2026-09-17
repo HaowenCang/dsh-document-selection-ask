@@ -58,6 +58,7 @@
  */
 
 import { createDshTextAdapter } from '../adapters/dsh-text/adapter.js'
+import { createPdfSelectionAdapter } from '../adapters/pdf/adapter.js'
 import { registerPdfRenderer } from '../renderers/pdf/register.js'
 import { installBrowserSelectionLifecycle } from '../selection/browser-lifecycle.js'
 import { createSelectionFeedback } from '../selection/feedback.js'
@@ -142,16 +143,20 @@ export function applyClient(ctx: ClientContext): ClientRuntime {
   const composerTargets = createComposerTargetRegistry()
 
   ctx.effect(
+    () => registry.register(createPdfSelectionAdapter()),
+    'dsh-document-selection-ask: pdf selection adapter',
+  )
+
+  ctx.effect(
     () => registry.register(createDshTextAdapter()),
     'dsh-document-selection-ask: builtin text selection adapter',
   )
 
   // Task 7: the selectable PDF body. It registers metadata in the document
   // preview registry and a keyed body in the document slot; both are owned by the
-  // fiber through their own `ctx.effect` bodies inside the call. No selection
-  // adapter is registered for PDF — that is Task 8, and until it exists a browser
-  // selection inside this renderer is correctly rejected as outside every
-  // supported preview rather than quoted without page provenance.
+  // fiber through their own `ctx.effect` bodies inside the call. Task 8 contributes
+  // the PDF selection adapter above so selections inside this renderer capture
+  // source page provenance.
   registerPdfRenderer(ctx)
 
   const doc: Document | undefined = globalThis.document
