@@ -416,7 +416,7 @@
     defect. No plugin code chooses or reads a workspace
 
 - Task 7A — PASS
-  - commit: `bb6c9f311bb6ba8d97f97a76c9c680267a38f7be` — `fix: release pdf render abort listeners`
+  - commit: `bb6c9f325caa5489c847048b1102270a641ed5de` — `fix: release pdf render abort listeners`
   - status: `PASS`
   - Closes:
     - per-render AbortSignal listener retention
