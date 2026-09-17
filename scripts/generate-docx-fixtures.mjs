@@ -2,9 +2,11 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   Document,
+  ExternalHyperlink,
   Footer,
   Header,
   ImageRun,
+  InternalHyperlink,
   Packer,
   PageBreak,
   Paragraph,
@@ -230,12 +232,69 @@ async function generateAltChunk() {
   console.log('Generated altchunk.docx (%d bytes)', outBytes.length)
 }
 
+async function generateExternalLinks() {
+  const doc = new Document({
+    sections: [
+      {
+        children: [
+          new Paragraph({
+            children: [new TextRun({ text: 'DOCX External Link Security', bold: true })],
+          }),
+          new Paragraph({
+            children: [
+              new ExternalHyperlink({
+                children: [new TextRun('Safe HTTPS')],
+                link: 'https://example.com/path',
+              }),
+              new TextRun(' '),
+              new ExternalHyperlink({
+                children: [new TextRun('Safe Mail')],
+                link: 'mailto:test@example.com',
+              }),
+              new TextRun(' '),
+              new ExternalHyperlink({
+                children: [new TextRun('Danger JS')],
+                link: 'javascript:window.__dsaDocxXss=(window.__dsaDocxXss||0)+1',
+              }),
+              new TextRun(' '),
+              new ExternalHyperlink({
+                children: [new TextRun('Danger Data')],
+                link: 'data:text/html,<script>window.__dsaDocxXss=(window.__dsaDocxXss||0)+1</script>',
+              }),
+              new TextRun(' '),
+              new ExternalHyperlink({
+                children: [new TextRun('Danger File')],
+                link: 'file:///C:/Windows/System32/',
+              }),
+              new TextRun(' '),
+              new ExternalHyperlink({
+                children: [new TextRun('Danger Custom')],
+                link: 'custom-scheme://example',
+              }),
+              new TextRun(' '),
+              new InternalHyperlink({
+                children: [new TextRun('Internal Bookmark')],
+                anchor: 'dsa-bookmark',
+              }),
+            ],
+          }),
+        ],
+      },
+    ],
+  })
+
+  const buffer = await Packer.toBuffer(doc)
+  writeFileSync(join(OUT_DIR, 'external-links.docx'), buffer)
+  console.log('Generated external-links.docx (%d bytes)', buffer.length)
+}
+
 async function main() {
   await generateParagraphs()
   await generateManualPageBreak()
   await generateTableImage()
   await generateHeadersFooters()
   await generateAltChunk()
+  await generateExternalLinks()
 }
 
 main().catch((err) => {

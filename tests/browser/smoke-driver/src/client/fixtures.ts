@@ -46,6 +46,7 @@ export interface SmokeFixture {
     | 'docx-break'
     | 'docx-table-image'
     | 'docx-headers-footers'
+    | 'docx-external-links'
   /** Control label, ASCII so the smoke locates it independently of the UI locale. */
   readonly label: string
   /** Path relative to the repository root, which is the Session's workspace. */
@@ -169,6 +170,12 @@ export const SMOKE_FIXTURES: readonly SmokeFixture[] = [
     path: 'smoke-fixtures/task9-headers-footers.docx',
     tabKind: 'text',
   },
+  {
+    key: 'docx-external-links',
+    label: 'Open DOCX external links',
+    path: 'smoke-fixtures/task9-external-links.docx',
+    tabKind: 'text',
+  },
 ]
 
 /**
@@ -180,6 +187,7 @@ export const DOCX_FIXTURE_SOURCES: readonly { readonly key: SmokeFixture['key'];
   { key: 'docx-break', source: 'tests/fixtures/docx/manual-page-break.docx' },
   { key: 'docx-table-image', source: 'tests/fixtures/docx/table-image.docx' },
   { key: 'docx-headers-footers', source: 'tests/fixtures/docx/headers-footers.docx' },
+  { key: 'docx-external-links', source: 'tests/fixtures/docx/external-links.docx' },
 ]
 
 /**

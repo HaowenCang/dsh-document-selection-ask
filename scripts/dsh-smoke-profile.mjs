@@ -137,6 +137,7 @@ const DOCX_FIXTURE_SOURCES = [
   { key: 'docx-break', source: 'tests/fixtures/docx/manual-page-break.docx' },
   { key: 'docx-table-image', source: 'tests/fixtures/docx/table-image.docx' },
   { key: 'docx-headers-footers', source: 'tests/fixtures/docx/headers-footers.docx' },
+  { key: 'docx-external-links', source: 'tests/fixtures/docx/external-links.docx' },
 ]
 
 /**

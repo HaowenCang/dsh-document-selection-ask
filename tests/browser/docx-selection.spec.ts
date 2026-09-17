@@ -34,6 +34,7 @@ const DOCX_ROOT = '[data-dsa-document-kind="docx"]'
 const DOCX_CONTENT = '[data-dsa-docx-content]'
 const RESOURCE_ADDRESS = 'data-dsa-resource-address'
 const DOCX_PAGE = '[data-dsa-docx-page]'
+const BLOCKED_LINK = '[data-dsa-docx-blocked-link]'
 
 const PLUGIN_RENDERER = 'dsh-document-selection-ask/docx'
 const PREVIEW_IDENTITY_ATTRIBUTE = 'data-document-preview'
@@ -269,5 +270,115 @@ test.describe('real DSH DOCX preview & selection smoke', () => {
 
     // Selection and Ask button must remain stable
     await expect(askButton).toBeVisible()
+  })
+
+  test('hardens external hyperlinks against malicious schemes while preserving selection and Ask', async ({
+    page,
+  }) => {
+    const recordedRequests: string[] = []
+    page.on('request', (request: Request) => {
+      recordedRequests.push(request.url())
+    })
+
+    await openShell(page)
+
+    // Set test-only execution probe
+    await page.evaluate(() => {
+      ;(window as unknown as { __dsaDocxXss: number }).__dsaDocxXss = 0
+    })
+
+    const initialUrl = page.url()
+
+    await openDocxFixture(page, 'docx-external-links')
+
+    const content = page.locator(DOCX_CONTENT).first()
+    await expect(content).toBeVisible({ timeout: 15_000 })
+    await expect(content).toContainText('DOCX External Link Security')
+
+    // 1. Safe HTTPS link assertions
+    const httpsLink = content.locator('a', { hasText: 'Safe HTTPS' }).first()
+    await expect(httpsLink).toBeVisible()
+    expect(await httpsLink.getAttribute('href')).toBe('https://example.com/path')
+    expect(await httpsLink.getAttribute('target')).toBe('_blank')
+    const httpsRel = await httpsLink.getAttribute('rel')
+    expect(httpsRel).toContain('noopener')
+    expect(httpsRel).toContain('noreferrer')
+    expect(await httpsLink.getAttribute('referrerpolicy')).toBe('no-referrer')
+
+    // 2. Safe Mail link assertions
+    const mailLink = content.locator('a', { hasText: 'Safe Mail' }).first()
+    await expect(mailLink).toBeVisible()
+    expect(await mailLink.getAttribute('href')).toBe('mailto:test@example.com')
+    expect(await mailLink.getAttribute('target')).toBeNull()
+
+    // 3. Internal bookmark link assertions
+    const bookmarkLink = content.locator('a', { hasText: 'Internal Bookmark' }).first()
+    await expect(bookmarkLink).toBeVisible()
+    expect(await bookmarkLink.getAttribute('href')).toBe('#dsa-bookmark')
+    expect(await bookmarkLink.getAttribute('target')).toBeNull()
+
+    // 4. Danger JS link: href stripped, blocked marker present, text visible
+    const jsLink = content.locator('a', { hasText: 'Danger JS' }).first()
+    await expect(jsLink).toBeVisible()
+    expect(await jsLink.getAttribute('href')).toBeNull()
+    expect(await jsLink.getAttribute('data-dsa-docx-blocked-link')).toBe('')
+
+    // Normal mouse click on the visible text element (without force: true or dispatchEvent)
+    await jsLink.click()
+    await page.waitForTimeout(500)
+
+    // Probe must still be 0, URL unchanged, shell alive
+    const probeVal = await page.evaluate(() => (window as unknown as { __dsaDocxXss: number }).__dsaDocxXss)
+    expect(probeVal).toBe(0)
+    expect(page.url()).toBe(initialUrl)
+    await expect(page.locator(COMPOSER_INPUT).first()).toBeVisible()
+
+    // 5. Danger Data link: href stripped, click does not navigate
+    const dataLink = content.locator('a', { hasText: 'Danger Data' }).first()
+    await expect(dataLink).toBeVisible()
+    expect(await dataLink.getAttribute('href')).toBeNull()
+    expect(await dataLink.getAttribute('data-dsa-docx-blocked-link')).toBe('')
+
+    await dataLink.click()
+    await page.waitForTimeout(500)
+    expect(page.url()).toBe(initialUrl)
+
+    // 6. Danger File link: href stripped
+    const fileLink = content.locator('a', { hasText: 'Danger File' }).first()
+    await expect(fileLink).toBeVisible()
+    expect(await fileLink.getAttribute('href')).toBeNull()
+    expect(await fileLink.getAttribute('data-dsa-docx-blocked-link')).toBe('')
+
+    // 7. Danger Custom link: href stripped
+    const customLink = content.locator('a', { hasText: 'Danger Custom' }).first()
+    await expect(customLink).toBeVisible()
+    expect(await customLink.getAttribute('href')).toBeNull()
+    expect(await customLink.getAttribute('data-dsa-docx-blocked-link')).toBe('')
+
+    // 8. Selection and Ask button test over blocked link text "Danger JS"
+    await page.evaluate(() => {
+      const allAnchors = Array.from(document.querySelectorAll('[data-dsa-docx-content] a'))
+      const jsAnchor = allAnchors.find((a) => a.textContent?.includes('Danger JS'))!
+      const range = document.createRange()
+      range.selectNodeContents(jsAnchor)
+      const sel = window.getSelection()!
+      sel.removeAllRanges()
+      sel.addRange(range)
+      document.dispatchEvent(new Event('selectionchange'))
+    })
+
+    const askButton = page.locator(ASK_BUTTON).first()
+    await expect(askButton).toBeVisible({ timeout: 10_000 })
+    await askButton.click()
+
+    const draft = await readDraft(page)
+    expect(draft).toContain('Danger JS')
+    expect(draft).toContain('[来源：task9-external-links.docx')
+
+    // 9. Rendering network gate: zero external network requests
+    const externalRequests = recordedRequests.filter(
+      (url) => !url.startsWith(BASE_URL) && !url.startsWith('http://127.0.0.1') && !url.startsWith('http://localhost'),
+    )
+    expect(externalRequests).toEqual([])
   })
 })

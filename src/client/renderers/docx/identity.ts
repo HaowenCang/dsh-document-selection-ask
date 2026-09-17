@@ -29,6 +29,9 @@ export const DOCX_SELECTABLE_ATTRIBUTE = 'data-dsa-docx-content'
 /** Attribute marking the scoped style host element for document CSS. */
 export const DOCX_STYLE_HOST_ATTRIBUTE = 'data-dsa-docx-style-host'
 
+/** Attribute marking an anchor whose hyperlink target was stripped by scheme policy. */
+export const DOCX_BLOCKED_LINK_ATTRIBUTE = 'data-dsa-docx-blocked-link'
+
 /** Default class name passed to docx-preview renderAsync. */
 export const DOCX_ENGINE_CLASS_NAME = 'dsa-docx-engine'
 

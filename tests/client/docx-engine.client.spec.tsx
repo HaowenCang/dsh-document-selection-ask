@@ -14,6 +14,7 @@ import { Uint8ArrayWriter, ZipWriter, TextReader } from '@zip.js/zip.js'
 import { OoxmlPreflightError } from '../../src/client/ooxml/errors.js'
 import { renderDocx } from '../../src/client/renderers/docx/engine.js'
 import {
+  DOCX_BLOCKED_LINK_ATTRIBUTE,
   DOCX_PAGE_ATTRIBUTE,
   DOCX_WRAPPER_CLASS_NAME,
 } from '../../src/client/renderers/docx/identity.js'
@@ -24,6 +25,7 @@ const PARAGRAPHS_DOCX = new Uint8Array(readFileSync(join(FIXTURES_DIR, 'paragrap
 const MANUAL_BREAK_DOCX = new Uint8Array(readFileSync(join(FIXTURES_DIR, 'manual-page-break.docx')))
 const TABLE_IMAGE_DOCX = new Uint8Array(readFileSync(join(FIXTURES_DIR, 'table-image.docx')))
 const ALTCHUNK_DOCX = new Uint8Array(readFileSync(join(FIXTURES_DIR, 'altchunk.docx')))
+const EXTERNAL_LINKS_DOCX = new Uint8Array(readFileSync(join(FIXTURES_DIR, 'external-links.docx')))
 
 describe('renderDocx engine & security', () => {
   let body: HTMLElement
@@ -139,5 +141,122 @@ describe('renderDocx engine & security', () => {
     // Table cells should also be readable
     expect(body.textContent).toContain('Table Cell 1-1')
     expect(body.textContent).toContain('Table Cell 2-2')
+  })
+
+  it('sanitizes external hyperlinks in rendered docx and hardens safe schemes before publication', async () => {
+    const ac = new AbortController()
+    await renderDocx(EXTERNAL_LINKS_DOCX, body, styleHost, ac.signal)
+
+    expect(body.textContent).toContain('DOCX External Link Security')
+
+    // 1. Safe HTTPS link
+    const httpsAnchor = Array.from(body.querySelectorAll('a')).find(
+      (a) => a.textContent?.trim() === 'Safe HTTPS',
+    )
+    expect(httpsAnchor).toBeDefined()
+    expect(httpsAnchor!.getAttribute('href')).toBe('https://example.com/path')
+    expect(httpsAnchor!.getAttribute('target')).toBe('_blank')
+    expect(httpsAnchor!.getAttribute('rel')).toBe('noopener noreferrer')
+    expect(httpsAnchor!.getAttribute('referrerpolicy')).toBe('no-referrer')
+
+    // 2. Safe Mail link
+    const mailAnchor = Array.from(body.querySelectorAll('a')).find(
+      (a) => a.textContent?.trim() === 'Safe Mail',
+    )
+    expect(mailAnchor).toBeDefined()
+    expect(mailAnchor!.getAttribute('href')).toBe('mailto:test@example.com')
+    expect(mailAnchor!.getAttribute('target')).toBeNull()
+
+    // 3. Internal Bookmark link
+    const bookmarkAnchor = Array.from(body.querySelectorAll('a')).find(
+      (a) => a.textContent?.trim() === 'Internal Bookmark',
+    )
+    expect(bookmarkAnchor).toBeDefined()
+    expect(bookmarkAnchor!.getAttribute('href')).toBe('#dsa-bookmark')
+    expect(bookmarkAnchor!.getAttribute('target')).toBeNull()
+
+    // 4. Blocked dangerous links (javascript, data, file, custom)
+    const dangerousLabels = ['Danger JS', 'Danger Data', 'Danger File', 'Danger Custom']
+    for (const label of dangerousLabels) {
+      const anchor = Array.from(body.querySelectorAll('a')).find(
+        (a) => a.textContent?.trim() === label,
+      )
+      expect(anchor, `anchor for ${label} must exist`).toBeDefined()
+      expect(anchor!.hasAttribute('href'), `${label} must have href stripped`).toBe(false)
+      expect(anchor!.hasAttribute('target')).toBe(false)
+      expect(anchor!.hasAttribute('rel')).toBe(false)
+      expect(anchor!.getAttribute(DOCX_BLOCKED_LINK_ATTRIBUTE)).toBe('')
+      expect(anchor!.textContent?.trim()).toBe(label)
+    }
+  })
+
+  it('renders into detached staging so live DOM has zero nodes while rendering is in progress', async () => {
+    const ac = new AbortController()
+    let duringRenderBodyChildren = -1
+    let duringRenderStyleChildren = -1
+
+    const customRenderer = async (
+      _data: any,
+      bodyContainer: HTMLElement,
+      styleContainer: HTMLElement,
+    ) => {
+      // While third-party renderer is actively running and populating staging containers:
+      bodyContainer.innerHTML = '<p>Unreviewed Staged Output</p>'
+      styleContainer.innerHTML = '<style>.staged{}</style>'
+
+      // Inspect live containers: they must be completely empty!
+      duringRenderBodyChildren = body.childNodes.length
+      duringRenderStyleChildren = styleHost.childNodes.length
+    }
+
+    await renderDocx(PARAGRAPHS_DOCX, body, styleHost, ac.signal, customRenderer as any)
+
+    expect(duringRenderBodyChildren).toBe(0)
+    expect(duringRenderStyleChildren).toBe(0)
+    expect(body.textContent).toContain('Unreviewed Staged Output')
+    expect(styleHost.innerHTML).toContain('.staged')
+  })
+
+  it('discards staged DOM and leaves live hosts empty when aborted during render', async () => {
+    const ac = new AbortController()
+
+    const slowRenderer = async (
+      _data: any,
+      bodyContainer: HTMLElement,
+    ) => {
+      bodyContainer.innerHTML = '<p>Malicious Unreviewed Content</p>'
+      // Abort during render execution
+      ac.abort()
+    }
+
+    await expect(
+      renderDocx(PARAGRAPHS_DOCX, body, styleHost, ac.signal, slowRenderer as any),
+    ).rejects.toThrow(expect.objectContaining({ name: 'AbortError' }))
+
+    // Staging output must not leak to live preview hosts
+    expect(body.childNodes.length).toBe(0)
+    expect(styleHost.childNodes.length).toBe(0)
+  })
+
+  it('discards staged DOM and fails closed when sanitizer fails', async () => {
+    const ac = new AbortController()
+
+    const badDomRenderer = async (
+      _data: any,
+      bodyContainer: HTMLElement,
+    ) => {
+      // Break querySelectorAll to simulate unexpected sanitizer failure
+      bodyContainer.querySelectorAll = () => {
+        throw new Error('Simulated DOM query failure in sanitizer')
+      }
+    }
+
+    await expect(
+      renderDocx(PARAGRAPHS_DOCX, body, styleHost, ac.signal, badDomRenderer as any),
+    ).rejects.toThrow('Simulated DOM query failure in sanitizer')
+
+    // Must fail closed: nothing published
+    expect(body.childNodes.length).toBe(0)
+    expect(styleHost.childNodes.length).toBe(0)
   })
 })

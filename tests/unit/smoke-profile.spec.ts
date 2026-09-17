@@ -301,13 +301,14 @@ describe('smoke profile tooling', () => {
       expect(declared?.tabKind).toBe('text')
     }
 
-    for (const name of ['paragraphs', 'manual-page-break', 'table-image', 'headers-footers']) {
+    for (const name of ['paragraphs', 'manual-page-break', 'table-image', 'headers-footers', 'external-links']) {
       expect(existsSync(join(repoRoot, 'tests', 'fixtures', 'docx', `${name}.docx`)), `${name}.docx is missing`).toBe(
         true,
       )
     }
     expect(sources.map((entry) => entry.key).sort()).toEqual([
       'docx-break',
+      'docx-external-links',
       'docx-headers-footers',
       'docx-paragraphs',
       'docx-table-image',
