@@ -620,11 +620,49 @@ Fix:
 - collapsed selection clears stale snapshot
 - unaffected valid selection is recaptured rather than blindly cleared
 
+- Task 9 — `b4c86b4685ff86ffec0a99dd71fc71cecfd3ba1d` — PASS
+
+DOCX:
+- preflight before render
+- high-fidelity docx-preview DOM
+- native selection
+- rendered-page provenance when reliable
+- file-only fallback otherwise
+- real DSH Ask verified
+
+- Task 9R — PASS
+
+Security review:
+- docx-preview 0.4.0 copies external relationship targets into anchor href
+- renderer now sanitizes all published hyperlink schemes
+- unsafe rendered DOM never reaches live preview before hardening
+- javascript/data/file/custom schemes blocked
+- HTTP/HTTPS hardened with noopener/noreferrer
+- altChunk gate remains independent
+
+- Task 9S — PASS
+
+OOXML security pipeline:
+- central-directory metadata preflight (`preflightOoxml`)
+- bounded streaming extraction verification (`verifyOoxmlExtraction`)
+- actual output must equal declared size into a discarding counting sink
+- third-party Office renderer runs only after both gates
+- zero retention of decompressed bytes
+- forged declared size mismatch rejected early during extraction
+- third-party renderer never called on forged archive
+
 Next:
-Task 9 — DOCX high-fidelity renderer and rendered-page provenance
+Task 10 — PPTX HTML/SVG renderer and slide provenance
 
 ## Current gate
 
+- Task 9S OOXML streaming extraction bounds verification suite: PASS (10 client cases)
+- Task 9S DOCX engine & forged-size rejection suite: PASS (13 client cases)
+- Task 9R DOCX hyperlink security client suite: PASS (14 client cases)
+- Task 9 DOCX page markers client suite: PASS (5 client cases)
+- Task 9 DOCX selection adapter client suite: PASS (19 client cases)
+- Task 9 DOCX bundling integrity unit suite: PASS (2 unit cases)
+- Task 9R real DSH DOCX renderer smoke (Playwright, live instance): PASS (6 cases) — paragraphs Ask, manual page break cross-page rendered provenance, table & embedded image without remote requests, headers & footers, viewport resize selection stability, external hyperlink scheme security hardening & Ask over blocked link text
 - Task 8A selection invalidation & lifecycle refresh: PASS
 - Task 8 PDF selection adapter client suite: PASS (32 client cases)
 - Task 8 page range provenance unit suite: PASS (22 unit cases)

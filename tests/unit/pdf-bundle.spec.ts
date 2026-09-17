@@ -126,15 +126,14 @@ describe('built client bundle: PDF renderer', () => {
     expect(source.includes("workerSrc = 'http")).toBe(false)
   })
 
-  it('keeps the DSH shared runtime and the OOXML preflight out of the plugin', () => {
+  it('keeps the DSH shared runtime out of the plugin bundle', () => {
     const source = readBundle()
 
     for (const marker of ['@deepseek-ai/dsh-client-ui-', '@deepseek-ai/cordis']) {
       expect(source.includes(`require("${marker}`), `${marker} was bundled`).toBe(false)
     }
-    // Task 6's finding stands: no shipping entry point reaches
-    // `src/client/ooxml/` yet, so `@zip.js/zip.js` stays external and unreachable.
-    expect(source.includes('@zip.js/zip.js')).toBe(false)
+    // Task 9 bundles @zip.js/zip.js for OOXML preflight with 0 unresolved requires.
+    expect(source).not.toMatch(/require\(["']@zip\.js\/zip\.js["']\)/)
   })
 
   it('reports the artifact size', () => {

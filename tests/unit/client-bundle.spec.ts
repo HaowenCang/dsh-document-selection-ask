@@ -79,7 +79,15 @@ function evaluateAsClassicScript(source: string): readonly LoaderCall[] {
       },
     },
   }
-  runInNewContext(source, { window })
+  runInNewContext(source, {
+    window,
+    self: window,
+    TransformStream: globalThis.TransformStream,
+    ReadableStream: globalThis.ReadableStream,
+    WritableStream: globalThis.WritableStream,
+    TextEncoder: globalThis.TextEncoder,
+    TextDecoder: globalThis.TextDecoder,
+  })
   return calls
 }
 

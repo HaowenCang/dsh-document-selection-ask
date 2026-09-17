@@ -273,6 +273,48 @@ describe('smoke profile tooling', () => {
     expect(sources.map((entry) => entry.key).sort()).toEqual(['pdf-cjk', 'pdf-image', 'pdf-single', 'pdf-two'])
   })
 
+  it('agrees with the driver about which DOCX fixtures exist and where they go', () => {
+    const bootstrap = read('scripts/dsh-smoke-profile.mjs')
+    const driver = read('tests/browser/smoke-driver/src/client/fixtures.ts')
+
+    const sources = readDataTable(bootstrap, 'DOCX_FIXTURE_SOURCES') as { key: string; source: string }[]
+    expect(sources.length, 'the bootstrap must declare the DOCX fixture sources').toBeGreaterThan(0)
+    expect(new Set(sources.map((entry) => entry.source)).size, 'no source may be listed twice').toBe(sources.length)
+
+    const driverFixtures = readDataTable(driver, 'SMOKE_FIXTURES') as {
+      key: string
+      path: string
+      tabKind?: string
+    }[]
+    const byKey = new Map(driverFixtures.map((entry) => [entry.key, entry]))
+
+    for (const entry of sources) {
+      const stem = entry.source.slice(entry.source.lastIndexOf('/') + 1).replace(/\.docx$/u, '')
+      const destination = `smoke-fixtures/task9-${stem}.docx`
+
+      expect(existsSync(join(repoRoot, entry.source)), `${entry.source} is not committed`).toBe(true)
+      expect(bootstrap, `the bootstrap must derive ${destination}`).toContain('`smoke-fixtures/task9-${stem}.docx`')
+
+      const declared = byKey.get(entry.key)
+      expect(declared, `the driver declares no ${entry.key} fixture`).toBeDefined()
+      expect(declared?.path, `the driver must open the file the bootstrap copies`).toBe(destination)
+      expect(declared?.tabKind).toBe('text')
+    }
+
+    for (const name of ['paragraphs', 'manual-page-break', 'table-image', 'headers-footers', 'external-links']) {
+      expect(existsSync(join(repoRoot, 'tests', 'fixtures', 'docx', `${name}.docx`)), `${name}.docx is missing`).toBe(
+        true,
+      )
+    }
+    expect(sources.map((entry) => entry.key).sort()).toEqual([
+      'docx-break',
+      'docx-external-links',
+      'docx-headers-footers',
+      'docx-paragraphs',
+      'docx-table-image',
+    ])
+  })
+
   it('keeps the smoke out of the shipping bundle and out of the published file list', () => {
     const manifest = JSON.parse(read('package.json')) as { files: string[] }
     for (const marker of SMOKE_MARKERS) {

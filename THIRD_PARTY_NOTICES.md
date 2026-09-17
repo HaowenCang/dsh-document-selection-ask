@@ -27,6 +27,47 @@ declared, and it is recorded here as one.
 | --- | --- | --- | --- |
 | `pdfjs-dist` | 6.3.289 | Apache-2.0 | PDF parsing, rasterization and text-layer layout for the selectable PDF preview. The whole library, its module worker, the Adobe CMap family, the standard-font family and the wasm decoders are embedded in `lib/client.js`; nothing is fetched at run time. |
 | `@zip.js/zip.js` | 2.15.0 | BSD-3-Clause | OOXML ZIP central-directory metadata validation and later OOXML archive reading. It reads the central directory of a DOCX, PPTX or XLSX package so the preflight can bound the entry count, the declared sizes, the compression ratio and the entry names before any renderer touches the archive. |
+| `docx-preview` | 0.4.0 | Apache-2.0 | High-fidelity DOCX rendering into standard HTML/CSS DOM for the selectable DOCX preview. Used solely through its public `renderAsync` entrypoint. |
+| `jszip` | 3.10.2 | MIT | Transitive runtime dependency brought in by `docx-preview` for ZIP decompression during DOCX rendering. Inlined into `lib/client.js` via `alwaysBundle`. |
+
+### `docx-preview` 0.4.0 and `jszip` 3.10.2
+
+Task 9 introduced `docx-preview` 0.4.0 as the renderer for DOCX documents:
+
+```text
+package:  docx-preview
+version:  0.4.0
+license:  Apache-2.0
+runtime/test-only: runtime dependency (bundled into lib/client.js)
+```
+
+The license was verified against `node_modules/docx-preview/package.json` and
+`node_modules/docx-preview/LICENSE`. The package brings in `jszip` as its runtime
+dependency for reading DOCX ZIP archives:
+
+```text
+package:  jszip
+version:  3.10.2
+license:  MIT (MIT OR GPL-3.0-or-later, used under MIT)
+runtime/test-only: transitive runtime dependency (bundled into lib/client.js)
+```
+
+The license was verified against `node_modules/.pnpm/jszip@3.10.2/node_modules/jszip/package.json`
+and `node_modules/.pnpm/jszip@3.10.2/node_modules/jszip/LICENSE.markdown`. Both packages are
+bundled into `lib/client.js` via `alwaysBundle` in `tsdown.config.ts`.
+
+### `docx` 9.7.1 (Development / Fixture Generator Only)
+
+```text
+package:  docx
+version:  9.7.1
+license:  MIT
+runtime/test-only: test-only fixture generator (devDependencies; NOT bundled into lib/client.js)
+```
+
+Used solely in `scripts/generate-docx-fixtures.mjs` to deterministically create test documents.
+It is not imported anywhere in `src/` and is strictly verified to have 0 occurrences in the
+shipping client artifact `lib/client.js`.
 
 ### `pdfjs-dist` 6.3.289
 

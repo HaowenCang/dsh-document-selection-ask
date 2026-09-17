@@ -34,7 +34,19 @@
  */
 export interface SmokeFixture {
   /** Stable key; also the value of the control's `data-dsa-smoke-open`. */
-  readonly key: 'txt' | 'code' | 'markdown' | 'pdf-single' | 'pdf-two' | 'pdf-cjk' | 'pdf-image'
+  readonly key:
+    | 'txt'
+    | 'code'
+    | 'markdown'
+    | 'pdf-single'
+    | 'pdf-two'
+    | 'pdf-cjk'
+    | 'pdf-image'
+    | 'docx-paragraphs'
+    | 'docx-break'
+    | 'docx-table-image'
+    | 'docx-headers-footers'
+    | 'docx-external-links'
   /** Control label, ASCII so the smoke locates it independently of the UI locale. */
   readonly label: string
   /** Path relative to the repository root, which is the Session's workspace. */
@@ -134,6 +146,48 @@ export const SMOKE_FIXTURES: readonly SmokeFixture[] = [
     path: 'smoke-fixtures/task7-image-only.pdf',
     tabKind: 'text',
   },
+  {
+    key: 'docx-paragraphs',
+    label: 'Open DOCX paragraphs',
+    path: 'smoke-fixtures/task9-paragraphs.docx',
+    tabKind: 'text',
+  },
+  {
+    key: 'docx-break',
+    label: 'Open DOCX page break',
+    path: 'smoke-fixtures/task9-manual-page-break.docx',
+    tabKind: 'text',
+  },
+  {
+    key: 'docx-table-image',
+    label: 'Open DOCX table image',
+    path: 'smoke-fixtures/task9-table-image.docx',
+    tabKind: 'text',
+  },
+  {
+    key: 'docx-headers-footers',
+    label: 'Open DOCX headers footers',
+    path: 'smoke-fixtures/task9-headers-footers.docx',
+    tabKind: 'text',
+  },
+  {
+    key: 'docx-external-links',
+    label: 'Open DOCX external links',
+    path: 'smoke-fixtures/task9-external-links.docx',
+    tabKind: 'text',
+  },
+]
+
+/**
+ * The DOCX fixtures, by key: the committed source file and the workspace name it
+ * is copied to.
+ */
+export const DOCX_FIXTURE_SOURCES: readonly { readonly key: SmokeFixture['key']; readonly source: string }[] = [
+  { key: 'docx-paragraphs', source: 'tests/fixtures/docx/paragraphs.docx' },
+  { key: 'docx-break', source: 'tests/fixtures/docx/manual-page-break.docx' },
+  { key: 'docx-table-image', source: 'tests/fixtures/docx/table-image.docx' },
+  { key: 'docx-headers-footers', source: 'tests/fixtures/docx/headers-footers.docx' },
+  { key: 'docx-external-links', source: 'tests/fixtures/docx/external-links.docx' },
 ]
 
 /**
