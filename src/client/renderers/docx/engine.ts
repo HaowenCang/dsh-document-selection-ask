@@ -1,15 +1,18 @@
 /**
  * DOCX preview rendering engine.
  *
- * Coordinates OOXML preflight security gating, docx-preview DOM rendering into
- * a detached staging DOM, hyperlink scheme sanitization, and rendered-page DOM marker assignment
- * before atomic publication to live preview hosts.
+ * Coordinates OOXML preflight security gating, bounded streaming extraction verification,
+ * docx-preview DOM rendering into a detached staging DOM, hyperlink scheme sanitization,
+ * and rendered-page DOM marker assignment before atomic publication to live preview hosts.
  *
  * ## Security boundaries
  *
  * - Every archive is subjected to `preflightOoxml` before any parsing library
  *   touches it: oversized archives, encrypted files, and path-traversal names
  *   are rejected before docx-preview can be called.
+ * - Every archive is subjected to `verifyOoxmlExtraction` before any third-party
+ *   decompression: proves actual decompressed byte stream equals declared uncompressed
+ *   size into a discarding count-only sink, enforcing bounds during extraction.
  * - `renderAltChunks: false` is strictly enforced to prevent arbitrary HTML
  *   injection from embedded DOCX chunks into the preview DOM.
  * - `useBase64URL: true` is explicitly chosen because docx-preview 0.4.0 lacks
@@ -21,14 +24,15 @@
  * - Hyperlink sanitization: all anchor elements are inspected and hardened against
  *   an explicit allowlist before publication. Unapproved or dangerous schemes,
  *   relative paths, and malformed targets have navigation attributes stripped.
- * - `AbortSignal` checks occur before preflight, between preflight and render,
- *   after render, and before atomic publication. If aborted, staging DOM is discarded
- *   and live hosts remain pristine.
+ * - `AbortSignal` checks occur before preflight, between preflight and extraction verifier,
+ *   before staging render, after render, and before atomic publication. If aborted,
+ *   staging DOM is discarded and live hosts remain pristine.
  */
 
 import { renderAsync } from 'docx-preview'
 import { DEFAULT_OOXML_LIMITS } from '../../ooxml/limits.js'
 import { preflightOoxml } from '../../ooxml/preflight.js'
+import { verifyOoxmlExtraction } from '../../ooxml/verify-extraction.js'
 import { DOCX_ENGINE_CLASS_NAME } from './identity.js'
 import { markRenderedPages } from './page-markers.js'
 import { sanitizeDocxLinks } from './security.js'
@@ -66,12 +70,17 @@ export async function renderDocx(
 ): Promise<DocxRenderResult> {
   signal.throwIfAborted()
 
-  // 1. Mandatory OOXML archive security preflight
+  // 1. Mandatory OOXML archive security preflight (metadata-only)
   await preflightOoxml(bytes, DEFAULT_OOXML_LIMITS, signal)
 
   signal.throwIfAborted()
 
-  // 2. Clear target hosts before rendering new generation
+  // 2. Mandatory bounded streaming extraction verification (proves actual == declared)
+  await verifyOoxmlExtraction(bytes, DEFAULT_OOXML_LIMITS, signal)
+
+  signal.throwIfAborted()
+
+  // 3. Clear target hosts before rendering new generation
   body.replaceChildren()
   styleHost.replaceChildren()
 

@@ -259,4 +259,38 @@ describe('renderDocx engine & security', () => {
     expect(body.childNodes.length).toBe(0)
     expect(styleHost.childNodes.length).toBe(0)
   })
+
+  it('rejects forged-size archive before third-party renderer is invoked (zero renderFn calls)', async () => {
+    // Construct forged archive where declared uncompressed size is small, but actual is large
+    const zipWriter = new ZipWriter(new Uint8ArrayWriter())
+    await zipWriter.add('word/document.xml', new TextReader('X'.repeat(10_000)))
+    const originalBytes = await zipWriter.close()
+
+    // Forge declared uncompressed size to 16
+    let cdOffset = -1
+    for (let i = 0; i < originalBytes.length - 4; i++) {
+      if (
+        originalBytes[i] === 0x50 &&
+        originalBytes[i + 1] === 0x4b &&
+        originalBytes[i + 2] === 0x01 &&
+        originalBytes[i + 3] === 0x02
+      ) {
+        cdOffset = i
+        break
+      }
+    }
+    const forgedBytes = new Uint8Array(originalBytes)
+    const view = new DataView(forgedBytes.buffer, forgedBytes.byteOffset, forgedBytes.byteLength)
+    view.setUint32(cdOffset + 24, 16, true)
+
+    const ac = new AbortController()
+    const renderFnSpy = vi.fn()
+
+    const err = await renderDocx(forgedBytes, body, styleHost, ac.signal, renderFnSpy as any).catch((e) => e)
+    expect(err).toBeInstanceOf(OoxmlPreflightError)
+    expect((err as OoxmlPreflightError).code).toBe('invalid-archive')
+    expect(renderFnSpy).not.toHaveBeenCalled()
+    expect(body.childNodes.length).toBe(0)
+    expect(styleHost.childNodes.length).toBe(0)
+  })
 })

@@ -136,7 +136,7 @@ test.describe('real DSH DOCX preview & selection smoke', () => {
     const draft = await readDraft(page)
     expect(draft).toContain('Pre-existing draft text')
     expect(draft).toContain('DOCX Alpha')
-    expect(draft).toContain('[来源：task9-paragraphs.docx')
+    expect(draft).toContain('[来源：task9-paragraphs.docx，第 1 渲染页]')
     expect(draft).toContain(QUESTION_SUFFIX)
 
     // Composer must have focus restored
