@@ -651,11 +651,28 @@ OOXML security pipeline:
 - forged declared size mismatch rejected early during extraction
 - third-party renderer never called on forged archive
 
+- Task 10 — `6aaf0ddc93d97b33da361eab8afd58b069bfe31e` — PASS
+
+PPTX:
+- high-fidelity HTML/SVG renderer
+- native selectable text
+- slide provenance
+- shared OOXML metadata + actual extraction gates
+- external media blocked before rendering
+- windowed/lazy large-deck rendering
+- real DSH Ask verified
+
 Next:
-Task 10 — PPTX HTML/SVG renderer and slide provenance
+Task 11 — XLSX read-only workbook renderer and semantic cell-range Ask
 
 ## Current gate
 
+- Task 10 slide range provenance unit suite: PASS (21 unit cases)
+- Task 10 PPTX selection adapter client suite: PASS (23 client cases)
+- Task 10 PPTX relationship security client suite: PASS (16 client cases)
+- Task 10 PPTX rendering engine client suite: PASS (6 client cases)
+- Task 10 PPTX bundling integrity unit suite: PASS (2 unit cases)
+- Task 10 real DSH PPTX renderer smoke (Playwright, live instance): PASS (9 cases) — text two slides Ask, cross-slide Ask, Unicode CJK Ask, table & embedded PNG image without remote requests, chart rendering output, large 120-slide windowed virtualization and stale selection cleanup on scroll, viewport resize revalidation, external media fail-closed security rejection, dangerous javascript hyperlink blocking
 - Task 9S OOXML streaming extraction bounds verification suite: PASS (10 client cases)
 - Task 9S DOCX engine & forged-size rejection suite: PASS (13 client cases)
 - Task 9R DOCX hyperlink security client suite: PASS (14 client cases)
