@@ -607,11 +607,25 @@ PDF:
 - same/cross-page Ask
 - real DSH verified
 
+- Task 8A — PASS
+
+Root cause:
+- renderer replaced selectable DOM after resize-time lifecycle capture
+- Chromium collapsed native Selection without selectionchange
+- kernel therefore retained stale snapshot
+
+Fix:
+- renderer publishes selectable-DOM invalidation
+- BrowserSelectionLifecycle.refresh performs authoritative recapture
+- collapsed selection clears stale snapshot
+- unaffected valid selection is recaptured rather than blindly cleared
+
 Next:
 Task 9 — DOCX high-fidelity renderer and rendered-page provenance
 
 ## Current gate
 
+- Task 8A selection invalidation & lifecycle refresh: PASS
 - Task 8 PDF selection adapter client suite: PASS (32 client cases)
 - Task 8 page range provenance unit suite: PASS (22 unit cases)
 - Task 8 real DSH PDF renderer smoke (Playwright, live instance): PASS (10 cases) — single-page Ask, cross-page Ask, CJK Ask, image-only no Ask, live selection across viewport resize, network asset isolation
