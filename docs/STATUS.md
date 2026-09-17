@@ -471,6 +471,134 @@
   - Task 7A real DSH TextPreview smoke (Playwright, live instance): PASS (8 cases,
     re-run after the change)
 
+- Task 7B — PASS
+  - commit: `2c0d349cfb2acf211401b48a06145f5de9f4fd10` — `fix: reset pdf text layer between renders`
+  - status: `PASS`
+  - Closes:
+    - PDF TextLayer DOM accumulation across resize/re-render
+    - stale TextLayer generation after rerender
+  - **the accumulation defect.** A page's text-layer element belongs to React and
+    is the same element on every re-render of that page, while PDF.js's
+    `TextLayer` appends into whatever container it is given and its `cancel()`
+    removes none of it — in 6.3.289 `cancel()` cancels the reader and rejects the
+    layer's own capability and touches no DOM. Two renders into one container
+    therefore left the page's text in the DOM twice, and twenty drags of the
+    column's edge left it twenty times. The duplicates are invisible, because the
+    spans are transparent and coincide, but they are what the browser reads:
+    `getSelection().toString()` returned the text once per generation, so copy
+    took it twice and Task 8's adapter would have quoted it twice. Measured
+    against the pre-fix build, the client suite reported
+    `AlphaBetaGammaAlphaBetaGamma` where one generation is
+    `AlphaBetaGamma`
+  - **the fix is one `replaceChildren()` at the generation boundary.**
+    `text-layer.ts` publishes `clearTextLayer(container)`, `renderPdfPage` calls
+    it as its **first statement** — synchronously, before its first `await` and
+    before its own abort check — and `renderTextLayer` calls it again immediately
+    before it constructs the layer. Both calls are load-bearing and each has a
+    distinct job: the operation-level one is what makes the element belong to the
+    new generation even when that generation never obtains a page at all (a
+    rejected `getPage`) or is cancelled before its first `await`, and the
+    module-level one is what makes the rule the module's rather than its
+    caller's. `replaceChildren()` rather than `innerHTML = ''` or
+    `textContent = ''`: it parses nothing, takes no string and cannot be made to
+    run script
+  - the ordering the task required is the ordering that ships: `paint()` cancels
+    the operation it replaces, `renderPdfPage` empties the container, the new
+    layer is constructed. There is no path on which the container is cleared
+    while an earlier layer is still the one being written to
+  - **no generation token was added, and the reason is recorded rather than
+    assumed.** A cancelled layer can in principle append a chunk whose read
+    resolved before the cancellation and whose continuation runs after it, and
+    such a chunk would land in a container already given to the next generation.
+    That window cannot be reached from this application, and the argument is
+    about the platform rather than about timing: a text chunk reaches PDF.js's
+    pump from a worker `message` event (`MessageHandler.#processStreamMessage` →
+    `controller.enqueue`), the pump's continuation for it is a microtask, and a
+    microtask always drains before the event loop returns to its task queue —
+    while every `cancel()` this renderer performs (an animation frame, an abort
+    listener, an effect cleanup) runs in a **later** task. A `WeakMap` token
+    would therefore guard against a state the application cannot produce, and
+    §十一 of the round's instructions says to keep the simple path when the real
+    cancellation is synchronous enough. The reasoning is in the module note, so a
+    later change to the cancel path has it in front of it
+  - **the module that owns PDF.js's own events layer had to be corrected, not the
+    component.** `renderPdfPage` is the only writer of that element and the
+    operation is the only thing that knows when a generation ends; the React
+    component was already doing the right thing by cancelling first
+  - the mock was extended twice and both extensions are faithful rather than
+    convenient. `FakeTextLayer.render()` now **pumps**: it pulls a chunk, appends
+    its items, pulls the next, so a page's text arrives in installments and the
+    gap between two of them is a state a case can hold. Its append makes no
+    ownership test and none after the await, exactly as the real layer makes
+    none — a stand-in that filtered its own appends would have hidden the defect
+    it exists to show. `addScriptedPage()` adds a page whose chunks are released
+    by the case (`deliver()` one, `release()` the rest), and `streamTextContent()`
+    returns a **fresh** stream per call, as a real page object does, so a
+    re-render reads the page's text from the beginning
+  - the client suite is a new file, `tests/client/pdf-text-layer.client.spec.tsx`
+    (5 cases), because the reused-container contract is not the listener
+    lifecycle's subject; Task 7A's `pdf-render-page.client.spec.tsx` is
+    untouched and its 7 cases still pass. Every case renders into **one**
+    `{ canvas, textLayer }` pair — a case built on two fresh hosts would prove
+    nothing, since the defect *is* the reuse. Two renders on one host, then four
+    consecutive renders including a cancel after completion, then a render whose
+    signal had already aborted (the container is emptied and the generation hands
+    out no stream at all), then a failed new generation (a rejected `getPage`,
+    so nothing can replace the old text — asserted empty rather than merely
+    different), then a generation cancelled between two chunks with the next one
+    reading the same three chunks (`PartialAlphaBeta`, never
+    `PartialPartialAlphaBeta`)
+  - the suite was verified to discriminate: with `clearTextLayer` reduced to a
+    no-op, all 5 cases fail with exactly the accumulation the task describes —
+    `AlphaBetaGammaAlphaBetaGamma`, `AlphaBeta` four times over, stale text
+    surviving an aborted render and a failed one, `PartialPartialAlphaBeta`
+  - Task 7A listener lifecycle re-verified after the change: PASS (7 client
+    cases, unchanged). The reset touches neither the listener's registration nor
+    its release, and `page.cleanup()` still waits for both renders to settle —
+    `cleanedUpWhileRendering` is asserted `false` in the new cases as well, and
+    the reset is not a cleanup: it never calls `page.cleanup()` and never brings
+    one forward
+  - Task 7B targeted suites: PASS (`pdf-text-layer` 5, `pdf-render-page` 7,
+    `pdf-runtime` 25, `pdf-styles` 4 — 41 cases). Full `pnpm test`: PASS (629
+    tests, up from 624), `pnpm typecheck`: PASS, `pnpm build`: PASS,
+    `git diff --check`: PASS
+  - Task 7B real DSH PDF renderer smoke (Playwright, live instance): PASS (8
+    cases). The new case opens `single-page.pdf` at 1600×1000 and then resizes
+    through 1200×900, 1900×1200, 1000×800 and 1700×1100; after **each** one the
+    layer's `textContent` equals the first render's, the node count is unchanged
+    rather than N/2N/3N/4N, a real browser selection equals the first render's
+    selection and contains `Gamma` exactly once, the text is still aligned inside
+    its canvas, and the Ask button count is still 0. Each resize is proven to
+    have re-rendered: the canvas's box **and** backing width both moved — the
+    renderer writes them, configures the layer and starts it in one synchronous
+    block — and every span in the layer was built after the case stamped the
+    previous generation's, so a run where the resize never reached the renderer
+    fails instead of passing on stale evidence
+  - the same case was verified to discriminate in the browser: with
+    `clearTextLayer` a no-op in a rebuilt bundle, it fails with *the layer still
+    holds spans from the generation this resize replaced*, which is the defect
+    stated in the DOM
+  - `cjk.pdf` re-rendered twice (1600×1000 → 1200×900 → 1900×1200): the CJK text
+    is identical after each one and the browser selection is identical too, with
+    `中文选段测试` and `第二行` each matched exactly once — a doubled generation
+    would show every character twice, which a `toContain` assertion would not
+    notice. The case now opens at 1600×1000 because the preview column does not
+    change width between 1280 and 1300, and a resize that reaches no renderer
+    would have tested nothing
+  - `image-only.pdf` re-rendered twice: `textContent` is `''` and the layer holds
+    zero children after each one, `selectPageText` is `''`, and no span exists —
+    the reset introduces no placeholder, and OCR is still `NO`
+  - Task 7B real DSH TextPreview smoke (Playwright, live instance): PASS (8
+    cases, re-run after the change)
+  - no `SelectionAdapter`, no page-provenance resolver, no PDF Ask integration,
+    no `data-dsa-*` text-layer attribute, no bundler, manifest, lockfile, notices
+    or PDF.js asset change. `pdfjs-dist` stays at 6.3.289 and its DOM contract is
+    untouched: the text layer is still the React element with
+    `class="textLayer"`, so every selector `.textLayer span` and the
+    `> :not(.markedContent)` rule PDF.js's own stylesheet relies on still resolve
+    exactly as before. PDF selection still raises no Ask button, which remains
+    the correct state until Task 8
+
 ## Current gate
 
 - Task 1 public contracts: PASS
@@ -555,7 +683,25 @@
   released on completion, raster failure, text failure, explicit cancel (asserted
   before `done` settles), and tab abort, with 20 sequential renders on one live
   signal accumulating nothing
-- Full `pnpm test`: PASS (624 tests)
+- Task 7B text-layer generation suite: PASS (5 client cases) — two renders, then
+  four consecutive renders (one cancelled after completion), into **one** reused
+  `{ canvas, textLayer }` pair leave one generation of text; a signal that had
+  already aborted empties the layer and hands out no stream; a new generation that
+  fails before it reaches the text layer (a rejected `getPage`) leaves the layer
+  empty rather than holding the previous render's text; and a generation cancelled
+  between two chunks is followed by one whose full text is the only text present.
+  Verified to discriminate: all 5 fail against a no-op reset
+- Task 7B real-DSH resize regression (Playwright, live instance): PASS — four real
+  viewport resizes with `textContent`, node count, real browser selection and
+  span-in-canvas alignment asserted after each, each resize proven to have
+  re-rendered (canvas box and backing width both moved, every span built after the
+  previous generation was stamped), and verified to discriminate against a no-op
+  reset
+- Task 7B CJK and image-only re-render regressions (Playwright, live instance):
+  PASS — the CJK text and its browser selection are identical after two resizes
+  with each substring matched exactly once, and the image-only page is empty with
+  zero layer children after each of its two resizes
+- Full `pnpm test`: PASS (629 tests)
 - `pnpm typecheck`: PASS
 - `pnpm build`: PASS
 - `git diff --check`: PASS
@@ -612,6 +758,12 @@
   settlement boundary rather than at the tab's, so repeated renders on one tab
   signal retain nothing; the lazy-loading source comment matches the fixed
   `1200px 0px` viewport-rooted observer it describes)
+- Task 7B — PASS (one text-layer container holds one generation of text: the
+  container is emptied at the render operation's own boundary and again before a
+  layer is constructed, so a resize re-render replaces the page's text instead of
+  stacking it, and a generation that fails or is cancelled leaves none of its
+  predecessor's text behind. No generation token was needed, and the reason is
+  recorded)
 - GitHub publication — ACTIVE
 - Repository visibility — public
 - License — MIT
@@ -663,6 +815,19 @@ render's abort listener and when it is released. Task 8's adapter resolves
 provenance from the DOM, not from the renderer's lifetime, so it can be built
 against the same contract Task 7 published.
 
+What Task 7B changes for Task 8: one thing, and it is the one Task 8 depends on
+most. A selection over a PDF page now reads the page's text **once** however many
+times the page has been re-rendered, so the quote an adapter takes from
+`getSelection()` is the page's text rather than one copy per generation. The DOM
+itself is unchanged — `.textLayer` is still the React element, its spans are still
+its direct children, and no `data-dsa-*` attribute was added — so the selectors,
+the page wrappers and the 1-based page attribute Task 8 resolves against are
+exactly what Task 7 published. The generation cleanup is expressed as
+`clearTextLayer` in `text-layer.ts` and is not part of Task 8's contract: an
+adapter must still resolve provenance from the plugin's own `data-dsa-pdf-page`
+wrappers, never from `.textLayer`, which a future DOCX or PPTX renderer will also
+produce.
+
 Task 7 leaves two things for the renderer tasks that follow it:
 
 - the renderer is deliberately not a source of *text* for any other format. The
@@ -699,6 +864,13 @@ Task 6 carried forward into the renderer tasks:
 
 Task 7 notes carried forward:
 
+- **a container React owns and a library writes into needs an owner for its
+  contents.** PDF.js's `TextLayer` appends into the element it is handed and its
+  `cancel()` removes nothing, so a page re-rendered into the same element stacks
+  its text invisibly — and it is the *selection* that pays for it, not the
+  picture. `renderPdfPage` is the generation boundary for that element and
+  `clearTextLayer` is the statement; any later renderer whose body is a DOM
+  library plus a React host has the same question to answer;
 - **a Cordis service a plugin reads must be named in its runtime `inject`.** The
   first real boot after the PDF renderer was registered failed with
   `cannot get property "documentPreviews" without inject`; the package edge in
