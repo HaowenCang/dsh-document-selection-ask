@@ -230,6 +230,20 @@ function pdfFixturePath(key: string): string {
 }
 
 /**
+ * Extract the expected fixture filename from the real resource address opened.
+ *
+ * Derives the filename directly from the smoke resource address rather than
+ * importing production resolution logic, satisfying the independent assertion gate.
+ *
+ * @param address - the resource address returned by openPdfFixture.
+ * @returns the expected filename within the smoke fixtures.
+ */
+function expectedFixtureFileName(address: string): string {
+  const slash = address.lastIndexOf('/')
+  return slash >= 0 ? address.slice(slash + 1) : address
+}
+
+/**
  * Open the DSH shell, install the probe and point it at this repository.
  *
  * The composer is the anchor: the driver's control occupies a session-scoped
@@ -643,17 +657,20 @@ test.describe('real DSH 0.1.5-rc.1 selectable PDF renderer', () => {
 
     const turnsBefore = await page.locator('[data-chat-turn]').count()
     await button.click()
-    await page.waitForTimeout(1200)
+
+    const expectedFileName = expectedFixtureFileName(address)
+    expect(expectedFileName).toBe('task7-single-page.pdf')
+    await expect.poll(async () => readDraft(page)).toContain(`[来源：${expectedFileName}，第 1 页]`)
 
     const draft = await readDraft(page)
     expect(draft).toContain(typedDraft)
-    expect(draft).toMatch(/\[来源：(?:task7-)?single-page\.pdf，第 1 页\]/)
+    expect(draft).toContain(`[来源：${expectedFileName}，第 1 页]`)
     expect(draft).toContain('Alpha Beta')
     expect(draft).toContain(QUESTION_SUFFIX)
 
     // No auto-submit and focus restored to composer.
     expect(await page.locator('[data-chat-turn]').count()).toBe(turnsBefore)
-    expect(await page.evaluate(() => document.activeElement?.getAttribute('data-composer-input') !== null)).toBe(true)
+    await expect.poll(async () => page.evaluate(() => document.activeElement?.getAttribute('data-composer-input') !== null)).toBe(true)
 
     // A native worker ran, from a blob URL, as a module.
     const snapshot = await probe(page)
@@ -766,7 +783,7 @@ test.describe('real DSH 0.1.5-rc.1 selectable PDF renderer', () => {
     // same at 1280 and at 1300, and the renderer is never asked to paint again.
     await page.setViewportSize({ width: 1600, height: 1000 })
     await openShell(page)
-    await openPdfFixture(page, 'pdf-cjk')
+    const address = await openPdfFixture(page, 'pdf-cjk')
     await waitForPage(page, 1)
 
     const text = await page.locator(`[data-dsa-pdf-page="1"] ${TEXT_LAYER}`).innerText()
@@ -808,10 +825,13 @@ test.describe('real DSH 0.1.5-rc.1 selectable PDF renderer', () => {
 
     const turnsBefore = await page.locator('[data-chat-turn]').count()
     await button.click()
-    await page.waitForTimeout(1200)
+
+    const expectedFileName = expectedFixtureFileName(address)
+    expect(expectedFileName).toBe('task7-cjk.pdf')
+    await expect.poll(async () => readDraft(page)).toContain(`[来源：${expectedFileName}，第 1 页]`)
 
     const draft = await readDraft(page)
-    expect(draft).toMatch(/\[来源：(?:task7-)?cjk\.pdf，第 1 页\]/)
+    expect(draft).toContain(`[来源：${expectedFileName}，第 1 页]`)
     expect(draft).toContain('中文选段测试')
     expect(draft).toContain(QUESTION_SUFFIX)
     // Verify CJK selection occurs once in the draft
@@ -819,7 +839,7 @@ test.describe('real DSH 0.1.5-rc.1 selectable PDF renderer', () => {
 
     // No auto-submit and focus restored to composer
     expect(await page.locator('[data-chat-turn]').count()).toBe(turnsBefore)
-    expect(await page.evaluate(() => document.activeElement?.getAttribute('data-composer-input') !== null)).toBe(true)
+    await expect.poll(async () => page.evaluate(() => document.activeElement?.getAttribute('data-composer-input') !== null)).toBe(true)
   })
 
   test('draws an image-only PDF and invents no selectable text', async ({ page }) => {
@@ -854,8 +874,7 @@ test.describe('real DSH 0.1.5-rc.1 selectable PDF renderer', () => {
       expect(await selectPageText(page, 1)).toBe('')
     }
 
-    await page.waitForTimeout(1200)
-    expect(await page.locator(ASK_BUTTON).count()).toBe(0)
+    await expect(page.locator(ASK_BUTTON)).toHaveCount(0)
   })
 
   test('keeps the canvas and the text layer aligned across a real viewport resize', async ({ page }) => {
@@ -965,7 +984,7 @@ test.describe('real DSH 0.1.5-rc.1 selectable PDF renderer', () => {
     await page.keyboard.type(typedDraft)
     await page.waitForTimeout(500)
 
-    await openPdfFixture(page, 'pdf-two')
+    const address = await openPdfFixture(page, 'pdf-two')
     await waitForPage(page, 1)
     await page.locator('[data-dsa-pdf-page="2"]').scrollIntoViewIfNeeded()
     await waitForPage(page, 2)
@@ -1007,24 +1026,29 @@ test.describe('real DSH 0.1.5-rc.1 selectable PDF renderer', () => {
 
     const turnsBefore = await page.locator('[data-chat-turn]').count()
     await button.click()
-    await page.waitForTimeout(1200)
+
+    const expectedFileName = expectedFixtureFileName(address)
+    expect(expectedFileName).toBe('task7-two-page.pdf')
+    await expect.poll(async () => readDraft(page)).toContain(`[来源：${expectedFileName}，第 1–2 页]`)
 
     const draft = await readDraft(page)
     expect(draft).toContain(typedDraft)
-    expect(draft).toMatch(/\[来源：(?:task7-)?two-page\.pdf，第 1–2 页\]/)
+    expect(draft).toContain(`[来源：${expectedFileName}，第 1–2 页]`)
     expect(draft).toContain('Alpha page one')
     expect(draft).toContain('Beta page two')
     expect(draft).toContain(QUESTION_SUFFIX)
 
     // No auto-submit and focus restored to composer.
     expect(await page.locator('[data-chat-turn]').count()).toBe(turnsBefore)
-    expect(await page.evaluate(() => document.activeElement?.getAttribute('data-composer-input') !== null)).toBe(true)
+    await expect.poll(async () => page.evaluate(() => document.activeElement?.getAttribute('data-composer-input') !== null)).toBe(true)
   })
 
   test('handles live selection across viewport resize without sending stale pre-rerender data', async ({ page }) => {
     await page.setViewportSize({ width: 1600, height: 1000 })
     await openShell(page)
-    await openPdfFixture(page, 'pdf-single')
+    const address = await openPdfFixture(page, 'pdf-single')
+    const expectedFileName = expectedFixtureFileName(address)
+    expect(expectedFileName).toBe('task7-single-page.pdf')
     await waitForPage(page, 1)
 
     // Select text on page 1
@@ -1039,19 +1063,89 @@ test.describe('real DSH 0.1.5-rc.1 selectable PDF renderer', () => {
     await stampCurrentSpans(page, 1)
     await resizeAndAwaitRerender(page, 1, { width: 1100, height: 900 }, geometry)
 
-    // When the TextLayer DOM generation is cleared and replaced by rerender,
-    // browser selection is either collapsed/cleared (Ask hidden), or if re-anchored,
-    // it must not quote stale/duplicate content.
-    await page.waitForTimeout(1500)
-    const buttonCount = await page.locator(ASK_BUTTON).count()
-    if (buttonCount > 0) {
-      await button.click()
-      await page.waitForTimeout(1000)
-      const draft = await readDraft(page)
-      expect(draft).toMatch(/\[来源：(?:task7-)?single-page\.pdf，第 1 页\]/)
-      expect(draft.match(/Alpha Beta Gamma/gu) ?? []).toHaveLength(1)
+    // Inspect post-rerender browser selection state
+    const selState = await page.evaluate((attribute: string) => {
+      const sel = window.getSelection()
+      if (!sel) {
+        return {
+          isCollapsed: true,
+          text: '',
+          anchorConnected: false,
+          focusConnected: false,
+          inCurrentTextLayer: false,
+          isPreviousGeneration: false,
+        }
+      }
+
+      const anchor = sel.anchorNode
+      const focus = sel.focusNode
+      const anchorConnected = anchor?.isConnected ?? false
+      const focusConnected = focus?.isConnected ?? false
+
+      const anchorEl = anchor instanceof Element ? anchor : anchor?.parentElement ?? null
+      const focusEl = focus instanceof Element ? focus : focus?.parentElement ?? null
+
+      const anchorTextLayer = anchorEl?.closest('[data-dsa-pdf-text]')
+      const focusTextLayer = focusEl?.closest('[data-dsa-pdf-text]')
+      const anchorPage = anchorTextLayer?.closest('[data-dsa-pdf-page]')
+      const focusPage = focusTextLayer?.closest('[data-dsa-pdf-page]')
+      const anchorRoot = anchorPage?.closest('[data-dsa-document-kind="pdf"]')
+      const focusRoot = focusPage?.closest('[data-dsa-document-kind="pdf"]')
+
+      const inCurrentTextLayer =
+        anchorRoot !== null &&
+        focusRoot !== null &&
+        anchorRoot === focusRoot
+
+      const isPreviousGeneration =
+        (anchorEl?.hasAttribute(attribute) ?? false) ||
+        (focusEl?.hasAttribute(attribute) ?? false) ||
+        (anchorEl?.closest(`[${attribute}]`) !== null) ||
+        (focusEl?.closest(`[${attribute}]`) !== null)
+
+      return {
+        isCollapsed: sel.isCollapsed,
+        text: sel.toString(),
+        anchorConnected,
+        focusConnected,
+        inCurrentTextLayer,
+        isPreviousGeneration,
+      }
+    }, PROBE_ATTRIBUTE)
+
+    const isSelectionAlive =
+      !selState.isCollapsed &&
+      selState.text.trim() !== '' &&
+      selState.anchorConnected &&
+      selState.focusConnected &&
+      selState.inCurrentTextLayer &&
+      !selState.isPreviousGeneration
+
+    if (!isSelectionAlive) {
+      // Contract: When post-rerender selection is collapsed, empty, disconnected,
+      // or invalid, Ask button must be hidden and must not send stale pre-rerender data.
+      await expect(page.locator(ASK_BUTTON)).toHaveCount(0)
     } else {
-      expect(buttonCount).toBe(0)
+      // Contract: If selection remains live and valid across rerender,
+      // Ask button may be visible and quote must match current live selection text.
+      await expect(button).toBeVisible()
+      const currentSelectionText = await page.evaluate(() => window.getSelection()?.toString() ?? '')
+      expect(currentSelectionText.trim().length).toBeGreaterThan(0)
+
+      await button.click()
+      await expect.poll(async () => readDraft(page)).toContain(`[来源：${expectedFileName}，第 1 页]`)
+
+      const draft = await readDraft(page)
+      // Extract quote body from draft (lines starting with '> ' excluding provenance line)
+      const quoteLines = draft
+        .split('\n')
+        .filter((line) => line.startsWith('>') && !line.includes('[来源：'))
+        .map((line) => line.replace(/^>\s*/, '').trim())
+        .filter(Boolean)
+      const quoteBody = quoteLines.join(' ')
+
+      const normalizedCurrentText = currentSelectionText.replace(/\s+/gu, ' ').trim()
+      expect(quoteBody).toBe(normalizedCurrentText)
     }
   })
 })
