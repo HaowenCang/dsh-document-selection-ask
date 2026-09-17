@@ -281,12 +281,9 @@ async function buildSinglePage(outDir) {
  *
  * The file is named for the case it serves — a document with more than one page —
  * and it carries six of them for a measured reason. A page is rendered when an
- * `IntersectionObserver` with a `100% 0px` root margin reports it within one
- * viewport of the scroll container, and **that container is tall**: measured on
- * the smoke instance it is about 1657 CSS pixels, so the observer's reach is
- * roughly 3300 CSS pixels — pages 1 to 4 — and a two-page document of any normal
- * size is entirely inside it the moment page 1 has rendered. Six A2 pages put
- * pages 5 and 6 beyond that reach, which is what the case needs to observe.
+ * `IntersectionObserver` with a `1200px 0px` root margin reports it within range
+ * of the viewport — a viewport-rooted observer rather than scroll-container-rooted.
+ * Six A2 pages put pages 5 and 6 beyond that reach, which is what the case needs to observe.
  *
  * @param outDir - the output directory.
  * @returns the written file's record.

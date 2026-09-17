@@ -591,8 +591,8 @@
   - Task 7B real DSH TextPreview smoke (Playwright, live instance): PASS (8
     cases, re-run after the change)
   - no `SelectionAdapter`, no page-provenance resolver, no PDF Ask integration,
-    no `data-dsa-*` text-layer attribute, no bundler, manifest, lockfile, notices
-    or PDF.js asset change. `pdfjs-dist` stays at 6.3.289 and its DOM contract is
+    no bundler, manifest, lockfile, notices or PDF.js asset change (`data-dsa-pdf-text`
+    已由 Task 7 renderer 存在，Task 7B 没有新增或改变该 DOM contract). `pdfjs-dist` stays at 6.3.289 and its DOM contract is
     untouched: the text layer is still the React element with
     `class="textLayer"`, so every selector `.textLayer span` and the
     `> :not(.markedContent)` rule PDF.js's own stylesheet relies on still resolve
@@ -820,7 +820,7 @@ most. A selection over a PDF page now reads the page's text **once** however man
 times the page has been re-rendered, so the quote an adapter takes from
 `getSelection()` is the page's text rather than one copy per generation. The DOM
 itself is unchanged — `.textLayer` is still the React element, its spans are still
-its direct children, and no `data-dsa-*` attribute was added — so the selectors,
+its direct children, and no new `data-dsa-*` attribute was added (`data-dsa-pdf-text` 已由 Task 7 renderer 存在，Task 7B 没有新增或改变该 DOM contract) — so the selectors,
 the page wrappers and the 1-based page attribute Task 8 resolves against are
 exactly what Task 7 published. The generation cleanup is expressed as
 `clearTextLayer` in `text-layer.ts` and is not part of Task 8's contract: an

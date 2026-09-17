@@ -1101,7 +1101,7 @@ For Range start/end containers use `.closest('[data-dsa-pdf-page]')`.
 
 Reject if either endpoint is outside the same plugin PDF document root.
 
-- [ ] **Step 3: Register the PDF adapter after the DSH text adapter**
+- [ ] **Step 3: Register the PDF adapter before the DSH builtin text adapter**
 
 Ordering must ensure the plugin PDF root is never misclassified as generic text.
 
