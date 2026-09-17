@@ -1,4 +1,5 @@
 import { readFileSync, readdirSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { join } from 'node:path'
 
 import { defineConfig } from 'tsdown'
@@ -40,10 +41,9 @@ import type { Plugin } from 'rolldown'
  *   repository, so the embedded resources cannot drift from the pinned version,
  *   and no source file names a URL a browser would have to fetch.
  *
- * `@zip.js/zip.js` is deliberately **not** in the bundle list. No shipping entry
- * point reaches `src/client/ooxml/` yet, and the task that first imports it owns
- * that decision; listing it here would bundle an archive reader for PDFs that
- * never touch an archive.
+ * Task 9 bundles `@zip.js/zip.js`, `docx-preview`, and `jszip` into the client
+ * artifact: the DOCX renderer imports `preflightOoxml()`, and DSH's loader cannot
+ * resolve bare external npm specifiers.
  */
 const PLUGIN_ID = 'dsh-document-selection-ask'
 
@@ -134,6 +134,30 @@ function pdfjsEmbedPlugin(): Plugin {
   }
 }
 
+/**
+ * Route jszip imports to its self-contained browser distribution (`dist/jszip.min.js`).
+ *
+ * docx-preview requires 'jszip', which resolves by default to jszip's Node entrypoint
+ * ('./lib/index'), dragging in unpolyfilled Node modules ('stream', 'buffer', 'events', 'util').
+ * The browser distribution is an entirely self-contained UMD bundle satisfying docx-preview
+ * without leaving any bare Node specifiers in the client bundle.
+ */
+function jszipBrowserPlugin(): Plugin {
+  const req = createRequire(import.meta.url)
+  const jszipDistPath = req.resolve('jszip/dist/jszip.min.js', {
+    paths: [req.resolve('docx-preview')],
+  })
+  return {
+    name: 'dsa-jszip-browser',
+    resolveId(source: string) {
+      if (source === 'jszip' || source === 'jszip/lib/index') {
+        return jszipDistPath
+      }
+      return null
+    },
+  }
+}
+
 export default defineConfig([
   {
     entry: { index: 'src/index.ts' },
@@ -164,7 +188,7 @@ export default defineConfig([
     target: 'es2022',
     dts: false,
     outExtensions: () => ({ js: '.js' }),
-    plugins: [pdfjsEmbedPlugin()],
+    plugins: [pdfjsEmbedPlugin(), jszipBrowserPlugin()],
     deps: {
       // React and React DOM are supplied by the loader's `require`, never
       // inlined: a second React would be a second hook dispatcher, and every
@@ -173,8 +197,13 @@ export default defineConfig([
       neverBundle: ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client'],
       // A production dependency is external by default, which is right for a Node
       // library and wrong here: the DSH loader resolves the shared runtime only,
-      // so `pdfjs-dist` has to be inside the artifact.
-      alwaysBundle: [/^pdfjs-dist(\/|$)/],
+      // so `pdfjs-dist`, `docx-preview`, `jszip`, and `@zip.js/zip.js` have to be inside the artifact.
+      alwaysBundle: [
+        /^pdfjs-dist(\/|$)/,
+        /^@zip\.js\/zip\.js(\/|$)/,
+        /^docx-preview(\/|$)/,
+        /^jszip(\/|$)/,
+      ],
       // The "some dependencies were bundled" hint has nothing to add: the
       // statement above is a decision, not an oversight.
       onlyBundle: false,

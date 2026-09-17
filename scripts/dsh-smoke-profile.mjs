@@ -130,6 +130,16 @@ const PDF_FIXTURE_SOURCES = [
 ]
 
 /**
+ * The DOCX fixtures, copied from committed sources.
+ */
+const DOCX_FIXTURE_SOURCES = [
+  { key: 'docx-paragraphs', source: 'tests/fixtures/docx/paragraphs.docx' },
+  { key: 'docx-break', source: 'tests/fixtures/docx/manual-page-break.docx' },
+  { key: 'docx-table-image', source: 'tests/fixtures/docx/table-image.docx' },
+  { key: 'docx-headers-footers', source: 'tests/fixtures/docx/headers-footers.docx' },
+]
+
+/**
  * The workspace path one PDF fixture is copied to.
  *
  * It is derived from the driver's own naming convention rather than restated:
@@ -141,6 +151,18 @@ const PDF_FIXTURE_SOURCES = [
 function pdfFixturePath(source) {
   const stem = source.slice(source.lastIndexOf('/') + 1).replace(/\.pdf$/u, '')
   return `smoke-fixtures/task7-${stem}.pdf`
+}
+
+/**
+ * The workspace path one DOCX fixture is copied to:
+ * `task9-<name>.docx`, where `<name>` is the source file's stem.
+ *
+ * @param source - the committed source path, repository-relative.
+ * @returns the path inside the session workspace.
+ */
+function docxFixturePath(source) {
+  const stem = source.slice(source.lastIndexOf('/') + 1).replace(/\.docx$/u, '')
+  return `smoke-fixtures/task9-${stem}.docx`
 }
 
 /** Exit status: `0` clean, `1` a diagnosed problem, `2` a usage error. */
@@ -427,6 +449,20 @@ function writeFixtures() {
     written.push(destination)
   }
 
+  for (const fixture of DOCX_FIXTURE_SOURCES) {
+    const source = join(REPO_ROOT, fixture.source)
+    if (!existsSync(source)) {
+      throw new Error(
+        `${fixture.source} is missing; run \`node scripts/generate-docx-fixtures.mjs\` to produce it`,
+      )
+    }
+    const destination = docxFixturePath(fixture.source)
+    const absolute = join(REPO_ROOT, destination)
+    mkdirSync(dirname(absolute), { recursive: true })
+    writeFileSync(absolute, readFileSync(source))
+    written.push(destination)
+  }
+
   return written
 }
 
@@ -565,6 +601,14 @@ function describe(dir) {
 
   for (const fixture of PDF_FIXTURE_SOURCES) {
     for (const path of [fixture.source, pdfFixturePath(fixture.source)]) {
+      const absolute = join(REPO_ROOT, path)
+      const size = existsSync(absolute) ? statSync(absolute).size : -1
+      console.log(`dsh-smoke-profile: fixture ${path} = ${size < 0 ? 'missing' : `${size} bytes`}`)
+    }
+  }
+
+  for (const fixture of DOCX_FIXTURE_SOURCES) {
+    for (const path of [fixture.source, docxFixturePath(fixture.source)]) {
       const absolute = join(REPO_ROOT, path)
       const size = existsSync(absolute) ? statSync(absolute).size : -1
       console.log(`dsh-smoke-profile: fixture ${path} = ${size < 0 ? 'missing' : `${size} bytes`}`)

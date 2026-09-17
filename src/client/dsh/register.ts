@@ -58,7 +58,9 @@
  */
 
 import { createDshTextAdapter } from '../adapters/dsh-text/adapter.js'
+import { createDocxSelectionAdapter } from '../adapters/docx/adapter.js'
 import { createPdfSelectionAdapter } from '../adapters/pdf/adapter.js'
+import { registerDocxRenderer } from '../renderers/docx/register.js'
 import { registerPdfRenderer } from '../renderers/pdf/register.js'
 import { installBrowserSelectionLifecycle } from '../selection/browser-lifecycle.js'
 import type { BrowserSelectionLifecycle } from '../selection/browser-lifecycle.js'
@@ -149,6 +151,11 @@ export function applyClient(ctx: ClientContext): ClientRuntime {
   )
 
   ctx.effect(
+    () => registry.register(createDocxSelectionAdapter()),
+    'dsh-document-selection-ask: docx selection adapter',
+  )
+
+  ctx.effect(
     () => registry.register(createDshTextAdapter()),
     'dsh-document-selection-ask: builtin text selection adapter',
   )
@@ -173,16 +180,14 @@ export function applyClient(ctx: ClientContext): ClientRuntime {
     registerAskSurface(ctx, kernel, feedback, composerTargets)
   }
 
-  // Task 7: the selectable PDF body. It registers metadata in the document
-  // preview registry and a keyed body in the document slot; both are owned by the
-  // fiber through their own `ctx.effect` bodies inside the call. Task 8 contributes
-  // the PDF selection adapter above so selections inside this renderer capture
-  // source page provenance.
-  // Task 8A: connect TextLayer replacement to the selection lifecycle refresh so
-  // stale selections are cleared when Chromium silently collapses them.
+  // Task 7: the selectable PDF body.
   registerPdfRenderer(ctx, () => {
     lifecycle?.refresh()
   })
+
+  // Task 9: the selectable DOCX body. Registers document preview definition
+  // and keyed body into the document slot.
+  registerDocxRenderer(ctx)
 
   return { registry, kernel, feedback, composerTargets }
 }

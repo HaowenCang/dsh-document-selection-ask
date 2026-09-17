@@ -72,6 +72,7 @@
     "@types/node": "22.20.0",
     "@types/react": "18.3.27",
     "@types/react-dom": "18.3.7",
+    "docx": "9.7.1",
     "jsdom": "30.0.1",
     "pdf-lib": "1.17.1",
     "playwright": "1.63.0",
@@ -83,6 +84,7 @@
   },
   "dependencies": {
     "@zip.js/zip.js": "2.15.0",
+    "docx-preview": "0.4.0",
     "pdfjs-dist": "6.3.289"
   }
 }
