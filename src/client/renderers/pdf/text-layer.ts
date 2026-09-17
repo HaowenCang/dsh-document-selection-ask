@@ -86,9 +86,12 @@ import type { PageViewport, PDFPageProxy } from 'pdfjs-dist'
  * what the containers needed was to be emptied, and that is what this does.
  *
  * @param container - the layer's own element.
+ * @returns whether any child nodes were removed from the container.
  */
-export function clearTextLayer(container: HTMLElement): void {
+export function clearTextLayer(container: HTMLElement): boolean {
+  const changed = container.childNodes.length > 0
   container.replaceChildren()
+  return changed
 }
 
 /**

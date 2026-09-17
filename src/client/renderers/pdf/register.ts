@@ -39,6 +39,12 @@ import { installPdfStyles } from './styles.js'
 /** The keyed list slot DSH mounts a selected document definition's body into. */
 export const DOCUMENT_BODY_SLOT = 'sidebar.right.tab.document'
 
+/** Injected callbacks the PDF renderer body receives from the plugin runtime. */
+export interface PdfRendererInjectFace {
+  /** Re-evaluate live selection when a populated text layer is invalidated. */
+  readonly onSelectableDomInvalidated?: (() => void) | undefined
+}
+
 /**
  * The renderer's registration metadata.
  *
@@ -70,11 +76,16 @@ export function pdfRendererDefinition(): DocumentPreviewDefinition {
  * Contribute the PDF renderer: its metadata, its style sheet, and its body.
  *
  * @param ctx - the client root context.
+ * @param onSelectableDomInvalidated - called when a populated text layer is invalidated,
+ * to trigger selection lifecycle recapture.
  * @returns whether the renderer was registered. `false` means the client context
  * has no document-preview registry to register into, which is a wiring failure of
  * the host composition rather than something this plugin can recover from.
  */
-export function registerPdfRenderer(ctx: ClientContext): boolean {
+export function registerPdfRenderer(
+  ctx: ClientContext,
+  onSelectableDomInvalidated?: () => void,
+): boolean {
   const previews = ctx.documentPreviews
   if (previews === undefined) {
     console.error('[dsa-pdf] the DSH document preview registry is not available; the PDF renderer was not registered')
@@ -95,10 +106,12 @@ export function registerPdfRenderer(ctx: ClientContext): boolean {
       {
         name: DOCUMENT_BODY_SLOT,
         key: PDF_RENDERER_ID,
-        // Session-scoped without a declared store: the slot gives the body its
-        // session id, its content, its address and its tab, and this renderer
-        // needs nothing else injected.
-        inject: () => ({}),
+        // Session-scoped with invalidation callback: the slot gives the body its
+        // session id, its content, its address and its tab, and this injector
+        // connects text layer invalidation to the selection lifecycle.
+        inject: (): PdfRendererInjectFace => ({
+          onSelectableDomInvalidated,
+        }),
       },
       SelectablePdfBody,
     ),

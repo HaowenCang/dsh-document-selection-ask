@@ -70,6 +70,15 @@ export interface PdfPageRender {
   cancel(): void
 }
 
+/** Optional configuration for one page render. */
+export interface PdfPageRenderOptions {
+  /**
+   * Called when a populated text layer is cleared for a new generation,
+   * invalidating any live browser selection anchored inside it.
+   */
+  readonly onSelectableDomInvalidated?: (() => void) | undefined
+}
+
 /**
  * Render one page into hosts the caller owns.
  *
@@ -87,6 +96,7 @@ export interface PdfPageRender {
  * @param cssWidth - the width the page is displayed at, in CSS pixels.
  * @param devicePixelRatio - the display's device pixel ratio.
  * @param signal - the owning operation's lifetime.
+ * @param options - optional callbacks including DOM invalidation notification.
  * @returns the render handle for the caller to await or cancel.
  */
 export function renderPdfPage(
@@ -96,6 +106,7 @@ export function renderPdfPage(
   cssWidth: number,
   devicePixelRatio: number,
   signal: AbortSignal,
+  options?: PdfPageRenderOptions,
 ): PdfPageRender {
   // The generation boundary, and the first statement rather than the last: the
   // caller has cancelled the operation this one replaces, so the text still in
@@ -103,7 +114,15 @@ export function renderPdfPage(
   // — synchronously, before the first `await` and before the abort check below —
   // is what makes the layer's contents this operation's responsibility on every
   // path out of it, including the one where it never obtains a page at all.
-  clearTextLayer(hosts.textLayer)
+  const invalidatedSelectableDom = clearTextLayer(hosts.textLayer)
+  if (invalidatedSelectableDom) {
+    try {
+      options?.onSelectableDomInvalidated?.()
+    } catch {
+      // selection invalidation notification is advisory to the plugin lifecycle;
+      // it must not turn a valid PDF into a renderer failure.
+    }
+  }
 
   let cancelled = false
   let page: PDFPageProxy | undefined

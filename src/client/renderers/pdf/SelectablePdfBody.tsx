@@ -57,13 +57,14 @@ import {
   PDF_RESOURCE_ADDRESS_ATTRIBUTE,
   PDF_TEXT_LAYER_ATTRIBUTE,
 } from './identity.js'
+import type { PdfRendererInjectFace } from './register.js'
 import { renderPdfPage } from './render-page.js'
 import type { PdfPageRender } from './render-page.js'
 import { openPdf } from './runtime.js'
 import type { PdfReadyDocument, PdfSession } from './runtime.js'
 
-/** Props this body receives: the framework's own, and nothing else. */
-export type SelectablePdfBodyProps = DocumentPreviewProps
+/** Props this body receives: the framework's own, plus optional slot-injected callbacks. */
+export type SelectablePdfBodyProps = DocumentPreviewProps & Partial<PdfRendererInjectFace>
 
 /**
  * How far ahead of the viewport a page starts rendering.
@@ -240,6 +241,7 @@ export function SelectablePdfBody(props: SelectablePdfBodyProps): JSX.Element {
               devicePixelRatio={devicePixelRatio}
               signal={tabSignal}
               immediate={index === 0}
+              onSelectableDomInvalidated={props.onSelectableDomInvalidated}
             />
           ))}
       </div>
@@ -309,6 +311,8 @@ interface PdfPageProps {
   readonly signal: AbortSignal
   /** Whether the page renders without waiting to become visible. */
   readonly immediate: boolean
+  /** Re-evaluate live selection when a populated text layer is invalidated. */
+  readonly onSelectableDomInvalidated?: (() => void) | undefined
 }
 
 /**
@@ -318,7 +322,17 @@ interface PdfPageProps {
  * @returns the page wrapper.
  */
 function PdfPage(props: PdfPageProps): JSX.Element {
-  const { document, pageNumber, unitWidth, unitHeight, fitWidth, devicePixelRatio, signal, immediate } = props
+  const {
+    document,
+    pageNumber,
+    unitWidth,
+    unitHeight,
+    fitWidth,
+    devicePixelRatio,
+    signal,
+    immediate,
+    onSelectableDomInvalidated,
+  } = props
 
   const wrapper = useRef<HTMLDivElement | null>(null)
   const canvas = useRef<HTMLCanvasElement | null>(null)
@@ -347,6 +361,7 @@ function PdfPage(props: PdfPageProps): JSX.Element {
       width,
       devicePixelRatio,
       signal,
+      { onSelectableDomInvalidated },
     )
     render.current = operation
     operation.done.then(
@@ -361,7 +376,7 @@ function PdfPage(props: PdfPageProps): JSX.Element {
       },
     )
     return operation
-  }, [document, pageNumber, width, devicePixelRatio, signal])
+  }, [document, pageNumber, width, devicePixelRatio, signal, onSelectableDomInvalidated])
 
   useEffect(() => {
     if (requested) return

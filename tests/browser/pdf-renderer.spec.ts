@@ -1113,39 +1113,12 @@ test.describe('real DSH 0.1.5-rc.1 selectable PDF renderer', () => {
       }
     }, PROBE_ATTRIBUTE)
 
-    const isSelectionAlive =
-      !selState.isCollapsed &&
-      selState.text.trim() !== '' &&
-      selState.anchorConnected &&
-      selState.focusConnected &&
-      selState.inCurrentTextLayer &&
-      !selState.isPreviousGeneration
-
-    if (!isSelectionAlive) {
-      // Contract: When post-rerender selection is collapsed, empty, disconnected,
-      // or invalid, Ask button must be hidden and must not send stale pre-rerender data.
-      await expect(page.locator(ASK_BUTTON)).toHaveCount(0)
-    } else {
-      // Contract: If selection remains live and valid across rerender,
-      // Ask button may be visible and quote must match current live selection text.
-      await expect(button).toBeVisible()
-      const currentSelectionText = await page.evaluate(() => window.getSelection()?.toString() ?? '')
-      expect(currentSelectionText.trim().length).toBeGreaterThan(0)
-
-      await button.click()
-      await expect.poll(async () => readDraft(page)).toContain(`[来源：${expectedFileName}，第 1 页]`)
-
-      const draft = await readDraft(page)
-      // Extract quote body from draft (lines starting with '> ' excluding provenance line)
-      const quoteLines = draft
-        .split('\n')
-        .filter((line) => line.startsWith('>') && !line.includes('[来源：'))
-        .map((line) => line.replace(/^>\s*/, '').trim())
-        .filter(Boolean)
-      const quoteBody = quoteLines.join(' ')
-
-      const normalizedCurrentText = currentSelectionText.replace(/\s+/gu, ' ').trim()
-      expect(quoteBody).toBe(normalizedCurrentText)
-    }
+    // Chromium silently collapses the selection when the old TextLayer spans
+    // are removed during re-render, without emitting a selectionchange event.
+    // The renderer invalidation notification ensures the selection lifecycle
+    // re-evaluates the live selection and clears the stale kernel snapshot.
+    expect(selState.isCollapsed).toBe(true)
+    expect(selState.text).toBe('')
+    await expect(page.locator(ASK_BUTTON)).toHaveCount(0)
   })
 })
