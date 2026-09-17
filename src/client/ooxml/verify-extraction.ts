@@ -141,7 +141,7 @@ export async function verifyOoxmlExtraction(
         await entry.getData(sink, {
           signal,
           useWebWorkers: false,
-          checkSignature: true,
+          checkCrc32: true,
           checkOverlappingEntry: true,
         })
       } catch (error: unknown) {
