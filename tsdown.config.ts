@@ -158,6 +158,26 @@ function jszipBrowserPlugin(): Plugin {
   }
 }
 
+/**
+ * Neutralize unused pdfjs worker URL strings inside pptx-renderer.
+ * Task 10 explicitly enforces pdfjs: false (no embedded PDF fallback),
+ * avoiding accidental package URL resolution in the client bundle.
+ */
+function pptxCleanupPlugin(): Plugin {
+  return {
+    name: 'dsa-pptx-cleanup',
+    transform(code, id) {
+      if (id.includes('@aiden0z/pptx-renderer') || id.includes('aiden0z-pptx-renderer')) {
+        return code.replace(
+          /pdfjs-dist\/build\/pdf\.worker\.min\.mjs/g,
+          'disabled-pptx-pdfjs-worker',
+        )
+      }
+      return null
+    },
+  }
+}
+
 export default defineConfig([
   {
     entry: { index: 'src/index.ts' },
@@ -188,7 +208,10 @@ export default defineConfig([
     target: 'es2022',
     dts: false,
     outExtensions: () => ({ js: '.js' }),
-    plugins: [pdfjsEmbedPlugin(), jszipBrowserPlugin()],
+    plugins: [pdfjsEmbedPlugin(), jszipBrowserPlugin(), pptxCleanupPlugin()],
+    define: {
+      'process.env.NODE_ENV': JSON.stringify('production'),
+    },
     deps: {
       // React and React DOM are supplied by the loader's `require`, never
       // inlined: a second React would be a second hook dispatcher, and every
@@ -203,6 +226,9 @@ export default defineConfig([
         /^@zip\.js\/zip\.js(\/|$)/,
         /^docx-preview(\/|$)/,
         /^jszip(\/|$)/,
+        /^@aiden0z\/pptx-renderer(\/|$)/,
+        /^echarts(\/|$)/,
+        /^zrender(\/|$)/,
       ],
       // The "some dependencies were bundled" hint has nothing to add: the
       // statement above is a decision, not an oversight.

@@ -59,7 +59,7 @@ async function openShell(page: Page): Promise<void> {
   await page.waitForTimeout(12_000)
   await expect(page.locator(COMPOSER_INPUT).first()).toBeVisible({ timeout: 30_000 })
   await expect(page.locator(DRIVER).first()).toBeVisible({ timeout: 30_000 })
-  await ensureWorkspace(page, CURRENT_WORKSPACE)
+  await ensureWorkspace(page)
 }
 
 /**

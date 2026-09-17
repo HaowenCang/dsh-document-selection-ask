@@ -28,7 +28,10 @@ declared, and it is recorded here as one.
 | `pdfjs-dist` | 6.3.289 | Apache-2.0 | PDF parsing, rasterization and text-layer layout for the selectable PDF preview. The whole library, its module worker, the Adobe CMap family, the standard-font family and the wasm decoders are embedded in `lib/client.js`; nothing is fetched at run time. |
 | `@zip.js/zip.js` | 2.15.0 | BSD-3-Clause | OOXML ZIP central-directory metadata validation and later OOXML archive reading. It reads the central directory of a DOCX, PPTX or XLSX package so the preflight can bound the entry count, the declared sizes, the compression ratio and the entry names before any renderer touches the archive. |
 | `docx-preview` | 0.4.0 | Apache-2.0 | High-fidelity DOCX rendering into standard HTML/CSS DOM for the selectable DOCX preview. Used solely through its public `renderAsync` entrypoint. |
-| `jszip` | 3.10.2 | MIT | Transitive runtime dependency brought in by `docx-preview` for ZIP decompression during DOCX rendering. Inlined into `lib/client.js` via `alwaysBundle`. |
+| `jszip` | 3.10.2 | MIT | Transitive runtime dependency brought in by `docx-preview` and `@aiden0z/pptx-renderer` for ZIP decompression. Inlined into `lib/client.js` via `alwaysBundle`. |
+| `@aiden0z/pptx-renderer` | 1.2.4 | Apache-2.0 | High-fidelity PPTX rendering into HTML/SVG DOM for the selectable PPTX preview. Used through public package exports `PptxViewer`, `parseZipLazyMedia`, `buildPresentation`, and `RECOMMENDED_ZIP_LIMITS`. Bundled into `lib/client.js`. |
+| `echarts` | 6.1.0 | Apache-2.0 | Transitive runtime dependency brought in by `@aiden0z/pptx-renderer` for rendering presentation charts. Bundled into `lib/client.js`. |
+| `zrender` | 6.1.0 | BSD-3-Clause | Transitive runtime dependency brought in by `echarts` for 2D canvas/SVG rendering. Bundled into `lib/client.js`. |
 
 ### `docx-preview` 0.4.0 and `jszip` 3.10.2
 
@@ -68,6 +71,51 @@ runtime/test-only: test-only fixture generator (devDependencies; NOT bundled int
 Used solely in `scripts/generate-docx-fixtures.mjs` to deterministically create test documents.
 It is not imported anywhere in `src/` and is strictly verified to have 0 occurrences in the
 shipping client artifact `lib/client.js`.
+
+### `@aiden0z/pptx-renderer` 1.2.4, `echarts` 6.1.0, and `zrender` 6.1.0
+
+Task 10 introduced `@aiden0z/pptx-renderer` 1.2.4 as the renderer for PPTX presentations:
+
+```text
+package:  @aiden0z/pptx-renderer
+version:  1.2.4
+license:  Apache-2.0
+runtime/test-only: runtime dependency (bundled into lib/client.js)
+```
+
+The license was verified against `node_modules/@aiden0z/pptx-renderer/package.json` and registry metadata.
+It brings in `echarts` as a direct runtime dependency for rendering presentation charts:
+
+```text
+package:  echarts
+version:  6.1.0
+license:  Apache-2.0
+runtime/test-only: transitive runtime dependency (bundled into lib/client.js)
+```
+
+`echarts` in turn brings in `zrender` for vector and canvas rendering:
+
+```text
+package:  zrender
+version:  6.1.0
+license:  BSD-3-Clause
+runtime/test-only: transitive runtime dependency (bundled into lib/client.js)
+```
+
+All three packages are bundled into `lib/client.js` via `alwaysBundle` in `tsdown.config.ts`.
+Notice that 1.2.4 avoids `mtx-decompressor` (MPL-2.0), ensuring zero weak-copyleft distribution surface.
+
+### `pptxgenjs` 4.0.1 (Development / Fixture Generator Only)
+
+```text
+package:  pptxgenjs
+version:  4.0.1
+license:  MIT
+runtime/test-only: test-only fixture generator (devDependencies; NOT bundled into lib/client.js)
+```
+
+Used solely in `scripts/generate-pptx-fixtures.mjs` to deterministically create test presentations.
+It is not imported anywhere in `src/` and is verified to have 0 occurrences in `lib/client.js`.
 
 ### `pdfjs-dist` 6.3.289
 

@@ -60,8 +60,10 @@
 import { createDshTextAdapter } from '../adapters/dsh-text/adapter.js'
 import { createDocxSelectionAdapter } from '../adapters/docx/adapter.js'
 import { createPdfSelectionAdapter } from '../adapters/pdf/adapter.js'
+import { createPptxSelectionAdapter } from '../adapters/pptx/adapter.js'
 import { registerDocxRenderer } from '../renderers/docx/register.js'
 import { registerPdfRenderer } from '../renderers/pdf/register.js'
+import { registerPptxRenderer } from '../renderers/pptx/register.js'
 import { installBrowserSelectionLifecycle } from '../selection/browser-lifecycle.js'
 import type { BrowserSelectionLifecycle } from '../selection/browser-lifecycle.js'
 import { createSelectionFeedback } from '../selection/feedback.js'
@@ -156,6 +158,11 @@ export function applyClient(ctx: ClientContext): ClientRuntime {
   )
 
   ctx.effect(
+    () => registry.register(createPptxSelectionAdapter()),
+    'dsh-document-selection-ask: pptx selection adapter',
+  )
+
+  ctx.effect(
     () => registry.register(createDshTextAdapter()),
     'dsh-document-selection-ask: builtin text selection adapter',
   )
@@ -188,6 +195,12 @@ export function applyClient(ctx: ClientContext): ClientRuntime {
   // Task 9: the selectable DOCX body. Registers document preview definition
   // and keyed body into the document slot.
   registerDocxRenderer(ctx)
+
+  // Task 10: the selectable PPTX body. Registers document preview definition
+  // and keyed body into the document slot.
+  registerPptxRenderer(ctx, () => {
+    lifecycle?.refresh()
+  })
 
   return { registry, kernel, feedback, composerTargets }
 }

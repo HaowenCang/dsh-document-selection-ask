@@ -141,6 +141,18 @@ const DOCX_FIXTURE_SOURCES = [
 ]
 
 /**
+ * The PPTX fixtures, copied from committed sources.
+ */
+const PPTX_FIXTURE_SOURCES = [
+  { key: 'pptx-text-two-slides', source: 'tests/fixtures/pptx/text-two-slides.pptx' },
+  { key: 'pptx-table-image', source: 'tests/fixtures/pptx/table-image.pptx' },
+  { key: 'pptx-chart', source: 'tests/fixtures/pptx/chart.pptx' },
+  { key: 'pptx-large-120-slides', source: 'tests/fixtures/pptx/large-120-slides.pptx' },
+  { key: 'pptx-external-media', source: 'tests/fixtures/pptx/external-media.pptx' },
+  { key: 'pptx-external-links', source: 'tests/fixtures/pptx/external-links.pptx' },
+]
+
+/**
  * The workspace path one PDF fixture is copied to.
  *
  * It is derived from the driver's own naming convention rather than restated:
@@ -164,6 +176,18 @@ function pdfFixturePath(source) {
 function docxFixturePath(source) {
   const stem = source.slice(source.lastIndexOf('/') + 1).replace(/\.docx$/u, '')
   return `smoke-fixtures/task9-${stem}.docx`
+}
+
+/**
+ * The workspace path one PPTX fixture is copied to:
+ * `task10-<name>.pptx`, where `<name>` is the source file's stem.
+ *
+ * @param source - the committed source path, repository-relative.
+ * @returns the path inside the session workspace.
+ */
+function pptxFixturePath(source) {
+  const stem = source.slice(source.lastIndexOf('/') + 1).replace(/\.pptx$/u, '')
+  return `smoke-fixtures/task10-${stem}.pptx`
 }
 
 /** Exit status: `0` clean, `1` a diagnosed problem, `2` a usage error. */
@@ -464,6 +488,20 @@ function writeFixtures() {
     written.push(destination)
   }
 
+  for (const fixture of PPTX_FIXTURE_SOURCES) {
+    const source = join(REPO_ROOT, fixture.source)
+    if (!existsSync(source)) {
+      throw new Error(
+        `${fixture.source} is missing; run \`node scripts/generate-pptx-fixtures.mjs\` to produce it`,
+      )
+    }
+    const destination = pptxFixturePath(fixture.source)
+    const absolute = join(REPO_ROOT, destination)
+    mkdirSync(dirname(absolute), { recursive: true })
+    writeFileSync(absolute, readFileSync(source))
+    written.push(destination)
+  }
+
   return written
 }
 
@@ -610,6 +648,14 @@ function describe(dir) {
 
   for (const fixture of DOCX_FIXTURE_SOURCES) {
     for (const path of [fixture.source, docxFixturePath(fixture.source)]) {
+      const absolute = join(REPO_ROOT, path)
+      const size = existsSync(absolute) ? statSync(absolute).size : -1
+      console.log(`dsh-smoke-profile: fixture ${path} = ${size < 0 ? 'missing' : `${size} bytes`}`)
+    }
+  }
+
+  for (const fixture of PPTX_FIXTURE_SOURCES) {
+    for (const path of [fixture.source, pptxFixturePath(fixture.source)]) {
       const absolute = join(REPO_ROOT, path)
       const size = existsSync(absolute) ? statSync(absolute).size : -1
       console.log(`dsh-smoke-profile: fixture ${path} = ${size < 0 ? 'missing' : `${size} bytes`}`)
