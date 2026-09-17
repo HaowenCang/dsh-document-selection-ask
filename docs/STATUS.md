@@ -599,7 +599,22 @@
     exactly as before. PDF selection still raises no Ask button, which remains
     the correct state until Task 8
 
+- Task 8 — `d1ad92e35c24e5264353cb0fb2f6ef53bf7481ec` — PASS
+
+PDF:
+- native TextLayer selection captured
+- source page provenance
+- same/cross-page Ask
+- real DSH verified
+
+Next:
+Task 9 — DOCX high-fidelity renderer and rendered-page provenance
+
 ## Current gate
+
+- Task 8 PDF selection adapter client suite: PASS (32 client cases)
+- Task 8 page range provenance unit suite: PASS (22 unit cases)
+- Task 8 real DSH PDF renderer smoke (Playwright, live instance): PASS (10 cases) — single-page Ask, cross-page Ask, CJK Ask, image-only no Ask, live selection across viewport resize, network asset isolation
 
 - Task 1 public contracts: PASS
 - Task 1A reproducibility: PASS
@@ -764,6 +779,7 @@
   stacking it, and a generation that fails or is cancelled leaves none of its
   predecessor's text behind. No generation token was needed, and the reason is
   recorded)
+- Task 8 — PASS (PDF native TextLayer selection captured with source page provenance, same/cross-page Ask, composer draft integration, and real DSH verification)
 - GitHub publication — ACTIVE
 - Repository visibility — public
 - License — MIT
