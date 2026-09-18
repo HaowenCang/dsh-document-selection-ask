@@ -796,6 +796,136 @@ Next:
 Architecture decision on client-only binary asset delivery for external DSH client
 plugins. Until it is made, Task 11 cannot be merged and Task 12 must not start.
 
+- Task 11A — PRODUCTION DEFECT FOUND
+
+Delivered the authorised architecture decision. The Duke engine binary and the
+library's worker now travel **inside the single client bundle**; the XLSX browser
+suite reaches 11 passed / 1 failed / 0 skipped, and the one failure is a defect in
+the pinned viewer that this round did not paper over.
+
+Architecture (`docs/06-security-performance.md` §11 records it):
+
+- the exact installed `@extend-ai/react-xlsx@0.16.4` binary is read at build time
+  by `scripts/xlsx-runtime-assets.ts`, which refuses the build unless its byte
+  length is 4,412,299 and its SHA-256 is
+  `24687a3e…5e6ef3d` (`XLSX WASM IDENTITY CHANGED`), compresses it
+  deterministically with `node:zlib` (`mtime = 0`, level 9) and publishes
+  `Base64(gzip)` through the virtual module `virtual:dsa-xlsx-wasm-gzip`
+- the compressed payload is 1,674,037 bytes / 2,232,052 Base64 characters, inside
+  the 1,800,000 / 2,400,000 bounds (`XLSX WASM COMPRESSION REGRESSION` otherwise).
+  The forbidden raw representation is 5,883,066 characters and appears nowhere in
+  the artifact
+- the runtime decodes, inflates with `DecompressionStream('gzip')`, checks the
+  length and the SHA-256 and only then calls `setWasmSource(BufferSource)`. No
+  decompressor dependency was added. Every failure — missing
+  `DecompressionStream`, bad base64, corrupt gzip, wrong length, wrong digest —
+  raises `XlsxWasmIntegrityError` and fails closed
+- initialization is lazy and a session singleton: a session that never opens a
+  workbook runs no `atob`, no inflate and no digest, and parallel or repeated opens
+  share one promise. A failed attempt clears the cache rather than poisoning the
+  session. A caller's `AbortSignal` bounds **its wait only**: a released tab never
+  mounts a viewer, and the shared work still completes
+- the worker is a self-contained module the build synthesizes: the library's
+  `xlsx-worker.js` with its three `fflate` imports rebound to an inlined copy of
+  `fflate/esm/browser.js` and its `import("@dukelib/sheets-wasm")` rebound to an
+  inlined Duke glue factory. Zero static imports, zero dynamic imports, zero
+  `require`, zero `importScripts`, 389,629 characters, no WASM bytes inside it
+- the bundle constructs that worker from a `Blob` and revokes the object URL in the
+  same statement. The rewrite of the library's own
+  `new Worker(new URL("./xlsx-worker.js", import.meta.url), …)` now replaces the
+  **whole** construction: the first live run of this architecture produced
+  `new Worker(__dsa_xlsx_create_worker__(), { type: "module" })`, which stringified
+  the returned `Worker` and made the browser fetch `[object Worker]` relative to the
+  document. The bundle spec now asserts the exact rewritten call site
+- every rewrite of upstream code (two in the library, four in the worker) is
+  asserted to match exactly once, and no `node_modules` file is patched
+
+Measured bundle:
+
+- `lib/client.js` before 13,666,692 bytes (4,482,591 gzipped), after 16,312,972
+  bytes (6,245,766 gzipped); delta 2,646,280 bytes, inside the 3.0 MB gate
+- the compressed payload is the minimal viable DSH-native client-only transport
+  under the current public module contract
+
+**Production defect found — the pinned viewer does not paint an embedded picture.**
+
+`tests/browser/xlsx-selection.spec.ts` case 6 now asserts the two drawing objects
+**separately**, and the picture half fails:
+
+- the chart is drawn. The viewer publishes an inline
+  `<svg role="img" aria-label="Chart 1">` with a 300×189 box, 4 fills and 8
+  gridlines, and the case asserts exactly that
+- the embedded picture is not. The fixture's PNG is a solid red 64×64 image; the
+  case polls the sheet canvas for its own colour and finds 0 pixels. The control
+  case (`6a`) proves the signature is discriminating: the workbook without a
+  drawing part paints none of that colour and publishes no drawing overlay at all
+- the image is present in the model. Probed through the library's own public
+  engine API: `Workbook.fromBytes(fixture).getSheet(0).images` reports one entry,
+  `hidden: false`, `mediaPath: "xl/media/image1.png"`, with a valid anchor rect
+- ruled out by measurement, each with the exact-payload experiment: the malformed
+  drawing part (fixed, see below), the anchor form (`oneCellAnchor` rewritten to
+  `twoCellAnchor` — identical rendering), the picture's own `spPr/xfrm/ext` being
+  `0,0` while the anchor carries 609600×609600 (rewritten to match — identical
+  rendering), and worker-versus-main-thread (`useWorker={false}` — identical
+  rendering)
+- this is the frozen Task 11 chart/image browser-fidelity requirement, so it is
+  reported rather than relaxed
+
+**Fixture defect found and fixed.** `scripts/generate-xlsx-fixtures.mjs` wrote the
+chart's `twoCellAnchor` with a stray `</xdr:rowOff>`, so
+`xl/drawings/drawing1.xml` was not well-formed XML and the viewer parsed no drawing
+at all — neither the chart nor the picture. With the tag removed the chart renders;
+`tests/fixtures/xlsx/chart-image.xlsx` is regenerated from the fixed generator. The
+other five fixtures were regenerated for comparison and **reverted**: their only
+logical difference is the `docProps/core.xml` timestamp, so regenerating them would
+have been unrelated binary churn.
+
+Gesture calibration. The suite's grid offsets were measured against the live
+runtime rather than assumed; the first honest run put a 45 px start on row 2. The
+grid box includes the 40 px row header and the 24 px column header, column A spans
+x ≈ 45–95 and row 1 spans y ≈ 24–44 at 1280×720. Every assertion stays exact — the
+range a gesture produced is read back from `data-dsa-xlsx-selection` and compared
+— and each case records the measurement that fixed its offsets.
+
+Verification (all on `eval/gemini-3.8-flash-task11-20260918`, HEAD before the
+round's commit):
+
+- `pnpm test`: PASS (939 tests, up from 910)
+- `pnpm typecheck`: PASS
+- `pnpm build`: PASS
+- `npm pack --dry-run`: PASS — the tarball carries `lib/client.js`, `lib/index.mjs`
+  and type declarations only; no `*.wasm` side asset, no worker side asset, no
+  smoke fixtures, no Playwright report
+- `git diff --check`: PASS
+- targeted suites: `xlsx-wasm` 14, `xlsx-security` 30, `xlsx-renderer` 19,
+  `xlsx-selection-bridge` 5, `xlsx-adapter` 9, `cell-range` 6, `format-xlsx` 16,
+  `xlsx-bundle` 18, `host-entry` 9 — 126 passed
+- real DSH 0.1.5-rc.1, profile `dsa-smoke`, `DSH_SMOKE_URL` non-empty:
+  - XLSX 11 passed / 1 failed / 0 skipped — the failure is the picture defect above
+  - PPTX 10 / 0 / 0
+  - DOCX 6 / 0 / 0
+  - PDF 10 / 0 / 0
+  - TextPreview 8 / 0 / 0
+- network and host gates inside the XLSX suite: renderer-triggered WASM requests 0,
+  worker requests 0, `/dsa-assets` requests 0, remote requests 0, document uploads
+  0; the one `/dsa-assets/duke_sheets_wasm_bg.wasm` request is the suite's own
+  intentional probe and answers 404
+- one real `blob:` Worker is observed before the workbook is ready, and the object
+  URL the plugin created was revoked — read from instrumented
+  `URL.createObjectURL`/`revokeObjectURL`, not from the code that calls them
+- `src/index.ts` remains inert: `webServer`, `dsa-assets`, `node:fs` serving and
+  any XLSX host service are all absent from the host bundle
+
+Next:
+
+The embedded-picture defect is in the pinned `@extend-ai/react-xlsx@0.16.4` viewer,
+not in this plugin's code: the plugin passes the documented props, the engine's
+public model carries the image, and the chart from the same drawing part renders.
+Task 11A is therefore **not** PASS and Task 11 is still not mergeable. Resolving it
+needs either an upstream fix, a pin to a version that paints pictures, or a
+separate authorised decision — none of which this round may take. Task 12 must not
+start.
+
 Next:
 Task 12 — Unified registration, locale, cleanup and renderer fallback
 

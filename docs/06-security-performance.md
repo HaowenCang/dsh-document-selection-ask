@@ -164,3 +164,64 @@ max backing pixels/page: 64 MP
 - tab close 后 heap 可回落
 - 没有 worker 永久残留
 - selection 不因 lazy/windowing 完全失效
+
+## 11. XLSX 引擎与 Worker 的客户端内联（Task 11A 有限例外）
+
+DSH 不提供独立的客户端二进制资源契约。因此，Duke WASM 以确定性的 gzip 压缩
+Base64 负载的形式，随单一 client bundle 一起交付，并在首次打开 XLSX 时于本地
+解压并做 SHA-256 校验。
+
+原始未压缩 WASM 的 Base64 内联仍然禁止。不使用网络，也不使用任何 host route。
+
+### 允许与禁止的表示
+
+| 表示 | 大小 | 状态 |
+| --- | --- | --- |
+| 原始 WASM | 4,412,299 字节 | 唯一合法来源 |
+| 原始 WASM 的 Base64 | 5,883,066 字符 | 禁止 |
+| 确定性 gzip | 1,674,037 字节 | 允许 |
+| gzip 的 Base64 | 2,232,052 字符 | 允许 |
+
+例外范围严格限定为 `@extend-ai/react-xlsx@0.16.4` 的
+`duke_sheets_wasm_bg.wasm` 这一个二进制。它不推广到用户文档、PDF 或 PPTX 资源、
+任意插件二进制、后续任务的资源，也不构成重构既有 renderer 的依据。
+
+### 交付链路
+
+```text
+exact WASM bytes
+→ build-time deterministic gzip (node:zlib, mtime = 0)
+→ Base64(gzip bytes)
+→ single lib/client.js
+→ lazy browser decode (atob over the Base64 literal)
+→ DecompressionStream('gzip')
+→ exact WASM ArrayBuffer
+→ length check + SHA-256 check
+→ setWasmSource(BufferSource)
+→ worker receives the same BufferSource
+```
+
+构建期硬门：原始字节长度与 SHA-256 必须等于已评审值，否则以
+`XLSX WASM IDENTITY CHANGED` 使 build 失败；gzip 超过 1,800,000 字节或 Base64
+超过 2,400,000 字符，则以 `XLSX WASM COMPRESSION REGRESSION` 失败。运行期再次
+校验长度与 SHA-256，任何不一致以 `XlsxWasmIntegrityError` fail closed，不回落
+CDN、host route、主线程解析或 `useWorker=false`。
+
+### Worker
+
+library worker 以 build 期合成的**自包含模块源码**交付，经 `Blob` URL 构造为
+module worker：源码内联 Duke JS glue 与 fflate 浏览器构建，不含任何静态
+`import`、动态 `import()`、`require(`、`importScripts` 或可达远端地址。WASM 本体
+不重复内嵌进 worker，它经 `setWasmSource` 的公开消息路径传入。
+
+object URL 在 `new Worker(url)` 之后立即 revoke：worker 的脚本抓取已由构造函数
+启动，而 library 自身拥有 Worker 生命周期（`dispose()` 调用 `terminate()`），并
+未提供插件可挂接的释放点。
+
+### 内存
+
+- 非 XLSX 工作流不分配引擎内存：解压、校验与安装均发生在首次打开 XLSX 时。
+- 初始化是 session 级单例，并发与后续调用共享同一 Promise；失败不写入缓存，
+  以免一次失败永久禁用该 session 的表格渲染。
+- Base64 字面量本身常驻已加载的 bundle，这是单 bundle 方案的固有成本；运行期
+  不再额外缓存解压后的副本。
