@@ -662,17 +662,26 @@ PPTX:
 - windowed/lazy large-deck rendering
 - real DSH Ask verified
 
+- Task 10R — PASS
+
+Review remediation:
+- external hyperlink relationship type uses exact Transitional/Strict allowlist
+- custom /hyperlink suffix rejected
+- active initial PPTX render is destroyed immediately on AbortSignal
+- rapid close verified in real DSH
+- resize stale-selection evidence validates current-generation endpoints and current text
+
 Next:
 Task 11 — XLSX read-only workbook renderer and semantic cell-range Ask
 
 ## Current gate
 
+- Task 10R PPTX rendering engine client suite: PASS (9 client cases)
+- Task 10R PPTX relationship security client suite: PASS (18 client cases)
+- Task 10R real DSH PPTX renderer smoke (Playwright, live instance): PASS (10 cases) — text two slides Ask, cross-slide Ask, Unicode CJK Ask, table & embedded PNG image without remote requests, chart rendering output, large 120-slide windowed virtualization and stale selection cleanup on scroll, strict viewport resize current-generation revalidation, external media fail-closed security rejection, dangerous javascript hyperlink blocking, rapid switch/close during in-flight render without error or leakage
 - Task 10 slide range provenance unit suite: PASS (21 unit cases)
 - Task 10 PPTX selection adapter client suite: PASS (23 client cases)
-- Task 10 PPTX relationship security client suite: PASS (16 client cases)
-- Task 10 PPTX rendering engine client suite: PASS (6 client cases)
 - Task 10 PPTX bundling integrity unit suite: PASS (2 unit cases)
-- Task 10 real DSH PPTX renderer smoke (Playwright, live instance): PASS (9 cases) — text two slides Ask, cross-slide Ask, Unicode CJK Ask, table & embedded PNG image without remote requests, chart rendering output, large 120-slide windowed virtualization and stale selection cleanup on scroll, viewport resize revalidation, external media fail-closed security rejection, dangerous javascript hyperlink blocking
 - Task 9S OOXML streaming extraction bounds verification suite: PASS (10 client cases)
 - Task 9S DOCX engine & forged-size rejection suite: PASS (13 client cases)
 - Task 9R DOCX hyperlink security client suite: PASS (14 client cases)
