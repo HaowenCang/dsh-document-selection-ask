@@ -29,6 +29,7 @@ import {
   XLSX_SELECTABLE_ATTRIBUTE,
   XLSX_SELECTION_ATTRIBUTE,
 } from './identity.js'
+import { renderXlsxImage } from './render-image.js'
 import { assertSafeXlsxRelationships } from './security.js'
 import type { XlsxSelectionBridge, XlsxSelectionOwner } from './selection-bridge.js'
 import { ensureXlsxWasmInitialized, XlsxWasmIntegrityError, XlsxWasmSourceUnavailableError } from './wasm.js'
@@ -382,6 +383,15 @@ export function XlsxBody(props: XlsxBodyProps): JSX.Element {
             showDefaultToolbar={false}
             allowResizeInReadOnly={false}
             experimentalCanvas={true}
+            // Worksheet images are published explicitly rather than left to the
+            // documented default. With the canvas renderer enabled and no
+            // replacement supplied, the library bakes pictures into the sheet
+            // canvas; `renderImage` moves them to the same positioned drawing
+            // overlay the chart uses, where they are nodes the document actually
+            // carries. The viewer's own source, rectangle and z-order are
+            // preserved, and the picture stays read-only.
+            showImages={true}
+            renderImage={renderXlsxImage}
             renderFormControl={() => null}
             height="100%"
           />

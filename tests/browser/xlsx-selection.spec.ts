@@ -18,7 +18,11 @@
  * The same rule applies to rendering evidence. "The grid is visible" is not
  * evidence that an embedded image or a chart was drawn, and "the fixture ZIP
  * contains `chart1.xml`" is not evidence that anything rendered it. The two are
- * asserted separately, from surfaces the viewer actually painted.
+ * asserted separately, from two surfaces that cannot stand in for each other: the
+ * picture from the image node the plugin's renderer published, including that
+ * node's decoded size, decoded colour and computed style, and the chart from the
+ * labelled inline SVG the viewer draws. Neither a painted canvas nor a filename
+ * is accepted as evidence of either object.
  *
  * ## Where the engine comes from
  *
@@ -286,22 +290,25 @@ async function dragRange(
  * SVG, so the two halves of the drawings workbook are read from two different
  * kinds of evidence and neither is inferred from the fixture's XML.
  *
+ * A picture is *not* read from these canvases. The plugin replaces the library's
+ * built-in image rendering through its documented `renderImage` hook, so an
+ * embedded picture is a node in the drawing overlay rather than pixels baked into
+ * a sheet canvas; {@link readEmbeddedImage} is what asserts it, and the canvas
+ * sampling here is only the general "something was drawn" check it always was.
+ *
  * @param content - the workbook content surface.
  * @returns canvas and image-element counts, how many canvases hold more than one
- *   colour, the drawing overlay's structure, and how many canvas pixels carry the
- *   embedded picture's own solid colour.
+ *   colour, and the drawing overlay's structure.
  */
 async function readPaintedSurfaces(content: Locator): Promise<{
   canvases: number
   images: number
   paintedCanvases: number
-  picturePixels: number
   drawings: { tag: string; label: string; width: number; height: number; fills: number; lines: number }[]
 }> {
   return content.evaluate((root) => {
     const canvases = [...root.querySelectorAll('canvas')]
     let paintedCanvases = 0
-    let picturePixels = 0
     for (const canvas of canvases) {
       const context = canvas.getContext('2d')
       if (context === null || canvas.width === 0 || canvas.height === 0) continue
@@ -316,14 +323,6 @@ async function readPaintedSurfaces(content: Locator): Promise<{
         if (seen.size > 1) break
       }
       if (seen.size > 1) paintedCanvases += 1
-
-      // The fixture's embedded picture is a solid red 64x64 PNG, so its own
-      // colour is the evidence that it was drawn. Nothing else in either
-      // workbook uses it, and the control workbook is asserted to contain none.
-      const full = context.getImageData(0, 0, canvas.width, canvas.height).data
-      for (let index = 0; index + 3 < full.length; index += 4) {
-        if (full[index]! > 190 && full[index + 1]! < 70 && full[index + 2]! < 70) picturePixels += 1
-      }
     }
 
     const drawings = [...root.querySelectorAll('svg')].map((svg) => {
@@ -338,7 +337,167 @@ async function readPaintedSurfaces(content: Locator): Promise<{
       }
     })
 
-    return { canvases: canvases.length, images: root.querySelectorAll('img').length, paintedCanvases, picturePixels, drawings }
+    return {
+      canvases: canvases.length,
+      images: root.querySelectorAll('img').length,
+      paintedCanvases,
+      drawings,
+    }
+  })
+}
+
+/** One embedded picture, as the document published it. */
+interface EmbeddedImageEvidence {
+  /** How many nodes the plugin's image renderer published. */
+  readonly count: number
+  readonly src: string
+  readonly alt: string
+  readonly draggable: string
+  /** The browser's own decode state for the node's source. */
+  readonly complete: boolean
+  readonly naturalWidth: number
+  readonly naturalHeight: number
+  /** The laid-out box, in CSS pixels. */
+  readonly left: number
+  readonly top: number
+  readonly width: number
+  readonly height: number
+  readonly display: string
+  readonly visibility: string
+  readonly opacity: string
+  /** How many pixels of the *decoded node* carry the fixture's solid colour. */
+  readonly redPixels: number
+  /** Whether the colour read could be performed at all. */
+  readonly pixelsSampled: boolean
+  /** The inline style of the box the viewer positioned for the node. */
+  readonly boxStyle: string
+}
+
+/**
+ * Read the embedded picture the workbook published.
+ *
+ * The assertion this replaces could not be made stronger by looking harder at a
+ * canvas: a picture baked into a sheet canvas and a picture that was never drawn
+ * are told apart only by sampling, and nothing says *which* object the red pixels
+ * belong to. The image is therefore read from the node the renderer published —
+ * its source, its decode state, its laid-out box and its computed style — and its
+ * colour is read by drawing that decoded node into an offscreen canvas, so a
+ * broken `<img>` that is merely present cannot satisfy the check.
+ *
+ * @param content - the workbook content surface.
+ * @returns the evidence, with `count: 0` when nothing was published.
+ */
+async function readEmbeddedImage(content: Locator): Promise<EmbeddedImageEvidence> {
+  return content.evaluate((root) => {
+    const nodes = [...root.querySelectorAll<HTMLImageElement>('[data-dsa-xlsx-image]')]
+    const first = nodes[0]
+    if (first === undefined) {
+      return {
+        count: 0,
+        src: '',
+        alt: '',
+        draggable: '',
+        complete: false,
+        naturalWidth: 0,
+        naturalHeight: 0,
+        left: 0,
+        top: 0,
+        width: 0,
+        height: 0,
+        display: '',
+        visibility: '',
+        opacity: '',
+        redPixels: 0,
+        pixelsSampled: false,
+        boxStyle: '',
+      }
+    }
+
+    const box = first.getBoundingClientRect()
+    const computed = getComputedStyle(first)
+
+    let redPixels = 0
+    let pixelsSampled = false
+    if (first.complete && first.naturalWidth > 0 && first.naturalHeight > 0) {
+      const canvas = document.createElement('canvas')
+      canvas.width = first.naturalWidth
+      canvas.height = first.naturalHeight
+      const context = canvas.getContext('2d')
+      if (context !== null) {
+        context.drawImage(first, 0, 0)
+        const data = context.getImageData(0, 0, canvas.width, canvas.height).data
+        pixelsSampled = true
+        for (let index = 0; index + 3 < data.length; index += 4) {
+          if (data[index]! > 190 && data[index + 1]! < 70 && data[index + 2]! < 70) redPixels += 1
+        }
+      }
+    }
+
+    return {
+      count: nodes.length,
+      src: first.src,
+      alt: first.alt,
+      draggable: first.getAttribute('draggable') ?? '',
+      complete: first.complete,
+      naturalWidth: first.naturalWidth,
+      naturalHeight: first.naturalHeight,
+      left: box.left,
+      top: box.top,
+      width: box.width,
+      height: box.height,
+      display: computed.display,
+      visibility: computed.visibility,
+      opacity: computed.opacity,
+      redPixels,
+      pixelsSampled,
+      boxStyle: first.parentElement?.getAttribute('style') ?? '',
+    }
+  })
+}
+
+/**
+ * The outcome of decoding the published picture's own bytes.
+ *
+ * `undecodable` is the state that separates two findings a colour count alone
+ * conflates: a renderer that published no picture, and a picture whose bytes no
+ * decoder can turn into pixels. The second is a defect in the fixture, not in
+ * anything that renders it, and it is named here so the suite reports which one
+ * it found.
+ */
+interface PictureDecode {
+  readonly state: 'absent' | 'pending' | 'decoded' | 'undecodable'
+  readonly detail: string
+}
+
+/**
+ * Decode the published picture through the browser's own bitmap decoder.
+ *
+ * `fetch` is called on the node's own source, which is a `blob:` URL the viewer
+ * created in this page: nothing leaves the machine, and `createImageBitmap` is
+ * the same decoder the browser uses to paint the node. A node whose header parses
+ * but whose compressed pixel data does not decode reports `undecodable` here —
+ * which is a broken picture, not a rendered one, however plausible its
+ * `naturalWidth` looks.
+ *
+ * @param content - the workbook content surface.
+ * @returns the decode state and a human-readable detail.
+ */
+async function readPictureDecode(content: Locator): Promise<PictureDecode> {
+  return content.evaluate(async (root): Promise<PictureDecode> => {
+    const node = root.querySelector<HTMLImageElement>('[data-dsa-xlsx-image]')
+    if (node === null) return { state: 'absent', detail: 'no image node was published' }
+    if (!node.complete) return { state: 'pending', detail: 'the node has not finished loading' }
+    try {
+      const response = await fetch(node.src)
+      const blob = await response.blob()
+      const bitmap = await createImageBitmap(blob)
+      const detail = `${blob.size} bytes of ${blob.type} decoded as ${bitmap.width}x${bitmap.height}`
+      bitmap.close()
+      return { state: 'decoded', detail }
+    } catch (error) {
+      const scheme = /^([a-z][a-z0-9+.-]*):/u.exec(node.src)?.[1] ?? 'unknown'
+      return { state: 'undecodable', detail: `${String(error)} over a ${scheme}: source` }
+    }
   })
 }
 
@@ -626,28 +785,106 @@ test.describe('real DSH XLSX preview & selection smoke', () => {
 
   test('6. chart-image workbook: an embedded image and a chart are both actually drawn', async ({ page }) => {
     const runtime = watchRuntimeAssets(page)
+    await installBlobUrlAudit(page)
+
+    const pageErrors: string[] = []
+    const failedImageRequests: string[] = []
+    page.on('pageerror', (error: Error) => {
+      pageErrors.push(error.message)
+    })
+    page.on('requestfailed', (request: Request) => {
+      if (request.resourceType() === 'image') failedImageRequests.push(request.url())
+    })
 
     await openShell(page)
     await openXlsxFixture(page, 'xlsx-chart-image')
     const content = await expectWorkbookReady(page)
 
     // Selecting the category cell keeps the workbook parsed and the drawing
-    // layer mounted while the surfaces are read.
+    // layer mounted while the surfaces are read. The ordinary grid is still a
+    // grid: the picture the plugin publishes does not take cell selection away.
     await dragRange(page, content, [75, 40], [75, 40])
     await expectPublishedSelection(page, 'Sheet1!A1')
 
     // The workbook's own content proves nothing about its rendering, so each of
-    // the two drawing objects is read from what the renderer published for it,
-    // and the two are asserted separately. The chart is an inline SVG the viewer
-    // labels; the picture is painted into the sheet canvas in its own colour.
-    // Neither assertion can be satisfied by the other object, and neither is a
-    // filename or an XML part.
+    // the two drawing objects is read from what the renderer published *for that
+    // object*, and the two are asserted separately. They are not
+    // interchangeable: the picture is a node carrying the viewer's own image
+    // source, and the chart is an inline SVG the viewer labels. Neither assertion
+    // can be satisfied by the other object, and neither is a filename or an XML
+    // part.
     await expect
-      .poll(async () => (await readPaintedSurfaces(content)).drawings.length, {
+      .poll(async () => (await readEmbeddedImage(content)).count, {
         timeout: 20_000,
-        message: 'the chart-image workbook must publish a drawing overlay',
+        message: 'the workbook’s embedded picture must be published as an image node',
       })
       .toBeGreaterThanOrEqual(1)
+
+    const picture = await readEmbeddedImage(content)
+    expect(picture.count).toBeGreaterThanOrEqual(1)
+
+    // Local resource only: the picture comes from the viewer's own object URL,
+    // never from a network origin, a plugin route or a file path.
+    expect(picture.src.startsWith('blob:')).toBe(true)
+
+    // A real, laid-out node rather than a placeholder: the viewer's rectangle
+    // sizes it, its computed style leaves it visible, and it carries the
+    // workbook's own alt text.
+    expect(picture.complete).toBe(true)
+    expect(picture.naturalWidth).toBe(64)
+    expect(picture.naturalHeight).toBe(64)
+    expect(picture.width).toBeGreaterThan(0)
+    expect(picture.height).toBeGreaterThan(0)
+    expect(picture.display).not.toBe('none')
+    expect(picture.visibility).not.toBe('hidden')
+    expect(picture.opacity).not.toBe('0')
+
+    // Read-only presentation: the node is not draggable, and it is positioned by
+    // the viewer's own box rather than by anything this plugin computed.
+    expect(picture.draggable).toBe('false')
+    expect(picture.boxStyle).toContain('position: absolute')
+
+    await expect
+      .poll(async () => (await readPictureDecode(content)).state, {
+        timeout: 20_000,
+        message: 'the published picture must finish loading its own source',
+      })
+      .not.toBe('pending')
+
+    // The picture's bytes must decode into pixels. `naturalWidth` is read out of
+    // the PNG header, so it is satisfied by a file whose compressed pixel data is
+    // unusable; this assertion is what tells a rendered picture apart from a node
+    // that merely claims a size.
+    const decode = await readPictureDecode(content)
+    expect(
+      decode.state,
+      `the embedded picture’s own bytes must decode into pixels: ${decode.detail}; ` +
+        `the node reports ${picture.naturalWidth}x${picture.naturalHeight} in a ` +
+        `${Math.round(picture.width)}x${Math.round(picture.height)} box at ` +
+        `${Math.round(picture.left)},${Math.round(picture.top)}`,
+    ).toBe('decoded')
+
+    await expect
+      .poll(async () => (await readEmbeddedImage(content)).redPixels, {
+        timeout: 20_000,
+        message:
+          'the published image node must decode to the fixture’s solid-red picture; ' +
+          'a node whose source never loaded would carry no colour at all',
+      })
+      .toBeGreaterThan(0)
+
+    // The colour read was actually performed: drawing the decoded node into a
+    // canvas and reading the pixels back. No text is interpreted from them.
+    expect(picture.pixelsSampled).toBe(true)
+
+    // The picture's own object URL was allocated by the controller in this page,
+    // and it is the only allocation for that picture: the plugin consumes the
+    // source it is handed instead of minting a second resource for the same
+    // bytes.
+    const auditAfterRender = await readBlobUrlAudit(page)
+    expect(auditAfterRender.created).toContain(picture.src)
+    expect(auditAfterRender.created.filter((url) => url === picture.src)).toHaveLength(1)
+    expect(auditAfterRender.revoked).not.toContain(picture.src)
 
     const surfaces = await readPaintedSurfaces(content)
 
@@ -662,18 +899,6 @@ test.describe('real DSH XLSX preview & selection smoke', () => {
       expect(chart.lines).toBeGreaterThanOrEqual(4)
     }
 
-    // The embedded PNG is a solid red 64x64 image. It is baked into the sheet
-    // canvas, so its own colour is the evidence that it was drawn; the control
-    // case below establishes that no other workbook paints it.
-    await expect
-      .poll(async () => (await readPaintedSurfaces(content)).picturePixels, {
-        timeout: 20_000,
-        message:
-          'the workbook’s embedded picture must be painted into the sheet canvas; ' +
-          'a workbook whose picture is absent from the drawing layer renders only the grid',
-      })
-      .toBeGreaterThan(0)
-
     const askButton = page.locator(ASK_BUTTON).first()
     await expect(askButton).toBeVisible({ timeout: 15_000 })
     await askButton.click()
@@ -682,14 +907,46 @@ test.describe('real DSH XLSX preview & selection smoke', () => {
     expect(draft).toContain('[来源：task11-chart-image.xlsx，Sheet1!A1]')
     expect(draft).toContain('Category')
 
+    // The picture is presentation, not an editing surface. The gesture below is
+    // a real pointer drag across the picture, and what it must leave behind is
+    // the geometry the viewer published: the anchor is not moved, the box is not
+    // resized, and no resize handle appears. The comparison is against the
+    // viewer's own published box rather than against a stored anchor, so it
+    // reports a persistent move wherever one came from.
+    const beforeDrag = await readEmbeddedImage(content)
+    await page.mouse.move(beforeDrag.left + beforeDrag.width / 2, beforeDrag.top + beforeDrag.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(
+      beforeDrag.left + beforeDrag.width / 2 + 90,
+      beforeDrag.top + beforeDrag.height / 2 + 60,
+      { steps: 10 },
+    )
+    await page.mouse.up()
+    await page.waitForTimeout(500)
+
+    const afterDrag = await readEmbeddedImage(content)
+    expect(afterDrag.count).toBeGreaterThanOrEqual(1)
+    expect(afterDrag.src).toBe(beforeDrag.src)
+    expect(afterDrag.boxStyle).toBe(beforeDrag.boxStyle)
+    expect(Math.round(afterDrag.left)).toBe(Math.round(beforeDrag.left))
+    expect(Math.round(afterDrag.top)).toBe(Math.round(beforeDrag.top))
+    expect(Math.round(afterDrag.width)).toBe(Math.round(beforeDrag.width))
+    expect(Math.round(afterDrag.height)).toBe(Math.round(beforeDrag.height))
+
+    // A picture that failed to load is not a passing case: a broken source raises
+    // an image request failure in this page, and an unreadable scheme raises a
+    // page error.
+    expect(failedImageRequests).toEqual([])
+    expect(pageErrors, 'rendering the picture must raise no page error').toEqual([])
+
     expect(runtime.parserAssetRequests()).toEqual([])
     expect(runtime.remoteRequests()).toEqual([])
   })
 
-  test('6a. control: the plain workbook paints no picture colour at all', async ({ page }) => {
+  test('6a. control: the plain workbook publishes no image node at all', async ({ page }) => {
     // The picture assertion above is only evidence if nothing else can satisfy
-    // it. This case is the control: the workbook without a drawing part paints
-    // none of the picture's colour, and none of the drawing overlay either.
+    // it. This case is the control: the workbook without a drawing part publishes
+    // no image node, no drawing overlay, and no decoded picture colour.
     await openShell(page)
     await openXlsxFixture(page, 'xlsx-simple')
     const content = await expectWorkbookReady(page)
@@ -697,9 +954,57 @@ test.describe('real DSH XLSX preview & selection smoke', () => {
     await dragRange(page, content, [75, 30], [75, 30])
     await expectPublishedSelection(page, 'Sheet1!A1')
 
+    const picture = await readEmbeddedImage(content)
+    expect(picture.count).toBe(0)
+    expect(picture.redPixels).toBe(0)
+
     const surfaces = await readPaintedSurfaces(content)
-    expect(surfaces.picturePixels).toBe(0)
     expect(surfaces.drawings).toEqual([])
+  })
+
+  test('6b. embedded picture lifecycle: the viewer’s own object URL is released when the resource is switched', async ({ page }) => {
+    await installBlobUrlAudit(page)
+
+    const pageErrors: string[] = []
+    page.on('pageerror', (error: Error) => {
+      pageErrors.push(error.message)
+    })
+
+    await openShell(page)
+    await openXlsxFixture(page, 'xlsx-chart-image')
+    const content = await expectWorkbookReady(page)
+
+    await expect
+      .poll(async () => (await readEmbeddedImage(content)).count, {
+        timeout: 20_000,
+        message: 'the workbook’s embedded picture must be published as an image node',
+      })
+      .toBeGreaterThanOrEqual(1)
+
+    const picture = await readEmbeddedImage(content)
+    const auditBeforeSwitch = await readBlobUrlAudit(page)
+
+    // The URL the picture renders from belongs to the controller: it was created
+    // by the platform on the controller's behalf, and it is still live while the
+    // workbook is open.
+    expect(auditBeforeSwitch.created).toContain(picture.src)
+    expect(auditBeforeSwitch.revoked).not.toContain(picture.src)
+
+    // Switching resources releases the whole viewer session, this picture's
+    // resource included. The plugin never revokes it — the URL is not the
+    // plugin's to release — so a revoked URL here is the controller cleaning up
+    // after itself rather than the renderer reaching for the platform.
+    await page.locator(`[data-dsa-smoke-open="docx-paragraphs"]`).click()
+    await expect(page.locator(XLSX_CONTENT)).toHaveCount(0, { timeout: 20_000 })
+
+    await expect
+      .poll(async () => (await readBlobUrlAudit(page)).revoked, {
+        timeout: 20_000,
+        message: 'the embedded picture’s object URL must be released with the workbook',
+      })
+      .toContain(picture.src)
+
+    expect(pageErrors, 'releasing a workbook with a picture must raise no page error').toEqual([])
   })
 
   test('7. large workbook: a real client-owned Worker parses it and selection works afterwards', async ({ page }) => {

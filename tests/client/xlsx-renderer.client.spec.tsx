@@ -26,7 +26,7 @@ import { resolve } from 'node:path'
 import { act } from 'react'
 import { createElement } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { initWasm, type XlsxViewerController } from '@extend-ai/react-xlsx'
+import { initWasm, type XlsxImageRenderProps, type XlsxViewerController } from '@extend-ai/react-xlsx'
 
 import { createXlsxSelectionBridge } from '../../src/client/renderers/xlsx/selection-bridge.js'
 import { XlsxBody, type XlsxBodyProps } from '../../src/client/renderers/xlsx/XlsxBody.js'
@@ -73,6 +73,7 @@ const pipeline = vi.hoisted(() => {
     relationships: [] as GateCall[],
     wasmInit: 0,
     viewerFiles: [] as ArrayBuffer[],
+    viewerProps: [] as Array<Record<string, unknown>>,
     log: [] as string[],
   }
 
@@ -108,6 +109,7 @@ const pipeline = vi.hoisted(() => {
       calls.relationships.length = 0
       calls.wasmInit = 0
       calls.viewerFiles.length = 0
+      calls.viewerProps.length = 0
       calls.log.length = 0
       pipeline.preflight = null
       pipeline.verify = null
@@ -167,6 +169,10 @@ vi.mock('../../src/client/renderers/xlsx/wasm.js', () => ({
  * identity is the whole point: the property under test is that the bytes the
  * viewer parses are the bytes the gates validated, not a fresh read of the
  * host's array.
+ *
+ * `XlsxViewer` records the props it was configured with, because two of them —
+ * `showImages` and `renderImage` — decide whether an embedded worksheet picture
+ * reaches the document at all, and neither is observable from a rendered grid.
  */
 vi.mock('@extend-ai/react-xlsx', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@extend-ai/react-xlsx')>()
@@ -181,7 +187,10 @@ vi.mock('@extend-ai/react-xlsx', async (importOriginal) => {
         props.children as never,
       )
     },
-    XlsxViewer: () => createElement('div', { 'data-stub-viewer': '' }),
+    XlsxViewer: (props: Record<string, unknown>) => {
+      pipeline.calls.viewerProps.push(props)
+      return createElement('div', { 'data-stub-viewer': '' })
+    },
     useXlsxViewer: () => pipeline.viewer as unknown as XlsxViewerController,
   }
 })
@@ -666,5 +675,179 @@ describe('XlsxBody security pipeline', () => {
 
     const root = tree.container.querySelector('[data-dsa-document-kind="xlsx"]')
     expect(root?.hasAttribute('data-dsa-xlsx-selection')).toBe(false)
+  })
+})
+
+/**
+ * The presentation configuration `XlsxBody` gives the pinned viewer.
+ *
+ * These two props are the whole of the embedded-image remediation, and neither is
+ * observable from a rendered grid: `showImages` decides whether worksheet
+ * drawings are published at all, and `renderImage` decides whether an image is
+ * baked into the sheet canvas or handed to a node the plugin owns. The stub
+ * viewer above therefore records the props it received, and the cases below
+ * assert the configuration and then drive the recorded hook with a
+ * public-shaped `XlsxImageRenderProps` to state what the replacement node is.
+ *
+ * The same hook is driven end to end, over the real fixture and the real
+ * pipeline, by `tests/client/xlsx-image-render.client.spec.tsx`.
+ */
+describe('XLSX embedded image presentation configuration', () => {
+  let trees: MountedTree[] = []
+
+  beforeEach(() => {
+    pipeline.reset()
+  })
+
+  afterEach(() => {
+    for (const tree of trees) tree.unmount()
+    trees = []
+  })
+
+  /**
+   * Mount the production body over the simple workbook.
+   * @returns the mounted tree.
+   */
+  function mountBody(): MountedTree {
+    const bridge = createXlsxSelectionBridge()
+    const props = {
+      resourceAddress: 'dsh-resource://file/session/s1/smoke-fixtures/task11-simple.xlsx',
+      content: { kind: 'bytes', data: new Uint8Array(SIMPLE_BYTES) },
+      wrap: false,
+      scrollportRef: () => undefined,
+      bridge,
+    } as unknown as XlsxBodyProps
+
+    const tree = mountTree(createElement(XlsxBody, props))
+    trees.push(tree)
+    return tree
+  }
+
+  /** The viewer props the production body published, once it reached the viewer. */
+  function configuredViewer(): Record<string, unknown> {
+    const props = pipeline.calls.viewerProps.at(-1)
+    if (props === undefined) throw new Error('the production body did not mount the viewer')
+    return props
+  }
+
+  it('enables worksheet images and replaces their rendering through the documented hook', async () => {
+    mountBody()
+    await settle()
+
+    const props = configuredViewer()
+
+    // Explicit rather than inherited: the default is documented as `true`, and a
+    // renderer that published no drawings would otherwise be indistinguishable
+    // from one configured to publish them.
+    expect(props['showImages']).toBe(true)
+    expect(typeof props['renderImage']).toBe('function')
+
+    // Read-only presentation is unchanged, and no mutation surface is added: the
+    // resize-handle hook the library offers alongside `renderImage` is not used,
+    // and the workbook stays non-editable in both places it can be set.
+    expect(props['readOnly']).toBe(true)
+    expect(props['allowResizeInReadOnly']).toBe(false)
+    expect(props['renderImageSelection']).toBeUndefined()
+    expect(configuredViewer()).not.toHaveProperty('updateImage')
+  })
+
+  it('builds a non-draggable marker image from the viewer’s own source and box', async () => {
+    mountBody()
+    await settle()
+
+    const renderImage = configuredViewer()['renderImage'] as (
+      props: XlsxImageRenderProps,
+    ) => React.ReactElement
+
+    // A public-shaped callback argument: the model entry, rectangle and style the
+    // viewer computes, as the installed typings describe them.
+    const element = renderImage({
+      defaultNode: createElement('img', { src: 'blob:upstream-default' }),
+      image: {
+        anchor: { from: { col: 3, colOffsetEmu: 0, row: 1, rowOffsetEmu: 0 }, kind: 'one-cell', sizeEmu: { cx: 609600, cy: 609600 } },
+        description: 'Embedded picture',
+        id: 'worksheet-image-0-1',
+        mediaPath: 'xl/media/image1.png',
+        mimeType: 'image/png',
+        name: 'Picture 1',
+        sheetIndex: 0,
+        src: 'blob:viewer-owned-resource',
+        workbookSheetIndex: 0,
+        zIndex: 1,
+      },
+      rect: { height: 64, left: 232, top: 44, width: 64 },
+      style: {
+        contain: 'layout paint',
+        height: 64,
+        left: 232,
+        overflow: 'hidden',
+        pointerEvents: 'none',
+        position: 'absolute',
+        top: 44,
+        width: 64,
+        zIndex: 1,
+      },
+    })
+
+    const tree = mountTree(element)
+    trees.push(tree)
+
+    const image = tree.container.querySelector('img[data-dsa-xlsx-image]')
+    expect(image).not.toBeNull()
+
+    // The source is consumed, not re-derived: no object URL of the plugin's own,
+    // no fetch, no re-encoding of the media bytes.
+    expect(image?.getAttribute('src')).toBe('blob:viewer-owned-resource')
+
+    // The accessible name comes from the workbook's own metadata.
+    expect(image?.getAttribute('alt')).toBe('Embedded picture')
+
+    // Read-only: the node carries no drag affordance.
+    expect(image?.getAttribute('draggable')).toBe('false')
+    expect(image?.outerHTML ?? '').not.toContain('blob:upstream-default')
+
+    // The box is the viewer's calculation, consumed rather than recomputed: width
+    // and height are the rectangle it published, not a value derived from the
+    // anchor.
+    const style = (image as HTMLElement).style
+    expect(style.width).toBe('64px')
+    expect(style.height).toBe('64px')
+    expect(style.objectFit).toBe('contain')
+  })
+
+  it('falls back to the image name when the workbook carries no description', async () => {
+    mountBody()
+    await settle()
+
+    const renderImage = configuredViewer()['renderImage'] as (
+      props: XlsxImageRenderProps,
+    ) => React.ReactElement
+
+    const element = renderImage({
+      defaultNode: null,
+      image: {
+        anchor: {
+          from: { col: 0, colOffsetEmu: 0, row: 0, rowOffsetEmu: 0 },
+          kind: 'one-cell',
+          sizeEmu: { cx: 1, cy: 1 },
+        },
+        id: 'worksheet-image-0-1',
+        mimeType: 'image/png',
+        name: 'Picture 1',
+        sheetIndex: 0,
+        src: 'blob:viewer-owned-resource',
+        workbookSheetIndex: 0,
+        zIndex: 1,
+      },
+      rect: { height: 10, left: 0, top: 0, width: 10 },
+      style: { height: 10, left: 0, position: 'absolute', top: 0, width: 10, zIndex: 1 },
+    })
+
+    const tree = mountTree(element)
+    trees.push(tree)
+
+    expect(tree.container.querySelector('img[data-dsa-xlsx-image]')?.getAttribute('alt')).toBe(
+      'Picture 1',
+    )
   })
 })
