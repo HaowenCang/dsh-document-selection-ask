@@ -48,6 +48,17 @@ TXT / Markdown / code / CSV 的选择 → 引用 → Ask 流程已经实现，�
 - Office 编辑
 - 批注/高亮持久化
 
+架构阻塞（范围内但当前未交付）：
+
+- **XLSX 渲染运行时**。`@extend-ai/react-xlsx` 的解析引擎是 4.4 MB 的
+  `duke_sheets_wasm_bg.wasm`。DSH 只把外部客户端插件的浏览器半边作为**一个**生成脚本
+  提供（`exports["./client"]` 指向的文件及其可选 source map，经封闭的预计算响应表
+  精确匹配，其余路径一律 404），且没有任何公开的、客户端专用的二进制资产投递契约。
+  此前一版在 host 半边注册 `/dsa-assets/...` 路由来绕开这一点，属于架构范围扩张，已移除。
+  在架构决定之前，插件不猜测：选中 XLSX 时渲染器在挂载任何第三方 viewer 之前明确报错，
+  不访问 host 路由、不访问 CDN、不发任何网络请求。证据见
+  `tests/browser/xlsx-selection.spec.ts` 的 case 0。
+
 ## 核心架构
 
 ```text

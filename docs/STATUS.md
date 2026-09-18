@@ -692,17 +692,146 @@ XLSX:
 - OOXML metadata + actual extraction gates
 - real DSH Ask verified
 
+- Task 11R — BLOCKED — CLIENT-ASSET CONTRACT BLOCKED
+
+Remediation of the Task 11 merge review. The review's three confirmed production
+defects and its host-architecture deviation are fixed; the XLSX browser evidence is
+**not** green, and the round is reported as BLOCKED rather than PASS.
+
+Fixed, with the failing case observed before the fix:
+
+- **metadata preflight was not awaited.** `XlsxBody` called
+  `preflightOoxml(copy, DEFAULT_OOXML_LIMITS)` fire-and-forget, so extraction
+  verification, the relationship scan and the third-party viewer could all begin while
+  the metadata gate was still reading the central directory. It is now awaited, and the
+  three gates are strictly serial: preflight, then `verifyOoxmlExtraction`, then
+  `assertSafeXlsxRelationships`, then the engine check, then the viewer.
+- **the preflight received no AbortSignal.** Every gate now receives the component's own
+  lifecycle signal, so releasing the tab interrupts metadata preflight, extraction
+  verification and the relationship scan alike. A preflight rejection no longer escapes
+  as an unhandled rejection.
+- **validated bytes and rendered bytes were different objects.** The pipeline validated a
+  defensive copy and the ready render re-sliced `content.data`, so a host that reused or
+  mutated its buffer between the two points changed what the viewer parsed. `ready` now
+  carries the exact `ArrayBuffer` the gates validated (`{ kind: 'ready'; file: ArrayBuffer }`),
+  one defensive copy per resource generation, and nothing re-reads the host array.
+- **`checkSignature: true` in the relationship scanner.** Replaced by
+  `checkCrc32: true` plus `checkOverlappingEntry: true`, stated once as
+  `XLSX_RELATIONSHIP_READER_OPTIONS` and pinned by a spec against the shared verifier's
+  policy.
+- **a cancelled relationship scan resolved successfully.** `if (signal?.aborted) return`
+  reported a security check that never finished as one that passed. Abort now rejects
+  with an `AbortError`, checked before enumeration, between entries and after each
+  entry's content is read, and the reader is still released on that path.
+- **a cleanup failure could replace the verdict.** The scanner now applies the shared
+  verifier's asymmetry: a primary refusal or abort survives a failing `close`, while a
+  cleanup failure after acceptance propagates.
+- **the relationship scan spawned a zip.js codec Web Worker.** Found by running the
+  suite against a live instance and capturing the worker's creation stack:
+  `getData` was called with no options, so zip.js's `useWebWorkers` default built a
+  `Blob` worker *before* the gate had decided the archive was safe. The scan now states
+  `useWebWorkers: false`, matching `verifyOoxmlExtraction`; the browser case asserts a
+  live instance creates no worker at all during the blocked-state path.
+- **the host half was no longer client-only.** `src/index.ts` had grown a `webServer`
+  lookup, two `/dsa-assets` routes and `node:fs` reads. It is restored to the inert
+  client-only baseline; `tests/unit/host-entry.spec.ts` now asserts that applying it
+  touches no context member, registers no route, and that neither the source module nor
+  the built bundle mentions `webServer`, `dsa-assets`, `readFileSync`, `node:fs`,
+  `xlsx-worker` or `duke_sheets_wasm`.
+- **the build no longer rewrites upstream code without checking it.** The two
+  `@extend-ai/react-xlsx` rewrites (the worker construction and the Duke dynamic import)
+  go through `replaceExactlyOnce`, which refuses a build unless each literal occurs
+  exactly once. The host-route worker rewrite and the `lib/assets` copy are deleted, so
+  the package ships no separate worker or WASM asset.
+
+Not fixed, and the reason the round is BLOCKED:
+
+- **the XLSX engine binary has no delivery path.** `@extend-ai/react-xlsx` publishes
+  `duke_sheets_wasm_bg.wasm` at a public subpath, and `setWasmSource` accepts an
+  `ArrayBuffer` that its worker receives verbatim — but nothing can carry those 4.4 MB to
+  the browser client-only. `@deepseek-ai/dsh-client-modules` serves an external plugin's
+  browser half as exactly one generated script (`exports["./client"]` plus its optional
+  source map) through a closed, pre-computed response table; a request for any other path
+  answers 404 and there is no file-system fallback. `ClientModuleRegistry` exposes
+  `graph`, `clientPath`, `fetchBundle`, `artifactBaseline`, `rebuilt`, `onRebuilt` and
+  `onGraphChanged` — no asset or file registration. `DshClientManifest` declares only
+  `platform`, `inject`, `immediately` and `external`, and unknown fields are discarded.
+  The one URL a bundle can learn at run time is that combo endpoint, `import.meta.url` is
+  unavailable in a classic script, and `document.currentScript` is `null` by the time a
+  lazily materialised module body runs. Inlining the binary into `lib/client.js` is
+  technically possible and is what DSH's own PDF preview does, but it is exactly the
+  "base64 the entire WASM into main JS" that this round's constraints forbid, so it was
+  not adopted and the host route was not restored. The renderer therefore fails closed
+  with a typed `XlsxWasmSourceUnavailableError` and a visible message before any
+  third-party viewer is mounted.
+- Consequences: `tests/browser/xlsx-selection.spec.ts` is 1 passed / 9 failed / 0
+  skipped. Case 0 records the blocked state from a live instance (renderer reports the
+  blocked engine, no selectable surface, no worker, no `/dsa-assets` request, no remote
+  request, `/dsa-assets/duke_sheets_wasm_bg.wasm` answers 404). Cases 1–9 encode the
+  tightened evidence the unblock must satisfy — exact published range read before Ask,
+  exact provenance, the sheet-switch intermediate state, painted drawing surfaces for the
+  chart/image workbook, a real client-owned `blob:` Worker, Delete/Backspace/paste
+  read-only attempts — and every one of them fails at the readiness gate because no
+  workbook reaches a viewer. Their assertions beyond that gate are unverified.
+- `tests/client/xlsx-renderer.client.spec.tsx` gained `data-dsa-xlsx-selection` as the
+  renderer's published semantic selection (`"<sheet>!<range>"`), so the browser suite can
+  confirm a gesture's range rather than infer it from a visible button.
+
+Verification (all on `eval/gemini-3.8-flash-task11-20260918`):
+
+- `pnpm test`: PASS (910 tests)
+- `pnpm typecheck`: PASS
+- `pnpm build`: PASS
+- `npm pack --dry-run`: PASS, with `lib/assets/**` removed from the published file list
+- `git diff --check`: PASS
+- real DSH 0.1.5-rc.1, profile `dsa-smoke`:
+  - PDF 10 passed / 0 failed / 0 skipped
+  - DOCX 6 / 0 / 0
+  - PPTX 10 / 0 / 0
+  - TextPreview 8 / 0 / 0
+  - XLSX 1 passed / 9 failed / 0 skipped — BLOCKED (see above)
+
+Next:
+
+Architecture decision on client-only binary asset delivery for external DSH client
+plugins. Until it is made, Task 11 cannot be merged and Task 12 must not start.
+
 Next:
 Task 12 — Unified registration, locale, cleanup and renderer fallback
 
 ## Current gate
 
-- Task 11 real DSH XLSX renderer smoke (Playwright, live instance): PASS (9 cases) — simple semantic range Ask, formula display values, multi-sheet navigation and stale clearing, read-only mutation protection, merged & frozen panes, chart & embedded image without remote requests, large 2000-row worker-backed workbook, resource switch cleanup, local Duke WASM asset with 0 CDN requests
+- Task 11 real DSH XLSX renderer smoke (Playwright, live instance): **SUPERSEDED by
+  Task 11R — BLOCKED.** The Task 11 record above stands as what that round claimed; the
+  reproduction performed in Task 11R shows the same suite's assertions could not have
+  distinguished the ranges it reported (prefix-only provenance) and that the renderer's
+  runtime depended on host routes. See the Task 11R record for what is now measured:
+  XLSX 1 passed / 9 failed / 0 skipped against a live instance, blocked at the engine
+  binary's delivery path.
+- Task 11 XLSX relationship security client suite: PASS (30 client cases) — the exact
+  Transitional/Strict hyperlink allowlist and its scheme rule, six disallowed external
+  relationship families, malformed XML, CRC-corrupted relationship bytes over a real
+  archive, abort as an `AbortError` at three positions, the reader-close policy on all
+  four outcomes, and the per-entry read options (`useWebWorkers: false`) that keep the
+  scan off a codec worker
+- Task 11 XLSX renderer pipeline client suite: PASS (13 client cases) — preflight pending
+  blocks the later gates, strict gate ordering, preflight rejection never reaching the
+  verifier or the viewer, one lifecycle signal shared by all three gates, one defensive
+  copy reaching every gate and the viewer by identity, host-byte mutation after the copy
+  not reaching the viewer, the blocked engine-binary state, and the published semantic
+  selection attribute
+- Task 11 XLSX bundling integrity unit suite: PASS (7 unit cases) — no host asset path,
+  no worker file, no CDN, the fail-closed worker seam, no second chunk beside
+  `lib/client.js`, no `lib/assets` in the artifact or the published file list, and the
+  host bundle free of routes, filesystem access and XLSX runtime
 - Task 11 cell range provenance unit suite: PASS (6 unit cases)
 - Task 11 XLSX selection bridge client suite: PASS (5 client cases)
 - Task 11 XLSX selection adapter client suite: PASS (9 client cases)
-- Task 11 XLSX renderer & displayed values client suite: PASS (3 client cases)
-- Task 11 XLSX bundling integrity unit suite: PASS (4 unit cases)
+- Task 11 XLSX renderer & displayed values client suite: superseded by the Task 11R
+  pipeline suite above (13 client cases, of which the public displayed-value cases are
+  the original 3)
+- Task 11 XLSX bundling integrity unit suite: superseded by the Task 11R suite above
+  (7 unit cases)
 - Task 10S PPTX rendering engine client suite: PASS (12 client cases)
 - Task 10R PPTX relationship security client suite: PASS (18 client cases)
 - Task 10S real DSH PPTX renderer smoke (Playwright, live instance): PASS (10 cases) — text two slides Ask, cross-slide Ask, Unicode CJK Ask, table & embedded PNG image without remote requests, chart rendering output, large 120-slide windowed virtualization and stale selection cleanup on scroll, strict viewport resize current-generation revalidation, external media fail-closed security rejection, dangerous javascript hyperlink blocking, rapid switch/close during in-flight render without error or leakage
@@ -885,6 +1014,11 @@ Task 12 — Unified registration, locale, cleanup and renderer fallback
   predecessor's text behind. No generation token was needed, and the reason is
   recorded)
 - Task 8 — PASS (PDF native TextLayer selection captured with source page provenance, same/cross-page Ask, composer draft integration, and real DSH verification)
+- Task 11R — BLOCKED — CLIENT-ASSET CONTRACT BLOCKED (the Task 11 review's
+  preflight-ordering, validated-bytes, relationship-scanner and host-architecture defects
+  are fixed and covered by new suites; the XLSX engine binary has no client-only delivery
+  path, so the XLSX renderer fails closed and its browser suite is 1 passed / 9 failed /
+  0 skipped against a live instance. PR #4 stays a draft and Task 12 must not start)
 - GitHub publication — ACTIVE
 - Repository visibility — public
 - License — MIT

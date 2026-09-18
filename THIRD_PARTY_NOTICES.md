@@ -33,7 +33,7 @@ declared, and it is recorded here as one.
 | `echarts` | 6.1.0 | Apache-2.0 | Transitive runtime dependency brought in by `@aiden0z/pptx-renderer` for rendering presentation charts. Bundled into `lib/client.js`. |
 | `zrender` | 6.1.0 | BSD-3-Clause | Transitive runtime dependency brought in by `echarts` for 2D canvas/SVG rendering. Bundled into `lib/client.js`. |
 | `@extend-ai/react-xlsx` | 0.16.4 | MIT | React components and hooks for viewing XLSX workbooks in read-only mode for the selectable XLSX preview. Bundled into `lib/client.js`. |
-| `@dukelib/sheets-wasm` | 0.1.23 | MIT | WebAssembly bindings for Duke sheets Excel engine in react-xlsx. Shipped as local asset `lib/assets/duke_sheets_wasm_bg.wasm`. |
+| `@dukelib/sheets-wasm` | 0.1.23 | MIT | WebAssembly bindings for the Duke sheets Excel engine used by `@extend-ai/react-xlsx`. Declared as a runtime dependency; **no binary of it is currently delivered to the browser** — see the blocker note below. |
 
 ### `docx-preview` 0.4.0 and `jszip` 3.10.2
 
@@ -138,12 +138,24 @@ as its WebAssembly spreadsheet parsing and calculation engine:
 package:  @dukelib/sheets-wasm
 version:  0.1.23
 license:  MIT
-runtime/test-only: runtime dependency (WASM asset shipped in lib/assets/duke_sheets_wasm_bg.wasm)
+runtime/test-only: runtime dependency of @extend-ai/react-xlsx (BSD-3-Clause/MIT engine)
 ```
 
-The WASM asset is packaged locally in `lib/assets/duke_sheets_wasm_bg.wasm` (4,412,299 bytes,
-SHA-256: `24687a3e6d051689d7ff0fdde5148ff527744100d4fd70efa3d1580a05e6ef3d`).
-No remote CDN is ever contacted.
+The engine binary is `@extend-ai/react-xlsx`'s own `duke_sheets_wasm_bg.wasm`
+(4,412,299 bytes, SHA-256
+`24687a3e6d051689d7ff0fdde5148ff527744100d4fd70efa3d1580a05e6ef3d`), published by that package
+at the subpath `@extend-ai/react-xlsx/duke_sheets_wasm_bg.wasm`. It is not fetched from any
+CDN, and no remote fallback exists.
+
+**Delivery blocker.** The binary is *not* currently reachable from the browser at run time.
+DSH serves an external client plugin's browser half as exactly one generated script — the file
+`exports["./client"]` names, plus its optional source map — through a closed, pre-computed
+response table, and exposes no public client-only API by which a plugin may contribute a second
+file. An earlier revision registered `/dsa-assets/...` routes in the host half to work around
+that; the routes were removed because a host dependency is not the frozen client-only
+architecture. Until an architecture decision is made, the XLSX renderer reports the blocked
+state instead of rendering, which is what `tests/browser/xlsx-selection.spec.ts` case 0
+records.
 
 ### `exceljs` 4.4.0 (Development / Fixture Generator Only)
 
