@@ -671,14 +671,22 @@ Review remediation:
 - rapid close verified in real DSH
 - resize stale-selection evidence validates current-generation endpoints and current text
 
+- Task 10S — PASS
+
+Lifecycle:
+- one clearly-owned AbortSignal cancellation path
+- temporary initial-render abort race leaves no listener behind
+- session.dispose removes active abort ownership
+- later signal abort after dispose has no renderer side effect
+
 Next:
 Task 11 — XLSX read-only workbook renderer and semantic cell-range Ask
 
 ## Current gate
 
-- Task 10R PPTX rendering engine client suite: PASS (9 client cases)
+- Task 10S PPTX rendering engine client suite: PASS (12 client cases)
 - Task 10R PPTX relationship security client suite: PASS (18 client cases)
-- Task 10R real DSH PPTX renderer smoke (Playwright, live instance): PASS (10 cases) — text two slides Ask, cross-slide Ask, Unicode CJK Ask, table & embedded PNG image without remote requests, chart rendering output, large 120-slide windowed virtualization and stale selection cleanup on scroll, strict viewport resize current-generation revalidation, external media fail-closed security rejection, dangerous javascript hyperlink blocking, rapid switch/close during in-flight render without error or leakage
+- Task 10S real DSH PPTX renderer smoke (Playwright, live instance): PASS (10 cases) — text two slides Ask, cross-slide Ask, Unicode CJK Ask, table & embedded PNG image without remote requests, chart rendering output, large 120-slide windowed virtualization and stale selection cleanup on scroll, strict viewport resize current-generation revalidation, external media fail-closed security rejection, dangerous javascript hyperlink blocking, rapid switch/close during in-flight render without error or leakage
 - Task 10 slide range provenance unit suite: PASS (21 unit cases)
 - Task 10 PPTX selection adapter client suite: PASS (23 client cases)
 - Task 10 PPTX bundling integrity unit suite: PASS (2 unit cases)
