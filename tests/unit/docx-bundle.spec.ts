@@ -38,8 +38,8 @@ describe('DOCX and client bundle integrity', () => {
 
   it('keeps client bundle size bounded and within expected range', () => {
     const stats = statSync(CLIENT_BUNDLE_PATH)
-    // Bundle includes PDF.js + docx-preview + JSZip + zip.js
+    // Bundle includes PDF.js + docx-preview + JSZip + zip.js + pptx-renderer + echarts + zrender + react-xlsx
     expect(stats.size).toBeGreaterThan(6_000_000)
-    expect(stats.size).toBeLessThan(12_000_000)
+    expect(stats.size).toBeLessThan(18_000_000)
   })
 })

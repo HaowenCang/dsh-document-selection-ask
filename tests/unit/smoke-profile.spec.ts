@@ -365,6 +365,56 @@ describe('smoke profile tooling', () => {
     ])
   })
 
+  it('agrees with the driver about which XLSX fixtures exist and where they go', () => {
+    const bootstrap = read('scripts/dsh-smoke-profile.mjs')
+    const driver = read('tests/browser/smoke-driver/src/client/fixtures.ts')
+
+    const sources = readDataTable(bootstrap, 'XLSX_FIXTURE_SOURCES') as { key: string; source: string }[]
+    expect(sources.length, 'the bootstrap must declare the XLSX fixture sources').toBeGreaterThan(0)
+    expect(new Set(sources.map((entry) => entry.source)).size, 'no source may be listed twice').toBe(sources.length)
+
+    const driverFixtures = readDataTable(driver, 'SMOKE_FIXTURES') as {
+      key: string
+      path: string
+      tabKind?: string
+    }[]
+    const byKey = new Map(driverFixtures.map((entry) => [entry.key, entry]))
+
+    for (const entry of sources) {
+      const stem = entry.source.slice(entry.source.lastIndexOf('/') + 1).replace(/\.xlsx$/u, '')
+      const destination = `smoke-fixtures/task11-${stem}.xlsx`
+
+      expect(existsSync(join(repoRoot, entry.source)), `${entry.source} is not committed`).toBe(true)
+      expect(bootstrap, `the bootstrap must derive ${destination}`).toContain('`smoke-fixtures/task11-${stem}.xlsx`')
+
+      const declared = byKey.get(entry.key)
+      expect(declared, `the driver declares no ${entry.key} fixture`).toBeDefined()
+      expect(declared?.path, `the driver must open the file the bootstrap copies`).toBe(destination)
+      expect(declared?.tabKind).toBe('text')
+    }
+
+    for (const name of [
+      'simple',
+      'formula-values',
+      'multi-sheet',
+      'merged-frozen',
+      'chart-image',
+      'large',
+    ]) {
+      expect(existsSync(join(repoRoot, 'tests', 'fixtures', 'xlsx', `${name}.xlsx`)), `${name}.xlsx is missing`).toBe(
+        true,
+      )
+    }
+    expect(sources.map((entry) => entry.key).sort()).toEqual([
+      'xlsx-chart-image',
+      'xlsx-formula-values',
+      'xlsx-large',
+      'xlsx-merged-frozen',
+      'xlsx-multi-sheet',
+      'xlsx-simple',
+    ])
+  })
+
   it('keeps the smoke out of the shipping bundle and out of the published file list', () => {
     const manifest = JSON.parse(read('package.json')) as { files: string[] }
     for (const marker of SMOKE_MARKERS) {

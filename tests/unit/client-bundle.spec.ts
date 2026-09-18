@@ -82,6 +82,8 @@ function evaluateAsClassicScript(source: string): readonly LoaderCall[] {
   runInNewContext(source, {
     window,
     self: window,
+    clearTimeout: globalThis.clearTimeout,
+    setTimeout: globalThis.setTimeout,
     EventTarget: globalThis.EventTarget,
     TransformStream: globalThis.TransformStream,
     ReadableStream: globalThis.ReadableStream,
