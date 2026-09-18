@@ -679,11 +679,30 @@ Lifecycle:
 - session.dispose removes active abort ownership
 - later signal abort after dispose has no renderer side effect
 
+- Task 11 — `dc266a6620ccc8889dd69377dd4424761a989358` — PASS
+
+XLSX:
+- read-only local workbook renderer
+- semantic cell-range selection
+- displayed/calculated values
+- 200-cell limit
+- sheet + A1 provenance
+- local Duke WASM
+- worker-backed parsing
+- OOXML metadata + actual extraction gates
+- real DSH Ask verified
+
 Next:
-Task 11 — XLSX read-only workbook renderer and semantic cell-range Ask
+Task 12 — Unified registration, locale, cleanup and renderer fallback
 
 ## Current gate
 
+- Task 11 real DSH XLSX renderer smoke (Playwright, live instance): PASS (9 cases) — simple semantic range Ask, formula display values, multi-sheet navigation and stale clearing, read-only mutation protection, merged & frozen panes, chart & embedded image without remote requests, large 2000-row worker-backed workbook, resource switch cleanup, local Duke WASM asset with 0 CDN requests
+- Task 11 cell range provenance unit suite: PASS (6 unit cases)
+- Task 11 XLSX selection bridge client suite: PASS (5 client cases)
+- Task 11 XLSX selection adapter client suite: PASS (9 client cases)
+- Task 11 XLSX renderer & displayed values client suite: PASS (3 client cases)
+- Task 11 XLSX bundling integrity unit suite: PASS (4 unit cases)
 - Task 10S PPTX rendering engine client suite: PASS (12 client cases)
 - Task 10R PPTX relationship security client suite: PASS (18 client cases)
 - Task 10S real DSH PPTX renderer smoke (Playwright, live instance): PASS (10 cases) — text two slides Ask, cross-slide Ask, Unicode CJK Ask, table & embedded PNG image without remote requests, chart rendering output, large 120-slide windowed virtualization and stale selection cleanup on scroll, strict viewport resize current-generation revalidation, external media fail-closed security rejection, dangerous javascript hyperlink blocking, rapid switch/close during in-flight render without error or leakage
