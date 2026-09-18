@@ -31,7 +31,7 @@ import {
 } from './identity.js'
 import { assertSafeXlsxRelationships } from './security.js'
 import type { XlsxSelectionBridge, XlsxSelectionOwner } from './selection-bridge.js'
-import { ensureXlsxWasmInitialized, XlsxWasmSourceUnavailableError } from './wasm.js'
+import { ensureXlsxWasmInitialized, XlsxWasmIntegrityError, XlsxWasmSourceUnavailableError } from './wasm.js'
 import { XlsxSheetTabs } from './XlsxSheetTabs.js'
 
 /** Maximum supported XLSX file size (25 MiB limit). */
@@ -42,6 +42,24 @@ const FAILED_TEXT = '无法显示电子表格'
 const TOO_LARGE_TEXT = '文件超出支持的大小限制（最大 25 MB）'
 const NO_BYTES_TEXT = 'XLSX 预览需要完整文件内容。'
 const WASM_UNAVAILABLE_TEXT = '表格解析引擎在当前架构下无法加载，暂不支持显示。'
+const WASM_INTEGRITY_TEXT = '表格解析引擎完整性校验失败，无法显示。'
+
+/**
+ * The copy one pipeline failure is reported with.
+ *
+ * The two engine failures are named separately because they are different
+ * findings: `unavailable` is the architecture having no source at all, and
+ * `integrity` is the embedded payload not reproducing the reviewed binary. Both
+ * fail closed, and neither is reported as a workbook that simply failed to open.
+ *
+ * @param error - whatever the pipeline threw.
+ * @returns the message to show.
+ */
+function failureMessage(error: unknown): string {
+  if (error instanceof XlsxWasmSourceUnavailableError) return WASM_UNAVAILABLE_TEXT
+  if (error instanceof XlsxWasmIntegrityError) return WASM_INTEGRITY_TEXT
+  return FAILED_TEXT
+}
 
 export interface XlsxBodyProps extends DocumentPreviewProps {
   readonly bridge: XlsxSelectionBridge
@@ -251,11 +269,15 @@ export function XlsxBody(props: XlsxBodyProps): JSX.Element {
         await assertSafeXlsxRelationships(validated, signal)
         if (signal.aborted || cancelled) return
 
-        // Refuses when no client-owned engine binary has been installed, rather
-        // than reaching for a host URL or a remote fallback. It runs before the
-        // viewer is mounted so a blocked runtime is reported as a failure
-        // instead of a workbook that never finishes opening.
-        ensureXlsxWasmInitialized()
+        // The engine is installed here, after every security gate has accepted
+        // the archive and before the third-party viewer is mounted. It is a
+        // session-level initialization — the embedded payload is decoded,
+        // inflated and SHA-256 verified once, reused by every later workbook —
+        // and it is awaited under the same signal, so a released tab stops
+        // waiting immediately without cancelling work the session still needs.
+        // A payload that does not reproduce the exact reviewed binary throws
+        // rather than reaching for a URL, a host route or a CDN.
+        await ensureXlsxWasmInitialized(signal)
         if (signal.aborted || cancelled) return
 
         if (!cancelled) {
@@ -263,10 +285,7 @@ export function XlsxBody(props: XlsxBodyProps): JSX.Element {
         }
       } catch (error: unknown) {
         if (!cancelled) {
-          setLoadState({
-            kind: 'failed',
-            message: error instanceof XlsxWasmSourceUnavailableError ? WASM_UNAVAILABLE_TEXT : FAILED_TEXT,
-          })
+          setLoadState({ kind: 'failed', message: failureMessage(error) })
         }
       }
     }

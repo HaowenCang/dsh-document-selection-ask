@@ -1,9 +1,24 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 
 import { defineConfig } from 'tsdown'
 import type { Plugin } from 'rolldown'
+
+/**
+ * The XLSX runtime assets are built by `scripts/xlsx-runtime-assets.ts`.
+ *
+ * The specifier carries the `.ts` extension because tsdown loads this config by
+ * transforming it and then importing the result natively, which does not rewrite
+ * a relative specifier — `.js`, extensionless and `.mjs` all fail to resolve
+ * here. Node's own type stripping reads the `.ts` file, and its `erasableSyntaxOnly`
+ * constraint is already enforced by this project's TypeScript configuration.
+ */
+import {
+  XLSX_WORKER_CONSTRUCTION,
+  XLSX_WORKER_REPLACEMENT,
+  createXlsxRuntimeAssets,
+} from './scripts/xlsx-runtime-assets.ts'
 
 /**
  * The DSH web boot loads an external client plugin as one classic-script
@@ -30,20 +45,54 @@ const ASSETS_RESOLVED_ID = '\0dsa:pdfjs-assets'
 /** The installed PDF.js package directory, resolved from this config's own path. */
 const PDFJS_DIR = join(import.meta.dirname, 'node_modules', 'pdfjs-dist')
 
-/** React-xlsx package directory, for resolving the module the client build compiles. */
+/** React-xlsx package directory, for resolving the modules the client build compiles. */
 const req = createRequire(import.meta.url)
-const REACT_XLSX_DIR = dirname(req.resolve('@extend-ai/react-xlsx/package.json'))
 
-/** Resolve duke_sheets_wasm.js source for inlining */
-const reqRx = createRequire(join(REACT_XLSX_DIR, 'package.json'))
-const DUKE_JS_PATH = reqRx.resolve('@dukelib/sheets-wasm')
-const rawDukeJs = readFileSync(DUKE_JS_PATH, 'utf8')
-const inlinedDukeJs = rawDukeJs
-  .replace(/export class/g, 'class')
-  .replace(/export function/g, 'function')
-  .replace(/export \{[^}]+\};?/g, '')
-  .replace(/export default __wbg_init;?/g, '')
-  .replace(/import\.meta\.url/g, '""')
+/**
+ * The XLSX runtime's two embedded assets, built and verified once per build.
+ *
+ * `createXlsxRuntimeAssets` reads the exact installed engine binary, refuses the
+ * build unless its SHA-256 is the reviewed one, compresses it deterministically,
+ * and synthesizes a self-contained worker module with no import of any kind.
+ * Nothing here writes a file: the engine reaches the browser as a base64 string
+ * inside `lib/client.js` and the worker as a `Blob` over a string inside the same
+ * file, because DSH serves an external client plugin as exactly one script.
+ */
+const xlsxRuntime = createXlsxRuntimeAssets()
+
+/** The virtual module the XLSX runtime reads its embedded payload through. */
+const XLSX_WASM_VIRTUAL_ID = 'virtual:dsa-xlsx-wasm-gzip'
+const XLSX_WASM_RESOLVED_ID = '\0dsa:xlsx-wasm-gzip'
+
+/**
+ * Publish the verified engine payload as a virtual module.
+ *
+ * The three exports are the payload and the two values the runtime checks it
+ * against. They are build-time constants of a real installed dependency, so
+ * neither the repository nor the package carries a second copy of the binary.
+ *
+ * @returns the plugin.
+ */
+function xlsxWasmPayloadPlugin(): Plugin {
+  return {
+    name: 'dsa-xlsx-wasm-payload',
+    resolveId(source: string) {
+      if (source === XLSX_WASM_VIRTUAL_ID) return XLSX_WASM_RESOLVED_ID
+      return null
+    },
+    load(id: string) {
+      if (id !== XLSX_WASM_RESOLVED_ID) return null
+      return [
+        `export const XLSX_WASM_GZIP_BASE64 = ${JSON.stringify(xlsxRuntime.gzipBase64)};`,
+        `export const XLSX_WASM_RAW_BYTES = ${xlsxRuntime.rawBytes};`,
+        `export const XLSX_WASM_SHA256 = ${JSON.stringify(xlsxRuntime.sha256)};`,
+        `export const XLSX_WASM_GZIP_BYTES = ${xlsxRuntime.gzipBytes};`,
+        `export const XLSX_WASM_PACKAGE_VERSION = ${JSON.stringify(xlsxRuntime.packageVersion)};`,
+        '',
+      ].join('\n')
+    },
+  }
+}
 
 /** The resource families PDF.js asks its `BinaryDataFactory` for. */
 const ASSET_FAMILIES = {
@@ -158,29 +207,24 @@ function reactVirtualTransformPlugin(): Plugin {
 /**
  * The exact call `@extend-ai/react-xlsx` constructs its worker with.
  *
- * Stated as one literal rather than a pattern so the rewrite below can assert
- * that it matched exactly once. A regex that silently matched nothing would let
- * the build succeed while the bundle still carried the library's own
- * `new URL("./xlsx-worker.js", import.meta.url)`, which rolldown emits for a
- * CommonJS target as `require("url").pathToFileURL(__filename).href` — a
- * reference that is not resolvable in the browser and that names an asset this
- * package does not ship.
+ * Imported from `scripts/xlsx-runtime-assets.ts` rather than restated here, so
+ * the literal the rewrite matches and the literal the bundle spec asserts are the
+ * same one. The rewrite is asserted to match exactly once: a regex that silently
+ * matched nothing would let the build succeed while the bundle still carried the
+ * library's own `new URL("./xlsx-worker.js", import.meta.url)`, which rolldown
+ * emits for a CommonJS target as `require("url").pathToFileURL(__filename).href`
+ * — a reference that is not resolvable in the browser and that names an asset
+ * this package does not ship.
  */
-const XLSX_WORKER_CONSTRUCTION =
-  'new Worker(new URL("./xlsx-worker.js", import.meta.url), { type: "module" })'
 
 /**
  * The worker construction the client bundle is built with instead.
  *
- * The identifier is defined in the banner below and refuses to produce a URL:
- * the library's worker is a separate script file, and DSH offers no public
- * client-only way for an external plugin to deliver one (see
- * `src/client/renderers/xlsx/wasm.ts`). Failing closed at this seam keeps the
- * bundle free of any reference to a host route, a CDN or a document-relative
- * path, and it is the single place a permitted delivery mechanism would plug
- * into.
+ * The identifier is defined in the banner below. It builds a `Worker` from a
+ * `Blob` over the embedded worker source and releases the object URL in the same
+ * statement, so the plugin owns exactly one object URL and revokes it before the
+ * worker's first message is handled.
  */
-const XLSX_WORKER_REPLACEMENT = 'new Worker(__dsa_xlsx_worker_source_url__(), { type: "module" })'
 
 /** The dynamic import the library loads its engine module through. */
 const XLSX_DUKE_DYNAMIC_IMPORT = 'import("@dukelib/sheets-wasm")'
@@ -255,6 +299,51 @@ function xlsxClientRuntimePlugin(): Plugin {
   }
 }
 
+/**
+ * The bundle's opening envelope, built as a list rather than a template literal.
+ *
+ * It carries three things the module graph cannot supply: the classic-script
+ * loader call DSH's web boot expects, the Duke engine's main-thread module — which
+ * the rewrite above routes `import("@dukelib/sheets-wasm")` to, because a dynamic
+ * import surviving into a CommonJS bundle would emit a second chunk — and the
+ * self-contained worker source with the one helper that turns it into a `Worker`.
+ *
+ * Concatenation rather than a template literal is not style: the worker source is
+ * 390 kB of JavaScript that contains backticks and `${` sequences of its own, and
+ * a template literal would have to escape them.
+ */
+const BANNER = [
+  'window.__ModuleLoader__.load({',
+  `\tid: ${JSON.stringify(PLUGIN_ID)},`,
+  '\tfactory: (require) => {',
+  '\t\tvar module = { exports: {} };',
+  '\t\tvar exports = module.exports;',
+  'var __dukelib_sheets_wasm_module__ = null;',
+  'function __dukelib_sheets_wasm_promise__() {',
+  '  if (!__dukelib_sheets_wasm_module__) {',
+  '    var exports = {};',
+  xlsxRuntime.dukeGlue,
+  '    __dukelib_sheets_wasm_module__ = { CellValue, Workbook, Worksheet, default: __wbg_init, initSync };',
+  '  }',
+  '  return Promise.resolve(__dukelib_sheets_wasm_module__);',
+  '}',
+  '// The library worker, as one module with no import of any kind. DSH serves an',
+  '// external client plugin as exactly one script, so a worker it starts has to',
+  '// come from bytes this bundle already holds.',
+  `var __dsa_xlsx_worker_source__ = ${JSON.stringify(xlsxRuntime.workerSource)};`,
+  'function __dsa_xlsx_create_worker__() {',
+  "  var url = URL.createObjectURL(new Blob([__dsa_xlsx_worker_source__], { type: 'text/javascript' }));",
+  '  try {',
+  "    return new Worker(url, { type: 'module' });",
+  '  } finally {',
+  '    // The URL is released as soon as the constructor has started the fetch:',
+  '    // the library owns the Worker from here, terminates it on dispose, and',
+  '    // offers no seam this plugin could revoke the URL through later.',
+  '    URL.revokeObjectURL(url);',
+  '  }',
+  '}',
+].join('\n')
+
 export default defineConfig([
   {
     entry: { index: 'src/index.ts' },
@@ -279,6 +368,7 @@ export default defineConfig([
       pptxCleanupPlugin(),
       fflateBrowserPlugin(),
       reactVirtualTransformPlugin(),
+      xlsxWasmPayloadPlugin(),
       xlsxClientRuntimePlugin(),
     ],
     define: {
@@ -306,7 +396,7 @@ export default defineConfig([
       ],
       onlyBundle: false,
     },
-    banner: `window.__ModuleLoader__.load({\n\tid: ${JSON.stringify(PLUGIN_ID)},\n\tfactory: (require) => {\n\t\tvar module = { exports: {} };\n\t\tvar exports = module.exports;\nvar __dukelib_sheets_wasm_module__ = null;\nfunction __dukelib_sheets_wasm_promise__() {\n  if (!__dukelib_sheets_wasm_module__) {\n    var exports = {};\n    ${inlinedDukeJs}\n    __dukelib_sheets_wasm_module__ = { CellValue, Workbook, Worksheet, default: __wbg_init, initSync };\n  }\n  return Promise.resolve(__dukelib_sheets_wasm_module__);\n}\nfunction __dsa_xlsx_worker_source_url__() {\n  throw new Error("dsh-document-selection-ask: the XLSX worker has no client-owned source. DSH exposes no public client-only contract for delivering a second file beside lib/client.js, and this plugin does not serve it from the host. See src/client/renderers/xlsx/wasm.ts.");\n}`,
+    banner: BANNER,
     footer: `\t\treturn module.exports;\n\t}\n});`,
   },
 ])

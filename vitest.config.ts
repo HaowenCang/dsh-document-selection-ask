@@ -5,16 +5,16 @@ import { defineConfig } from 'vitest/config'
 const repoRoot = fileURLToPath(new URL('./', import.meta.url))
 
 /**
- * The two build-time virtual modules and the PDF.js stand-in, as the specs see
- * them.
+ * The build-time virtual modules and the PDF.js stand-in, as the specs see them.
  *
- * `tsdown.config.ts` produces `virtual:pdfjs-assets` and
- * `pdfjs-dist/build/pdf.worker.min.mjs?raw` by reading the installed package at
- * build time — several megabytes of text that no spec assertion is about, and
- * that Vite would otherwise transform for every client spec. The aliases below
- * substitute small, inspectable stand-ins, and the **built artifact** is what the
- * bundle spec asserts against instead
- * (`tests/unit/client-bundle.spec.ts`, `tests/unit/pdf-bundle.spec.ts`).
+ * `tsdown.config.ts` produces `virtual:pdfjs-assets`,
+ * `pdfjs-dist/build/pdf.worker.min.mjs?raw` and `virtual:dsa-xlsx-wasm-gzip` by
+ * reading the installed packages at build time — several megabytes of text that
+ * no spec assertion is about, and that Vite would otherwise transform for every
+ * client spec. The aliases below substitute small, inspectable stand-ins, and the
+ * **built artifact** is what the bundle specs assert against instead
+ * (`tests/unit/client-bundle.spec.ts`, `tests/unit/pdf-bundle.spec.ts`,
+ * `tests/unit/xlsx-bundle.spec.ts`).
  *
  * `pdfjs-dist` itself is aliased for the same reason plus one more: the PDF.js
  * the specs must drive is a controllable one, because the properties under test
@@ -30,6 +30,10 @@ export default defineConfig({
       {
         find: 'pdfjs-dist/build/pdf.worker.min.mjs?raw',
         replacement: `${repoRoot}tests/client/helpers/pdf-worker-source.ts`,
+      },
+      {
+        find: 'virtual:dsa-xlsx-wasm-gzip',
+        replacement: `${repoRoot}tests/client/helpers/xlsx-wasm-payload.ts`,
       },
       { find: /^pdfjs-dist$/, replacement: `${repoRoot}tests/client/helpers/pdfjs-mock.ts` },
     ],

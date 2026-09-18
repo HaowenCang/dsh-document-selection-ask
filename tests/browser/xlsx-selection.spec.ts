@@ -20,14 +20,20 @@
  * contains `chart1.xml`" is not evidence that anything rendered it. The two are
  * asserted separately, from surfaces the viewer actually painted.
  *
- * ## Blocked state
+ * ## Where the engine comes from
  *
- * The first case states the architecture's current, measured state: DSH exposes
- * no public client-only contract by which this plugin can deliver the Duke engine
- * binary, so no workbook reaches a viewer and every later case fails at the
- * readiness gate. That case is not a placeholder — it is the reproduced evidence
- * for the blocker, and it is what makes the failures below attributable to the
- * delivery contract rather than to the selection code under test.
+ * The first case states the runtime's architecture from a live instance: the Duke
+ * engine is carried **inside** `lib/client.js` as a deterministic gzip of the
+ * exact installed binary, inflated and SHA-256 verified on first use, and the
+ * library's worker is started from a `Blob` over a source the same bundle holds.
+ * Nothing is fetched to make that work — no host route, no CDN, no sibling asset —
+ * which is why every case below records the page's requests and workers and
+ * asserts that the parser-asset count is zero.
+ *
+ * The same case audits the one object URL this plugin creates. `URL.createObjectURL`
+ * and `URL.revokeObjectURL` are instrumented before the application boots, so
+ * "the worker's blob URL was released" is read from the platform rather than
+ * inferred from the code that was supposed to release it.
  */
 
 import { basename } from 'node:path'
@@ -73,8 +79,60 @@ const PREVIEW_IDENTITY_ATTRIBUTE = 'data-document-preview'
 
 const QUESTION_SUFFIX = '\u8bf7\u9488\u5bf9\u4ee5\u4e0a\u9009\u4e2d\u5185\u5bb9\u56de\u7b54\uff1a'
 
-/** The copy the renderer shows when the engine binary cannot be delivered. */
-const WASM_BLOCKED_TEXT = '无法加载'
+/** The object-URL activity one page recorded. */
+interface BlobUrlAudit {
+  readonly created: readonly string[]
+  readonly revoked: readonly string[]
+}
+
+/** The key the audit is published under in the page. */
+const BLOB_AUDIT_KEY = '__dsaXlsxBlobAudit'
+
+/**
+ * Instrument the page's object-URL API before the application boots.
+ *
+ * The audit is installed through `addInitScript`, so it wraps the platform
+ * functions before any application code can capture them, and it survives every
+ * navigation in the page. It records URLs, not blobs: what the worker case needs
+ * to know is whether the exact URL the browser started the worker from was
+ * released.
+ *
+ * @param page - the browser page.
+ */
+async function installBlobUrlAudit(page: Page): Promise<void> {
+  await page.addInitScript((key: string) => {
+    const created: string[] = []
+    const revoked: string[] = []
+    const createObjectURL = URL.createObjectURL.bind(URL)
+    const revokeObjectURL = URL.revokeObjectURL.bind(URL)
+    URL.createObjectURL = (object: Blob | MediaSource): string => {
+      const url = createObjectURL(object)
+      created.push(url)
+      return url
+    }
+    URL.revokeObjectURL = (url: string): void => {
+      revoked.push(url)
+      revokeObjectURL(url)
+    }
+    ;(globalThis as unknown as Record<string, unknown>)[key] = { created, revoked }
+  }, BLOB_AUDIT_KEY)
+}
+
+/**
+ * Read the object-URL activity the page recorded.
+ * @param page - the browser page.
+ * @returns the created and revoked URLs.
+ */
+async function readBlobUrlAudit(page: Page): Promise<BlobUrlAudit> {
+  return page.evaluate((key: string): BlobUrlAudit => {
+    const audit = (globalThis as unknown as Record<string, unknown>)[key] as
+      | { created: string[]; revoked: string[] }
+      | undefined
+    return audit === undefined
+      ? { created: [], revoked: [] }
+      : { created: [...audit.created], revoked: [...audit.revoked] }
+  }, BLOB_AUDIT_KEY)
+}
 
 /**
  * Read the composer's rendered draft text.
@@ -193,6 +251,14 @@ async function expectWorkbookReady(page: Page, timeout = 35_000): Promise<Locato
  * @param content - the workbook content surface.
  * @param from - start offset, in CSS pixels, from the grid's top-left corner.
  * @param to - end offset, in CSS pixels, from the grid's top-left corner.
+ *
+ * The offsets in the cases below are **measured against this runtime**, not
+ * chosen: the grid's published box includes the 40 px row header and the 24 px
+ * column header, column A spans x ≈ 45–95 and row 1 spans y ≈ 24–44 at the
+ * 1280×720 viewport the suite runs at. A gesture that landed elsewhere would
+ * fail rather than pass, because the range it produced is read back and compared
+ * exactly — which is how these offsets were calibrated after the first live run
+ * put a 45 px start on row 2.
  */
 async function dragRange(
   page: Page,
@@ -216,21 +282,26 @@ async function dragRange(
 /**
  * The painted surfaces the viewer produced inside the workbook.
  *
- * The viewer draws into canvases, so a surface count is the only structural fact
- * available; whether a surface was actually painted is asked separately, from the
- * canvas's own pixels rather than from the fixture's XML.
+ * The viewer draws the grid into canvases and the drawing layer as an inline
+ * SVG, so the two halves of the drawings workbook are read from two different
+ * kinds of evidence and neither is inferred from the fixture's XML.
  *
  * @param content - the workbook content surface.
- * @returns element counts and how many canvases hold more than one colour.
+ * @returns canvas and image-element counts, how many canvases hold more than one
+ *   colour, the drawing overlay's structure, and how many canvas pixels carry the
+ *   embedded picture's own solid colour.
  */
 async function readPaintedSurfaces(content: Locator): Promise<{
   canvases: number
   images: number
   paintedCanvases: number
+  picturePixels: number
+  drawings: { tag: string; label: string; width: number; height: number; fills: number; lines: number }[]
 }> {
   return content.evaluate((root) => {
     const canvases = [...root.querySelectorAll('canvas')]
     let paintedCanvases = 0
+    let picturePixels = 0
     for (const canvas of canvases) {
       const context = canvas.getContext('2d')
       if (context === null || canvas.width === 0 || canvas.height === 0) continue
@@ -245,12 +316,29 @@ async function readPaintedSurfaces(content: Locator): Promise<{
         if (seen.size > 1) break
       }
       if (seen.size > 1) paintedCanvases += 1
+
+      // The fixture's embedded picture is a solid red 64x64 PNG, so its own
+      // colour is the evidence that it was drawn. Nothing else in either
+      // workbook uses it, and the control workbook is asserted to contain none.
+      const full = context.getImageData(0, 0, canvas.width, canvas.height).data
+      for (let index = 0; index + 3 < full.length; index += 4) {
+        if (full[index]! > 190 && full[index + 1]! < 70 && full[index + 2]! < 70) picturePixels += 1
+      }
     }
-    return {
-      canvases: canvases.length,
-      images: root.querySelectorAll('img').length,
-      paintedCanvases,
-    }
+
+    const drawings = [...root.querySelectorAll('svg')].map((svg) => {
+      const box = svg.getBoundingClientRect()
+      return {
+        tag: 'svg',
+        label: svg.getAttribute('aria-label') ?? '',
+        width: Math.round(box.width),
+        height: Math.round(box.height),
+        fills: svg.querySelectorAll('rect').length,
+        lines: svg.querySelectorAll('line').length,
+      }
+    })
+
+    return { canvases: canvases.length, images: root.querySelectorAll('img').length, paintedCanvases, picturePixels, drawings }
   })
 }
 
@@ -298,26 +386,57 @@ function watchRuntimeAssets(page: Page): {
 }
 
 test.describe('real DSH XLSX preview & selection smoke', () => {
-  test('0. blocked engine-binary state: no workbook reaches a viewer and no host asset is requested', async ({ page }) => {
+  test('0. client-inline runtime boot: no asset request, no remote request, a real Blob Worker parses the workbook', async ({ page }) => {
     const runtime = watchRuntimeAssets(page)
+    await installBlobUrlAudit(page)
 
     await openShell(page)
     await openXlsxFixture(page, 'xlsx-simple')
 
-    // The renderer reports the blocked runtime rather than mounting a viewer, so
-    // the absence of the selectable surface is the evidence, not an accident of
-    // timing: the terminal state is reached as soon as the security gates pass.
-    await expect(page.locator(XLSX_ROOT).first()).toContainText(WASM_BLOCKED_TEXT, {
-      timeout: 30_000,
-    })
-    await expect(page.locator(XLSX_CONTENT)).toHaveCount(0)
-    await expect(page.locator(XLSX_ROOT).first()).not.toHaveAttribute(XLSX_SELECTION)
-
-    // Nothing was fetched to try to make it work: the host routes are gone and
-    // no remote fallback was attempted.
+    // The engine is inflated from the bundle and the worker from a Blob over the
+    // same bundle, so nothing was fetched to make either work. These two lists are
+    // the whole delivery contract: a request for any of those paths would be the
+    // failure, not the mechanism.
     expect(runtime.parserAssetRequests()).toEqual([])
     expect(runtime.remoteRequests()).toEqual([])
-    expect(runtime.workers).toEqual([])
+
+    // The parse is worker-backed, and the worker runs from an address the page
+    // owns. A renderer that fell back to the main thread would still produce a
+    // grid, so the worker is asserted in its own right, before readiness.
+    await expect
+      .poll(() => runtime.workers.length, {
+        timeout: 45_000,
+        message: 'the workbook must be parsed in a Worker',
+      })
+      .toBeGreaterThanOrEqual(1)
+
+    const workerUrls = runtime.workers.map((worker) => worker.url())
+    for (const url of workerUrls) {
+      expect(url.startsWith('blob:'), `the worker must run from a client-owned URL, got ${url}`).toBe(
+        true,
+      )
+      expect(url.startsWith('http:') || url.startsWith('https:')).toBe(false)
+    }
+
+    const content = await expectWorkbookReady(page)
+    await dragRange(page, content, [75, 26], [180, 84])
+    await expectPublishedSelection(page, 'Sheet1!A1:C3')
+
+    // The one object URL this plugin creates was created by the platform and
+    // released again. Both halves are read from the platform's own functions, so
+    // a URL that was never released is a failing assertion rather than a comment.
+    const audit = await readBlobUrlAudit(page)
+    expect(workerUrls.length).toBeGreaterThanOrEqual(1)
+    for (const url of workerUrls) {
+      expect(audit.created, `the worker URL ${url} must have been created in this page`).toContain(
+        url,
+      )
+      expect(audit.revoked, `the worker URL ${url} must have been revoked`).toContain(url)
+    }
+    expect(audit.revoked.length).toBeGreaterThanOrEqual(workerUrls.length)
+
+    expect(runtime.parserAssetRequests()).toEqual([])
+    expect(runtime.remoteRequests()).toEqual([])
   })
 
   test('1. simple semantic range Ask: exact provenance, exact published range, preserved draft', async ({ page }) => {
@@ -332,7 +451,7 @@ test.describe('real DSH XLSX preview & selection smoke', () => {
     await openXlsxFixture(page, 'xlsx-simple')
     const content = await expectWorkbookReady(page)
 
-    await dragRange(page, content, [75, 45], [180, 85])
+    await dragRange(page, content, [75, 26], [180, 84])
 
     // The range is confirmed from the renderer's own published state before Ask
     // is pressed, so the provenance below is a statement about the range the
@@ -382,7 +501,7 @@ test.describe('real DSH XLSX preview & selection smoke', () => {
     await openXlsxFixture(page, 'xlsx-multi-sheet')
     const content = await expectWorkbookReady(page)
 
-    await dragRange(page, content, [75, 45], [75, 45])
+    await dragRange(page, content, [75, 30], [75, 30])
     await expectPublishedSelection(page, 'Summary!A1')
 
     const askButton = page.locator(ASK_BUTTON).first()
@@ -414,7 +533,7 @@ test.describe('real DSH XLSX preview & selection smoke', () => {
       await expect(askButton).toHaveCount(0)
     }
 
-    await dragRange(page, content, [85, 65], [85, 65])
+    await dragRange(page, content, [85, 30], [85, 30])
     await expectPublishedSelection(page, 'Data 2026!A1')
 
     await expect(askButton).toBeVisible({ timeout: 15_000 })
@@ -517,19 +636,43 @@ test.describe('real DSH XLSX preview & selection smoke', () => {
     await dragRange(page, content, [75, 40], [75, 40])
     await expectPublishedSelection(page, 'Sheet1!A1')
 
-    // The workbook's own content proves nothing about its rendering, so the
-    // drawing surfaces are read from the document. The grid is painted into one
-    // canvas; a workbook carrying a drawing part has to paint at least one more
-    // surface for the image and the chart.
+    // The workbook's own content proves nothing about its rendering, so each of
+    // the two drawing objects is read from what the renderer published for it,
+    // and the two are asserted separately. The chart is an inline SVG the viewer
+    // labels; the picture is painted into the sheet canvas in its own colour.
+    // Neither assertion can be satisfied by the other object, and neither is a
+    // filename or an XML part.
     await expect
-      .poll(async () => (await readPaintedSurfaces(content)).paintedCanvases, {
+      .poll(async () => (await readPaintedSurfaces(content)).drawings.length, {
         timeout: 20_000,
-        message: 'the chart-image workbook must paint a drawing surface beside the grid',
+        message: 'the chart-image workbook must publish a drawing overlay',
       })
-      .toBeGreaterThanOrEqual(2)
+      .toBeGreaterThanOrEqual(1)
 
     const surfaces = await readPaintedSurfaces(content)
-    expect(surfaces.canvases).toBeGreaterThanOrEqual(2)
+
+    const charts = surfaces.drawings.filter(
+      (drawing) => drawing.label.startsWith('Chart') && drawing.width > 0 && drawing.height > 0,
+    )
+    expect(charts.length, 'the workbook chart must be rendered as a labelled drawing').toBeGreaterThanOrEqual(1)
+    for (const chart of charts) {
+      // A chart, not an empty frame: a plot area with more than one fill and a
+      // set of gridlines.
+      expect(chart.fills).toBeGreaterThanOrEqual(2)
+      expect(chart.lines).toBeGreaterThanOrEqual(4)
+    }
+
+    // The embedded PNG is a solid red 64x64 image. It is baked into the sheet
+    // canvas, so its own colour is the evidence that it was drawn; the control
+    // case below establishes that no other workbook paints it.
+    await expect
+      .poll(async () => (await readPaintedSurfaces(content)).picturePixels, {
+        timeout: 20_000,
+        message:
+          'the workbook’s embedded picture must be painted into the sheet canvas; ' +
+          'a workbook whose picture is absent from the drawing layer renders only the grid',
+      })
+      .toBeGreaterThan(0)
 
     const askButton = page.locator(ASK_BUTTON).first()
     await expect(askButton).toBeVisible({ timeout: 15_000 })
@@ -541,6 +684,22 @@ test.describe('real DSH XLSX preview & selection smoke', () => {
 
     expect(runtime.parserAssetRequests()).toEqual([])
     expect(runtime.remoteRequests()).toEqual([])
+  })
+
+  test('6a. control: the plain workbook paints no picture colour at all', async ({ page }) => {
+    // The picture assertion above is only evidence if nothing else can satisfy
+    // it. This case is the control: the workbook without a drawing part paints
+    // none of the picture's colour, and none of the drawing overlay either.
+    await openShell(page)
+    await openXlsxFixture(page, 'xlsx-simple')
+    const content = await expectWorkbookReady(page)
+
+    await dragRange(page, content, [75, 30], [75, 30])
+    await expectPublishedSelection(page, 'Sheet1!A1')
+
+    const surfaces = await readPaintedSurfaces(content)
+    expect(surfaces.picturePixels).toBe(0)
+    expect(surfaces.drawings).toEqual([])
   })
 
   test('7. large workbook: a real client-owned Worker parses it and selection works afterwards', async ({ page }) => {
@@ -587,7 +746,7 @@ test.describe('real DSH XLSX preview & selection smoke', () => {
     await openXlsxFixture(page, 'xlsx-simple')
     const content = await expectWorkbookReady(page)
 
-    await dragRange(page, content, [75, 45], [75, 45])
+    await dragRange(page, content, [75, 30], [75, 30])
     await expectPublishedSelection(page, 'Sheet1!A1')
 
     const askButton = page.locator(ASK_BUTTON).first()
@@ -626,5 +785,49 @@ test.describe('real DSH XLSX preview & selection smoke', () => {
       return response.status
     }, BASE_URL)
     expect(probe).toBe(404)
+  })
+
+  test('10. rapid close: switching away mid-parse leaves no late viewer, no stale Ask and no leaked object URL', async ({ page }) => {
+    const runtime = watchRuntimeAssets(page)
+    await installBlobUrlAudit(page)
+
+    const pageErrors: string[] = []
+    page.on('pageerror', (error: Error) => {
+      pageErrors.push(error.message)
+    })
+
+    await openShell(page)
+
+    // The large workbook is opened and left immediately: the switch happens while
+    // the worker is still parsing, which is the window the cleanup has to survive.
+    await page.locator('[data-dsa-smoke-open="xlsx-large"]').click()
+    await page.locator('[data-dsa-smoke-open="docx-paragraphs"]').click()
+
+    const content = page.locator(XLSX_CONTENT)
+    const askButton = page.locator(ASK_BUTTON)
+
+    await expect(content).toHaveCount(0, { timeout: 20_000 })
+    await expect(askButton).toHaveCount(0)
+
+    // "Nothing arrives later" is the property, and a bounded wait is the only way
+    // to observe it: a parse that finished after the switch would mount a viewer
+    // or republish a selection inside this window, and both are re-asserted after
+    // it rather than only before.
+    await page.waitForTimeout(5_000)
+
+    await expect(content).toHaveCount(0)
+    await expect(askButton).toHaveCount(0)
+    expect(await page.locator(XLSX_ROOT).count()).toBe(0)
+    expect(pageErrors, 'a resource released mid-parse must raise no page error').toEqual([])
+
+    // The released worker's object URL is released too: the plugin owns exactly
+    // one, and the platform is what says whether it came back.
+    const audit = await readBlobUrlAudit(page)
+    for (const url of audit.created) {
+      expect(audit.revoked, `the object URL ${url} was never revoked`).toContain(url)
+    }
+
+    expect(runtime.parserAssetRequests()).toEqual([])
+    expect(runtime.remoteRequests()).toEqual([])
   })
 })

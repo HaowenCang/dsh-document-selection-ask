@@ -10,14 +10,14 @@
  * and this suite is what proves the workbook fixtures carry the formulas,
  * currencies, percentages and dates the browser smoke asserts on.
  *
- * The **security pipeline** layer drives `XlsxBody` with its four gates replaced
- * by controllable doubles. The properties under test are orderings and
- * identities, which no assertion on a rendered result can distinguish: a
- * fire-and-forget preflight and an awaited one both end with a rendered grid,
- * and a viewer handed a second copy of the host's bytes and one handed the
- * validated copy both display the same workbook. The suite therefore observes
- * the pipeline's own sequence — which gate ran, in what order, on which buffer,
- * under which signal — rather than its output.
+ * The **security pipeline** layer drives `XlsxBody` with its three archive gates
+ * and its engine initialization replaced by controllable doubles. The properties
+ * under test are orderings and identities, which no assertion on a rendered result
+ * can distinguish: a fire-and-forget preflight and an awaited one both end with a
+ * rendered grid, and a viewer handed a second copy of the host's bytes and one
+ * handed the validated copy both display the same workbook. The suite therefore
+ * observes the pipeline's own sequence — which step ran, in what order, on which
+ * buffer, under which signal — rather than its output.
  */
 
 import { readFileSync } from 'node:fs'
@@ -48,14 +48,22 @@ interface GateCall {
  */
 const pipeline = vi.hoisted(() => {
   /**
-   * The typed refusal the WASM gate raises when no client-owned engine binary
-   * exists. Declared here rather than inside the module factory so a spec can
-   * raise the same type the production code branches on.
+   * The typed refusals the engine gate raises. Declared here rather than inside
+   * the module factory so a spec can raise the same types the production code
+   * branches on.
    */
   class XlsxWasmSourceUnavailableError extends Error {
     constructor(message: string) {
       super(message)
       this.name = 'XlsxWasmSourceUnavailableError'
+    }
+  }
+
+  /** Raised when the embedded engine payload does not reproduce the reviewed binary. */
+  class XlsxWasmIntegrityError extends Error {
+    constructor(message: string) {
+      super(message)
+      this.name = 'XlsxWasmIntegrityError'
     }
   }
 
@@ -89,10 +97,11 @@ const pipeline = vi.hoisted(() => {
     calls,
     viewer,
     XlsxWasmSourceUnavailableError,
+    XlsxWasmIntegrityError,
     preflight: null as null | ((call: GateCall) => Promise<void>),
     verify: null as null | ((call: GateCall) => Promise<void>),
     relationships: null as null | ((call: GateCall) => Promise<void>),
-    wasm: null as null | (() => void),
+    wasm: null as null | ((signal?: AbortSignal) => void | Promise<void>),
     reset(): void {
       calls.preflight.length = 0
       calls.verify.length = 0
@@ -142,9 +151,12 @@ vi.mock('../../src/client/renderers/xlsx/security.js', () => ({
 
 vi.mock('../../src/client/renderers/xlsx/wasm.js', () => ({
   XlsxWasmSourceUnavailableError: pipeline.XlsxWasmSourceUnavailableError,
-  ensureXlsxWasmInitialized: () => {
+  XlsxWasmIntegrityError: pipeline.XlsxWasmIntegrityError,
+  ensureXlsxWasmInitialized: async (signal?: AbortSignal) => {
     pipeline.calls.wasmInit += 1
-    if (pipeline.wasm) pipeline.wasm()
+    pipeline.calls.log.push('wasm:start')
+    if (pipeline.wasm) await pipeline.wasm(signal)
+    pipeline.calls.log.push('wasm:end')
   },
 }))
 
@@ -521,9 +533,9 @@ describe('XlsxBody security pipeline', () => {
   })
 
   it('reports the blocked engine-binary state instead of mounting a viewer', async () => {
-    // The blocked architecture is a state the product has to be able to show,
-    // not one it may paper over: no viewer is mounted, no worker is asked for,
-    // and the message names the engine rather than the file.
+    // The architecture having no engine source at all is a state the product has
+    // to be able to show, not one it may paper over: no viewer is mounted, no
+    // worker is asked for, and the message names the engine rather than the file.
     const unhandled = watchUnhandledRejections()
     pipeline.wasm = () => {
       throw new pipeline.XlsxWasmSourceUnavailableError('no client-owned engine binary')
@@ -539,6 +551,86 @@ describe('XlsxBody security pipeline', () => {
     expect(tree.container.textContent).toContain('无法加载')
     expect(tree.container.textContent).not.toContain('无法显示电子表格')
     expect(unhandled.seen).toEqual([])
+  })
+
+  it('reports a failed engine integrity check instead of mounting a viewer', async () => {
+    // The embedded payload not reproducing the reviewed binary is the failure the
+    // client-inline architecture can actually produce, and it fails closed in the
+    // same place: the viewer is never reached, and the message names the engine
+    // rather than reporting a workbook that simply would not open.
+    const unhandled = watchUnhandledRejections()
+    pipeline.wasm = () => {
+      throw new pipeline.XlsxWasmIntegrityError('the embedded payload hashes to something else')
+    }
+
+    const tree = mountBody(new Uint8Array(SIMPLE_BYTES))
+    await settle()
+    unhandled.stop()
+
+    expect(pipeline.calls.wasmInit).toBe(1)
+    expect(pipeline.calls.viewerFiles).toHaveLength(0)
+    expect(tree.container.querySelector('[data-stub-viewer-provider]')).toBeNull()
+    expect(tree.container.textContent).toContain('完整性校验失败')
+    expect(tree.container.textContent).not.toContain('无法显示电子表格')
+    expect(unhandled.seen).toEqual([])
+  })
+
+  it('does not mount the viewer while the engine payload is still being prepared', async () => {
+    // The engine gate is awaited between the relationship scan and the mount, so a
+    // payload still inflating is a viewer that does not exist yet — not a viewer
+    // mounted against an engine that has not been installed.
+    const preflightGate = createGate()
+    const verifyGate = createGate()
+    const relationshipGate = createGate()
+    const engineGate = createGate()
+    pipeline.preflight = () => preflightGate.promise
+    pipeline.verify = () => verifyGate.promise
+    pipeline.relationships = () => relationshipGate.promise
+    pipeline.wasm = () => engineGate.promise
+
+    const tree = mountBody(new Uint8Array(SIMPLE_BYTES))
+    await settle()
+
+    preflightGate.resolve()
+    await settle()
+    verifyGate.resolve()
+    await settle()
+    relationshipGate.resolve()
+    await settle()
+
+    expect(pipeline.calls.log).toEqual([
+      'preflight:start',
+      'preflight:end',
+      'verify',
+      'relationships',
+      'wasm:start',
+    ])
+    expect(pipeline.calls.viewerFiles).toHaveLength(0)
+    expect(tree.container.querySelector('[data-stub-viewer-provider]')).toBeNull()
+
+    engineGate.resolve()
+    await settle()
+
+    expect(pipeline.calls.viewerFiles).toHaveLength(1)
+    expect(tree.container.querySelector('[data-stub-viewer]')).not.toBeNull()
+  })
+
+  it('hands the engine gate the tab signal the other gates received', async () => {
+    const preflightGate = createGate()
+    pipeline.preflight = () => preflightGate.promise
+    let engineSignal: AbortSignal | undefined
+    pipeline.wasm = (signal) => {
+      engineSignal = signal
+    }
+
+    mountBody(new Uint8Array(SIMPLE_BYTES))
+    await settle()
+    preflightGate.resolve()
+    await settle()
+
+    const preflightSignal = pipeline.calls.preflight[0]?.signal
+    expect(preflightSignal).toBeInstanceOf(AbortSignal)
+    expect(engineSignal).toBe(preflightSignal)
   })
 
   it('publishes the current semantic selection on the renderer root', async () => {

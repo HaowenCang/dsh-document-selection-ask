@@ -38,9 +38,9 @@ export const inject: readonly string[] = []
  * the browser could fetch the Duke engine binary and the library's worker
  * bundle. That was an architecture change rather than an implementation detail:
  * it made the plugin's browser runtime depend on a host service, which the
- * frozen client-only design does not permit, and it is why the XLSX client
- * runtime is now blocked pending an architecture decision instead of being
- * served from this half. Nothing host-side is reintroduced here.
+ * frozen client-only design does not permit. Task 11A carries both assets inside
+ * the single client bundle instead, so this half stays inert. Nothing host-side
+ * is reintroduced here.
  */
 export function apply(): void {
   // A host contribution is introduced only if a later version needs one.
