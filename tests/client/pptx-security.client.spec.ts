@@ -61,18 +61,32 @@ describe('assertSafePptxRelationshipXml', () => {
     expect(() => assertSafePptxRelationshipXml(xml)).not.toThrow()
   })
 
-  it('allows safe external hyperlink relationship with standard OOXML type', () => {
+  it('allows safe external hyperlink relationship with Transitional OOXML type', () => {
     const xml = makeXml(`
       <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com" TargetMode="External"/>
     `)
     expect(() => assertSafePptxRelationshipXml(xml)).not.toThrow()
   })
 
-  it('allows safe external hyperlink relationship with /hyperlink suffix', () => {
+  it('allows safe external hyperlink relationship with Strict OOXML type', () => {
     const xml = makeXml(`
       <Relationship Id="rId1" Type="http://purl.oclc.org/ooxml/officeDocument/relationships/hyperlink" Target="https://example.com" TargetMode="External"/>
     `)
     expect(() => assertSafePptxRelationshipXml(xml)).not.toThrow()
+  })
+
+  it('rejects external relationship with custom /hyperlink suffix', () => {
+    const xml = makeXml(`
+      <Relationship Id="rId1" Type="https://attacker.invalid/custom/hyperlink" Target="https://example.com" TargetMode="External"/>
+    `)
+    expect(() => assertSafePptxRelationshipXml(xml)).toThrowError(PptxRelationshipSecurityError)
+  })
+
+  it('rejects external relationship with unknown OOXML-like suffix', () => {
+    const xml = makeXml(`
+      <Relationship Id="rId1" Type="http://example.invalid/officeDocument/relationships/hyperlink" Target="https://example.com" TargetMode="External"/>
+    `)
+    expect(() => assertSafePptxRelationshipXml(xml)).toThrowError(PptxRelationshipSecurityError)
   })
 
   it('rejects external image relationship', () => {

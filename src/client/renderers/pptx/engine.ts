@@ -101,6 +101,40 @@ export async function renderPptx(
   let currentGeneration = 0
   let renderChain: Promise<void> = Promise.resolve()
 
+  function invalidateActiveViewer(options?: { notifySelection?: boolean }): void {
+    if (disposed) {
+      return
+    }
+    disposed = true
+    currentGeneration += 1
+    signal.removeEventListener('abort', onAbort)
+
+    if (currentViewer) {
+      try {
+        currentViewer.destroy()
+      } catch {
+        // Safe suppression during viewer teardown
+      }
+      currentViewer = null
+    }
+
+    host.replaceChildren()
+    if (options?.notifySelection !== false) {
+      try {
+        hooks.onSelectableDomInvalidated()
+      } catch {
+        // Safe suppression
+      }
+    }
+  }
+
+  function onAbort(): void {
+    invalidateActiveViewer({ notifySelection: true })
+  }
+
+  // Bind abort listener before creating or running any viewer operations
+  signal.addEventListener('abort', onAbort, { once: true })
+
   function createViewer(width: number): PptxViewer {
     const viewer = new PptxViewer(host, {
       fitMode: 'contain',
@@ -121,7 +155,7 @@ export async function renderPptx(
   }
 
   async function renderGeneration(viewer: PptxViewer, generation: number): Promise<void> {
-    if (disposed || generation !== currentGeneration) {
+    if (disposed || signal.aborted || generation !== currentGeneration) {
       viewer.destroy()
       return
     }
@@ -135,7 +169,7 @@ export async function renderPptx(
       showSlideLabels: false,
     })
 
-    if (disposed || generation !== currentGeneration) {
+    if (disposed || signal.aborted || generation !== currentGeneration) {
       viewer.destroy()
     }
   }
@@ -147,15 +181,31 @@ export async function renderPptx(
   const viewer = createViewer(initialWidth)
   currentViewer = viewer
 
-  renderChain = renderGeneration(viewer, initialGen)
-  await renderChain
+  const abortPromise = new Promise<never>((_, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason ?? new DOMException('The operation was aborted', 'AbortError'))
+      return
+    }
+    signal.addEventListener(
+      'abort',
+      () => {
+        reject(signal.reason ?? new DOMException('The operation was aborted', 'AbortError'))
+      },
+      { once: true },
+    )
+  })
+
+  try {
+    renderChain = renderGeneration(viewer, initialGen)
+    await Promise.race([renderChain, abortPromise])
+  } catch (err) {
+    invalidateActiveViewer({ notifySelection: true })
+    signal.throwIfAborted()
+    throw err
+  }
 
   if (signal.aborted) {
-    if (currentViewer) {
-      currentViewer.destroy()
-      currentViewer = null
-    }
-    host.replaceChildren()
+    invalidateActiveViewer({ notifySelection: true })
     signal.throwIfAborted()
   }
 
@@ -165,7 +215,7 @@ export async function renderPptx(
     },
 
     async resize(width: number): Promise<void> {
-      if (disposed) {
+      if (disposed || signal.aborted) {
         return
       }
 
@@ -174,17 +224,25 @@ export async function renderPptx(
 
       // Queue serialized resize
       renderChain = renderChain.then(async () => {
-        if (disposed || gen !== currentGeneration) {
+        if (disposed || signal.aborted || gen !== currentGeneration) {
           return
         }
 
         // Destroy old viewer, remove old selectable DOM, and notify lifecycle
         if (currentViewer) {
-          currentViewer.destroy()
+          try {
+            currentViewer.destroy()
+          } catch {
+            // Ignore benign viewer cleanup errors
+          }
           currentViewer = null
         }
         host.replaceChildren()
         hooks.onSelectableDomInvalidated()
+
+        if (disposed || signal.aborted || gen !== currentGeneration) {
+          return
+        }
 
         const newViewer = createViewer(width)
         currentViewer = newViewer
@@ -195,19 +253,7 @@ export async function renderPptx(
     },
 
     dispose(): void {
-      if (disposed) {
-        return
-      }
-      disposed = true
-      currentGeneration += 1
-
-      if (currentViewer) {
-        currentViewer.destroy()
-        currentViewer = null
-      }
-
-      host.replaceChildren()
-      hooks.onSelectableDomInvalidated()
+      invalidateActiveViewer({ notifySelection: true })
     },
   }
 

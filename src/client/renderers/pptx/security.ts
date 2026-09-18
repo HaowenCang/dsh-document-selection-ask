@@ -17,9 +17,16 @@
 
 import type { PptxFiles } from '@aiden0z/pptx-renderer'
 
-/** Standard OOXML hyperlink relationship type. */
-const HYPERLINK_RELATIONSHIP_TYPE =
-  'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink'
+/**
+ * Allowed external hyperlink relationship types.
+ *
+ * Strict contract allowlist containing ONLY standard OOXML Transitional and Strict
+ * hyperlink relationship URIs. Arbitrary URIs ending in '/hyperlink' are rejected.
+ */
+const ALLOWED_EXTERNAL_HYPERLINK_RELATIONSHIP_TYPES = new Set([
+  'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink',
+  'http://purl.oclc.org/ooxml/officeDocument/relationships/hyperlink',
+])
 
 /**
  * Error thrown when an unapproved external relationship or malformed XML
@@ -44,7 +51,7 @@ export class PptxRelationshipSecurityError extends Error {
  * @returns true if explicitly recognized as a hyperlink relationship.
  */
 function isAllowedExternalRelationshipType(type: string): boolean {
-  return type === HYPERLINK_RELATIONSHIP_TYPE || type.endsWith('/hyperlink')
+  return ALLOWED_EXTERNAL_HYPERLINK_RELATIONSHIP_TYPES.has(type.trim())
 }
 
 /**

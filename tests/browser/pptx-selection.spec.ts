@@ -311,15 +311,17 @@ test.describe('real DSH PPTX preview & selection smoke', () => {
     expect(postScrollSlideCount).toBeLessThan(20)
   })
 
-  test('revalidates live selection across viewport resize', async ({ page }) => {
+  test('revalidates live selection across viewport resize and invalidates disconnected nodes', async ({
+    page,
+  }) => {
     await openShell(page)
     await openPptxFixture(page, 'pptx-text-two-slides')
 
     const content = page.locator(PPTX_CONTENT).first()
     await expect(content).toBeVisible({ timeout: 20_000 })
 
-    // Select text in slide 1
-    await page.evaluate(() => {
+    // Select text in slide 1 and retain old node references to assert generation replacement
+    const { oldText } = await page.evaluate(() => {
       const slide1 = document.querySelector('[data-dsa-pptx-slide="1"]')!
       const el = slide1.querySelector('div, span, p, text')!
       const range = document.createRange()
@@ -328,28 +330,117 @@ test.describe('real DSH PPTX preview & selection smoke', () => {
       sel.removeAllRanges()
       sel.addRange(range)
       document.dispatchEvent(new Event('selectionchange'))
+
+      ;(window as unknown as { __oldSlide: Element; __oldAnchor: Node | null }).__oldSlide = slide1
+      ;(window as unknown as { __oldSlide: Element; __oldAnchor: Node | null }).__oldAnchor = sel.anchorNode
+      return { oldText: sel.toString() }
     })
 
     const askButton = page.locator(ASK_BUTTON).first()
     await expect(askButton).toBeVisible({ timeout: 10_000 })
 
-    // Resize viewport
+    // Resize viewport by 200px to exceed threshold and trigger real rebuild
     const currentSize = page.viewportSize() ?? { width: 1280, height: 720 }
     await page.setViewportSize({ width: currentSize.width - 200, height: currentSize.height })
-    await page.waitForTimeout(1000)
 
-    // Verify selection contract: if selection collapsed, Ask must be hidden;
-    // if selection survived connected, endpoints must be inside current live slide DOM
-    const isSelectionAlive = await page.evaluate(() => {
+    // Observable generation condition: old slide node must be disconnected from document
+    await expect
+      .poll(
+        async () =>
+          page.evaluate(() => {
+            const oldSlide = (window as unknown as { __oldSlide?: Element }).__oldSlide
+            return oldSlide ? oldSlide.isConnected : false
+          }),
+        { timeout: 15_000 },
+      )
+      .toBe(false)
+
+    // New slide 1 of the new generation must be mounted
+    await expect(page.locator('[data-dsa-pptx-slide="1"]').first()).toBeVisible({ timeout: 15_000 })
+
+    // Inspect browser selection after rebuild
+    const selectionState = await page.evaluate(() => {
+      const emptyResult = (status: string) => ({
+        status,
+        text: '',
+        anchorInRoot: false,
+        focusInRoot: false,
+        hasAnchorSlide: false,
+        hasFocusSlide: false,
+        isOldAnchor: false,
+      })
+
       const sel = window.getSelection()
-      if (!sel || sel.isCollapsed || !sel.anchorNode || !sel.focusNode) return false
-      return sel.anchorNode.isConnected && sel.focusNode.isConnected
+      if (!sel) return emptyResult('none')
+      if (sel.isCollapsed) return emptyResult('collapsed')
+      const text = sel.toString().trim()
+      if (text === '') return emptyResult('empty')
+
+      const anchor = sel.anchorNode
+      const focus = sel.focusNode
+      if (!anchor || !focus || !anchor.isConnected || !focus.isConnected) {
+        return emptyResult('disconnected')
+      }
+
+      const root = document.querySelector('[data-dsa-document-kind="pptx"]')
+      if (!root) return emptyResult('no-root')
+
+      const anchorInRoot = root.contains(anchor)
+      const focusInRoot = root.contains(focus)
+
+      const anchorSlide = anchor.parentElement?.closest('[data-dsa-pptx-slide]')
+      const focusSlide = focus.parentElement?.closest('[data-dsa-pptx-slide]')
+
+      const oldAnchor = (window as unknown as { __oldAnchor?: Node | null }).__oldAnchor
+      const isOldAnchor = anchor === oldAnchor
+
+      return {
+        status: 'alive',
+        text: sel.toString(),
+        anchorInRoot,
+        focusInRoot,
+        hasAnchorSlide: anchorSlide !== null,
+        hasFocusSlide: focusSlide !== null,
+        isOldAnchor,
+      }
     })
 
-    if (!isSelectionAlive) {
-      await expect(askButton).toHaveCount(0)
+    // Strict contract: if collapsed/empty/disconnected, Ask must be hard hidden
+    if (selectionState.status !== 'alive') {
+      await expect(askButton).toHaveCount(0, { timeout: 5_000 })
+
+      // Establish new selection on current generation to prove Ask works for current generation
+      await page.evaluate(() => {
+        const newSlide1 = document.querySelector('[data-dsa-pptx-slide="1"]')!
+        const el = newSlide1.querySelector('div, span, p, text')!
+        const range = document.createRange()
+        range.selectNodeContents(el)
+        const sel = window.getSelection()!
+        sel.removeAllRanges()
+        sel.addRange(range)
+        document.dispatchEvent(new Event('selectionchange'))
+      })
+
+      await expect(askButton).toBeVisible({ timeout: 10_000 })
+      const currentSelectionText = await page.evaluate(() => window.getSelection()?.toString() ?? '')
+      expect(currentSelectionText.trim().length).toBeGreaterThan(0)
+      await askButton.click()
+
+      const draft = await readDraft(page)
+      expect(draft).toContain(currentSelectionText.trim())
     } else {
-      await expect(askButton).toBeVisible()
+      // If browser preserved a live range across replaceChildren:
+      expect(selectionState.isOldAnchor).toBe(false)
+      expect(selectionState.anchorInRoot).toBe(true)
+      expect(selectionState.focusInRoot).toBe(true)
+      expect(selectionState.hasAnchorSlide).toBe(true)
+      expect(selectionState.hasFocusSlide).toBe(true)
+
+      await expect(askButton).toBeVisible({ timeout: 5_000 })
+      await askButton.click()
+
+      const draft = await readDraft(page)
+      expect(draft).toContain(selectionState.text.trim())
     }
   })
 
@@ -401,5 +492,71 @@ test.describe('real DSH PPTX preview & selection smoke', () => {
     )
     expect(probeValue).toBe(0)
     expect(page.url()).toBe(initialUrl)
+  })
+
+  test('rapidly switches presentation during initial render without uncaught errors or DOM leakage', async ({
+    page,
+  }) => {
+    const pageErrors: string[] = []
+    page.on('pageerror', (err) => {
+      pageErrors.push(err.message)
+    })
+
+    await page.setViewportSize({ width: 1600, height: 1000 })
+    await openShell(page)
+
+    // Set up unhandledrejection listener in page
+    await page.evaluate(() => {
+      ;(window as unknown as { __testUnhandledRejections: string[] }).__testUnhandledRejections = []
+      window.addEventListener('unhandledrejection', (e) => {
+        ;(window as unknown as { __testUnhandledRejections: string[] }).__testUnhandledRejections.push(
+          String(e.reason),
+        )
+      })
+    })
+
+    // Step 1: Open large 120-slides deck
+    await page.locator('[data-dsa-smoke-open="pptx-large-120-slides"]').click()
+
+    // Step 2: Observe that renderer root has appeared and is in initial loading state
+    const root = page.locator(PPTX_ROOT).first()
+    await expect(root).toBeVisible({ timeout: 15_000 })
+    await expect(root).toContainText('正在打开幻灯片…', { timeout: 10_000 })
+
+    // Step 3: Immediately switch preview to text-two-slides while 120-slide render is pending
+    await page.evaluate(() => {
+      document.querySelector<HTMLElement>('[data-dsa-smoke-open="pptx-text-two-slides"]')?.click()
+    })
+
+    // Step 4: Wait for observable outcome: new presentation renders successfully
+    const content = page.locator(PPTX_CONTENT).first()
+    await expect(content).toBeVisible({ timeout: 20_000 })
+    await expect(content).toContainText('PPTX Slide One Alpha', { timeout: 20_000 })
+
+    // Step 5: Assertions:
+    // a. Zero uncaught page errors and zero unhandled rejections
+    const unhandledRejections = await page.evaluate(
+      () => (window as unknown as { __testUnhandledRejections: string[] }).__testUnhandledRejections,
+    )
+    expect(pageErrors).toEqual([])
+    expect(unhandledRejections).toEqual([])
+
+    // b. No late DOM from 120-slide deck republished
+    const slide120Count = await page.locator('[data-dsa-pptx-slide="120"]').count()
+    expect(slide120Count).toBe(0)
+
+    // c. Total slides in content must match the 2-slide deck (no leaked slides from previous deck)
+    const mountedSlides = await page.locator(PPTX_SLIDE).count()
+    expect(mountedSlides).toBeLessThanOrEqual(2)
+
+    // d. No stale Ask snapshot remains
+    await expect(page.locator(ASK_BUTTON)).toHaveCount(0)
+
+    // e. Shell remains fully usable (composer accepts input)
+    const composer = page.locator(COMPOSER_INPUT).first()
+    await composer.click()
+    await composer.fill('Shell is responsive after rapid abort')
+    const draft = await readDraft(page)
+    expect(draft).toContain('Shell is responsive after rapid abort')
   })
 })
