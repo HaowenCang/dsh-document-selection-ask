@@ -27,10 +27,11 @@ import {
   XLSX_DOCUMENT_KIND_ATTRIBUTE,
   XLSX_RESOURCE_ADDRESS_ATTRIBUTE,
   XLSX_SELECTABLE_ATTRIBUTE,
+  XLSX_SELECTION_ATTRIBUTE,
 } from './identity.js'
 import { assertSafeXlsxRelationships } from './security.js'
 import type { XlsxSelectionBridge, XlsxSelectionOwner } from './selection-bridge.js'
-import { ensureXlsxWasmInitialized } from './wasm.js'
+import { ensureXlsxWasmInitialized, XlsxWasmSourceUnavailableError } from './wasm.js'
 import { XlsxSheetTabs } from './XlsxSheetTabs.js'
 
 /** Maximum supported XLSX file size (25 MiB limit). */
@@ -40,14 +41,24 @@ const LOADING_TEXT = '正在打开表格…'
 const FAILED_TEXT = '无法显示电子表格'
 const TOO_LARGE_TEXT = '文件超出支持的大小限制（最大 25 MB）'
 const NO_BYTES_TEXT = 'XLSX 预览需要完整文件内容。'
+const WASM_UNAVAILABLE_TEXT = '表格解析引擎在当前架构下无法加载，暂不支持显示。'
 
 export interface XlsxBodyProps extends DocumentPreviewProps {
   readonly bridge: XlsxSelectionBridge
 }
 
+/**
+ * The load state of one resource generation.
+ *
+ * `ready` carries the bytes rather than a flag, and that is the point: the
+ * buffer handed to `XlsxViewerProvider` is the **same** array the security gates
+ * validated, not a second read of the host's array. A state that only recorded
+ * "ok" would leave the render free to copy whatever `content.data` happened to
+ * hold at that instant, which is a different array from the one that passed.
+ */
 type XlsxLoadState =
   | { readonly kind: 'checking' }
-  | { readonly kind: 'ready' }
+  | { readonly kind: 'ready'; readonly file: ArrayBuffer }
   | { readonly kind: 'too-large' }
   | { readonly kind: 'failed'; readonly message: string }
 
@@ -59,10 +70,12 @@ function XlsxSelectionPublisher({
   bridge,
   resourceAddress,
   rootRef,
+  onSelectionChange,
 }: {
   bridge: XlsxSelectionBridge
   resourceAddress: string
   rootRef: React.RefObject<HTMLElement | null>
+  onSelectionChange: (selection: string | null) => void
 }) {
   const controller = useXlsxViewer()
   const selection = controller.selection
@@ -90,14 +103,21 @@ function XlsxSelectionPublisher({
 
     if (!selection || !selectedRangeAddress || !activeSheetName) {
       ownerRef.current.clear()
+      onSelectionChange(null)
       return
     }
 
     const parsed = parseCellRange(selectedRangeAddress)
     if (!parsed) {
       ownerRef.current.clear()
+      onSelectionChange(null)
       return
     }
+
+    // The published label is the same `<sheet>!<range>` pair the adapter turns
+    // into provenance, so an observer reading it sees exactly what Ask would
+    // quote rather than a parallel rendering of the same state.
+    onSelectionChange(`${activeSheetName}!${parsed.range}`)
 
     if (parsed.cellCount > MAX_XLSX_SELECTED_CELLS) {
       ownerRef.current.publish({
@@ -161,6 +181,7 @@ function XlsxSelectionPublisher({
     controller,
     resourceAddress,
     rootRef,
+    onSelectionChange,
   ])
 
   return null
@@ -173,9 +194,18 @@ export function XlsxBody(props: XlsxBodyProps): JSX.Element {
   const { content, resourceAddress, bridge } = props
   const rootRef = useRef<HTMLElement | null>(null)
   const [loadState, setLoadState] = useState<XlsxLoadState>({ kind: 'checking' })
+  const [publishedSelection, setPublishedSelection] = useState<string | null>(null)
 
   const bytes = content?.kind === 'bytes' ? content.data : null
   const fileName = fileNameFromResourceAddress(resourceAddress) ?? 'workbook.xlsx'
+
+  // A new resource generation starts with no selection of its own. Clearing here
+  // rather than only on unmount keeps the published observable from describing
+  // the previous workbook between the switch and the first gesture on the new
+  // one — the window in which a stale range would otherwise look current.
+  useEffect(() => {
+    setPublishedSelection(null)
+  }, [resourceAddress])
 
   useEffect(() => {
     if (!bytes) {
@@ -196,27 +226,47 @@ export function XlsxBody(props: XlsxBodyProps): JSX.Element {
       try {
         setLoadState({ kind: 'checking' })
 
-        // Defensive copy of buffer before untrusted third-party consumption
-        const copy = new Uint8Array(bytes!.buffer.slice(bytes!.byteOffset, bytes!.byteOffset + bytes!.byteLength))
+        // One defensive copy per resource generation. Every gate below, and the
+        // third-party viewer, read this array and nothing else: the host's own
+        // bytes are never consulted again, so a host that reuses or mutates its
+        // buffer cannot change what was validated. The copy is `Uint8Array`
+        // over its own `ArrayBuffer`, which is why `validated.buffer` can be
+        // handed to the viewer unchanged.
+        const validated = new Uint8Array(
+          bytes!.buffer.slice(bytes!.byteOffset, bytes!.byteOffset + bytes!.byteLength),
+        )
 
-        // Preflight & extraction verification
-        preflightOoxml(copy, DEFAULT_OOXML_LIMITS)
+        // Strictly serial. Each gate is awaited with the caller's own signal so
+        // that releasing the tab interrupts metadata preflight, extraction
+        // verification and the relationship scan alike — none of them may still
+        // be reading an archive whose owner has gone. Nothing after a gate may
+        // begin before it settles: a metadata gate that runs concurrently with
+        // the content it is gating is not a gate.
+        await preflightOoxml(validated, DEFAULT_OOXML_LIMITS, signal)
         if (signal.aborted || cancelled) return
 
-        await verifyOoxmlExtraction(copy, DEFAULT_OOXML_LIMITS, signal)
+        await verifyOoxmlExtraction(validated, DEFAULT_OOXML_LIMITS, signal)
         if (signal.aborted || cancelled) return
 
-        await assertSafeXlsxRelationships(copy, signal)
+        await assertSafeXlsxRelationships(validated, signal)
         if (signal.aborted || cancelled) return
 
+        // Refuses when no client-owned engine binary has been installed, rather
+        // than reaching for a host URL or a remote fallback. It runs before the
+        // viewer is mounted so a blocked runtime is reported as a failure
+        // instead of a workbook that never finishes opening.
         ensureXlsxWasmInitialized()
+        if (signal.aborted || cancelled) return
 
         if (!cancelled) {
-          setLoadState({ kind: 'ready' })
+          setLoadState({ kind: 'ready', file: validated.buffer })
         }
-      } catch {
+      } catch (error: unknown) {
         if (!cancelled) {
-          setLoadState({ kind: 'failed', message: FAILED_TEXT })
+          setLoadState({
+            kind: 'failed',
+            message: error instanceof XlsxWasmSourceUnavailableError ? WASM_UNAVAILABLE_TEXT : FAILED_TEXT,
+          })
         }
       }
     }
@@ -283,6 +333,9 @@ export function XlsxBody(props: XlsxBodyProps): JSX.Element {
       ref={rootRef}
       {...{ [XLSX_DOCUMENT_KIND_ATTRIBUTE]: XLSX_DOCUMENT_KIND }}
       {...{ [XLSX_RESOURCE_ADDRESS_ATTRIBUTE]: resourceAddress }}
+      {...(publishedSelection === null
+        ? {}
+        : { [XLSX_SELECTION_ATTRIBUTE]: publishedSelection })}
       style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}
     >
       <div
@@ -290,7 +343,7 @@ export function XlsxBody(props: XlsxBodyProps): JSX.Element {
         style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', flex: '1 1 auto' }}
       >
         <XlsxViewerProvider
-          file={bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)}
+          file={loadState.file}
           fileName={fileName}
           readOnly={true}
           useWorker={true}
@@ -301,6 +354,7 @@ export function XlsxBody(props: XlsxBodyProps): JSX.Element {
             bridge={bridge}
             resourceAddress={resourceAddress}
             rootRef={rootRef}
+            onSelectionChange={setPublishedSelection}
           />
           <XlsxSheetTabs />
           <XlsxViewer

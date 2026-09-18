@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 
@@ -30,11 +30,9 @@ const ASSETS_RESOLVED_ID = '\0dsa:pdfjs-assets'
 /** The installed PDF.js package directory, resolved from this config's own path. */
 const PDFJS_DIR = join(import.meta.dirname, 'node_modules', 'pdfjs-dist')
 
-/** React-xlsx package directory and assets */
+/** React-xlsx package directory, for resolving the module the client build compiles. */
 const req = createRequire(import.meta.url)
 const REACT_XLSX_DIR = dirname(req.resolve('@extend-ai/react-xlsx/package.json'))
-const REACT_XLSX_WASM_PATH = join(REACT_XLSX_DIR, 'dist', 'duke_sheets_wasm_bg.wasm')
-const REACT_XLSX_WORKER_PATH = join(REACT_XLSX_DIR, 'dist', 'xlsx-worker.js')
 
 /** Resolve duke_sheets_wasm.js source for inlining */
 const reqRx = createRequire(join(REACT_XLSX_DIR, 'package.json'))
@@ -157,35 +155,102 @@ function reactVirtualTransformPlugin(): Plugin {
   }
 }
 
-function xlsxAssetPlugin(): Plugin {
-  return {
-    name: 'dsa-xlsx-asset',
-    writeBundle() {
-      const assetsDir = join(import.meta.dirname, 'lib', 'assets')
-      mkdirSync(assetsDir, { recursive: true })
-      copyFileSync(REACT_XLSX_WASM_PATH, join(assetsDir, 'duke_sheets_wasm_bg.wasm'))
-    },
+/**
+ * The exact call `@extend-ai/react-xlsx` constructs its worker with.
+ *
+ * Stated as one literal rather than a pattern so the rewrite below can assert
+ * that it matched exactly once. A regex that silently matched nothing would let
+ * the build succeed while the bundle still carried the library's own
+ * `new URL("./xlsx-worker.js", import.meta.url)`, which rolldown emits for a
+ * CommonJS target as `require("url").pathToFileURL(__filename).href` — a
+ * reference that is not resolvable in the browser and that names an asset this
+ * package does not ship.
+ */
+const XLSX_WORKER_CONSTRUCTION =
+  'new Worker(new URL("./xlsx-worker.js", import.meta.url), { type: "module" })'
+
+/**
+ * The worker construction the client bundle is built with instead.
+ *
+ * The identifier is defined in the banner below and refuses to produce a URL:
+ * the library's worker is a separate script file, and DSH offers no public
+ * client-only way for an external plugin to deliver one (see
+ * `src/client/renderers/xlsx/wasm.ts`). Failing closed at this seam keeps the
+ * bundle free of any reference to a host route, a CDN or a document-relative
+ * path, and it is the single place a permitted delivery mechanism would plug
+ * into.
+ */
+const XLSX_WORKER_REPLACEMENT = 'new Worker(__dsa_xlsx_worker_source_url__(), { type: "module" })'
+
+/** The dynamic import the library loads its engine module through. */
+const XLSX_DUKE_DYNAMIC_IMPORT = 'import("@dukelib/sheets-wasm")'
+
+/**
+ * Replace one exact literal, refusing anything but a single occurrence.
+ *
+ * A build-time rewrite of a dependency's code is a claim about that
+ * dependency's shape. `String.prototype.replace` does not check the claim: on a
+ * renamed symbol or a reformatted release it returns the input unchanged and the
+ * build reports success while the bundle keeps the construct the rewrite exists
+ * to remove. Asserting the count turns the claim into a build gate — zero
+ * occurrences and two occurrences are both failures, because the second means
+ * the rewrite is no longer describing one site.
+ *
+ * @param code - the module source being transformed.
+ * @param needle - the exact literal to replace.
+ * @param replacement - what to replace it with.
+ * @param label - how to describe the literal in a failure message.
+ * @returns the transformed source.
+ * @throws Error when the literal does not occur exactly once.
+ */
+function replaceExactlyOnce(
+  code: string,
+  needle: string,
+  replacement: string,
+  label: string,
+): string {
+  const occurrences = code.split(needle).length - 1
+  if (occurrences !== 1) {
+    throw new Error(
+      `dsa-xlsx-client-runtime: expected exactly one occurrence of ${label} in the bundled ` +
+        `@extend-ai/react-xlsx source, found ${occurrences}. The installed package's shape ` +
+        'changed; this build refuses to emit a bundle whose XLSX runtime was not rewritten.',
+    )
   }
+  return code.replace(needle, replacement)
 }
 
-function xlsxWorkerTransformPlugin(): Plugin {
+/**
+ * Rewrite the two constructs in `@extend-ai/react-xlsx` the browser half cannot
+ * carry as they are.
+ *
+ * Both rewrites are asserted (see {@link replaceExactlyOnce}). The second one is
+ * not cosmetic: left alone, the library's dynamic `import("@dukelib/sheets-wasm")`
+ * makes rolldown emit a separate chunk beside `lib/client.js`, and an external
+ * client plugin is served as exactly one file — a second chunk is an asset no
+ * contract delivers.
+ *
+ * @returns the plugin.
+ */
+function xlsxClientRuntimePlugin(): Plugin {
   return {
-    name: 'dsa-xlsx-worker-transform',
+    name: 'dsa-xlsx-client-runtime',
     transform(code, id) {
-      if (id.includes('@extend-ai/react-xlsx') || id.includes('react-xlsx')) {
-        let transformed = code.replace(
-          /new Worker\(new URL\("\.\/xlsx-worker\.js",\s*import\.meta\.url\),\s*\{ type: "module" \}\)/g,
-          'new Worker(new URL("/dsa-assets/xlsx-worker.js", typeof window !== "undefined" ? window.location.origin : "http://127.0.0.1:50001"), { type: "module" })',
-        )
-        if (transformed.includes('import("@dukelib/sheets-wasm")')) {
-          transformed = transformed.replace(
-            'import("@dukelib/sheets-wasm")',
-            '__dukelib_sheets_wasm_promise__()',
-          )
-        }
-        return transformed
-      }
-      return null
+      const normalised = id.split('\\').join('/')
+      if (!normalised.includes('@extend-ai/react-xlsx/')) return null
+
+      const withWorker = replaceExactlyOnce(
+        code,
+        XLSX_WORKER_CONSTRUCTION,
+        XLSX_WORKER_REPLACEMENT,
+        'the XlsxWorkerClient constructor',
+      )
+      return replaceExactlyOnce(
+        withWorker,
+        XLSX_DUKE_DYNAMIC_IMPORT,
+        '__dukelib_sheets_wasm_promise__()',
+        'the Duke engine dynamic import',
+      )
     },
   }
 }
@@ -214,8 +279,7 @@ export default defineConfig([
       pptxCleanupPlugin(),
       fflateBrowserPlugin(),
       reactVirtualTransformPlugin(),
-      xlsxAssetPlugin(),
-      xlsxWorkerTransformPlugin(),
+      xlsxClientRuntimePlugin(),
     ],
     define: {
       'process.env.NODE_ENV': JSON.stringify('production'),
@@ -242,42 +306,7 @@ export default defineConfig([
       ],
       onlyBundle: false,
     },
-    banner: `window.__ModuleLoader__.load({\n\tid: ${JSON.stringify(PLUGIN_ID)},\n\tfactory: (require) => {\n\t\tvar module = { exports: {} };\n\t\tvar exports = module.exports;\nvar __dukelib_sheets_wasm_module__ = null;\nfunction __dukelib_sheets_wasm_promise__() {\n  if (!__dukelib_sheets_wasm_module__) {\n    var exports = {};\n    ${inlinedDukeJs}\n    __dukelib_sheets_wasm_module__ = { CellValue, Workbook, Worksheet, default: __wbg_init, initSync };\n  }\n  return Promise.resolve(__dukelib_sheets_wasm_module__);\n}`,
+    banner: `window.__ModuleLoader__.load({\n\tid: ${JSON.stringify(PLUGIN_ID)},\n\tfactory: (require) => {\n\t\tvar module = { exports: {} };\n\t\tvar exports = module.exports;\nvar __dukelib_sheets_wasm_module__ = null;\nfunction __dukelib_sheets_wasm_promise__() {\n  if (!__dukelib_sheets_wasm_module__) {\n    var exports = {};\n    ${inlinedDukeJs}\n    __dukelib_sheets_wasm_module__ = { CellValue, Workbook, Worksheet, default: __wbg_init, initSync };\n  }\n  return Promise.resolve(__dukelib_sheets_wasm_module__);\n}\nfunction __dsa_xlsx_worker_source_url__() {\n  throw new Error("dsh-document-selection-ask: the XLSX worker has no client-owned source. DSH exposes no public client-only contract for delivering a second file beside lib/client.js, and this plugin does not serve it from the host. See src/client/renderers/xlsx/wasm.ts.");\n}`,
     footer: `\t\treturn module.exports;\n\t}\n});`,
-  },
-  {
-    entry: { 'assets/xlsx-worker': REACT_XLSX_WORKER_PATH },
-    outDir: 'lib',
-    format: 'esm',
-    platform: 'browser',
-    target: 'es2022',
-    dts: false,
-    plugins: [
-      {
-        name: 'dsa-worker-dukelib-inline',
-        transform(code, id) {
-          if (id.includes('xlsx-worker')) {
-            if (code.includes('import("@dukelib/sheets-wasm")')) {
-              return code.replace(
-                'import("@dukelib/sheets-wasm")',
-                'Promise.resolve(__dukelib_worker_wasm_module__)',
-              )
-            }
-          }
-          return null
-        },
-        banner() {
-          return `
-var exports = {};
-${inlinedDukeJs}
-var __dukelib_worker_wasm_module__ = { CellValue, Workbook, Worksheet, default: __wbg_init, initSync };
-`
-        },
-      },
-    ],
-    deps: {
-      alwaysBundle: [/^fflate(\/|$)/, /^@dukelib\/sheets-wasm(\/|$)/],
-      onlyBundle: false,
-    },
   },
 ])

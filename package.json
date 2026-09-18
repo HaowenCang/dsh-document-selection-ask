@@ -24,7 +24,6 @@
   "files": [
     "lib/index.mjs",
     "lib/client.js",
-    "lib/assets/**/*",
     "lib/types/**/*.d.ts",
     "cordis.patch.yml",
     "README.md",
