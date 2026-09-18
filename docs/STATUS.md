@@ -929,8 +929,151 @@ start.
 Next:
 Task 12 — Unified registration, locale, cleanup and renderer fallback
 
+- Task 11B — FIXTURE DEFECT REMAINS — NOT PASS
+
+Authorised remediation of the embedded-picture rendering path, through the pinned
+viewer's **public** boundary only. The remediation is implemented, verified and
+committed; the frozen chart/image browser gate is still not green, and the
+blocking condition is now identified in the test fixture rather than in the
+plugin or the viewer.
+
+What was done (all of it inside the authorised public boundary):
+
+- `XlsxBody` now configures the viewer explicitly: `showImages={true}` and
+  `renderImage={renderXlsxImage}`. No other viewer or provider prop changed, and
+  the canvas renderer, read-only mode, worker mode and form-control suppression
+  are as they were;
+- `src/client/renderers/xlsx/render-image.tsx` renders one `<img>` per worksheet
+  picture from the `XlsxImageRenderProps` the hook is handed — the model entry's
+  own `src` and its `description`/`name` alt text — and sizes it from the
+  **style the viewer published** (`style.width` / `style.height`). The viewer
+  wraps this node in a positioned element carrying the same style, so the node
+  fills that box; re-applying the style's `left`/`top` would place it a second
+  time inside a box already at those coordinates and clip it away. No anchor, row
+  height, column width or EMU value is read anywhere in the module, and the
+  callback is a module-level constant so the viewer's drawing-layout memoization
+  is not invalidated per render;
+- the node is read-only presentation: `draggable={false}`, `pointer-events: none`,
+  no selection hook, no resize handle, no controller mutation. `renderImageSelection`
+  is deliberately **not** supplied;
+- no dependency, lockfile, bundler, security-pipeline or selection change. The
+  built `lib/client.js` moved from 16,312,972 to 16,314,168 bytes (delta +1,196).
+
+Public contract verified against the installed `@extend-ai/react-xlsx@0.16.4`
+package-root typings: `XlsxViewerProps.renderImage`,
+`XlsxImageRenderProps { defaultNode, image, rect, style }`, `XlsxImage.src`,
+`XlsxImage.mimeType`, `XlsxImage.mediaPath`, `XlsxViewerProps.showImages` (default
+`true`). No private API is required or used, and no `node_modules` file is
+patched.
+
+Measured against the real fixture, real security gates, real engine and real
+viewer (`tests/client/xlsx-image-render.client.spec.tsx`, 3 cases):
+
+- the public controller image model publishes the fixture's one picture with a
+  client-owned source, `mimeType: image/png`, `mediaPath` under `xl/media`,
+  a one-cell anchor at column D / row 2, and sheet indices 0;
+- the documented `renderImage` callback **is** invoked, with a finite positive
+  rectangle (`width`/`height` both 64 in the real browser), an absolute
+  positioned style carrying the same box and a numeric z-order, and a non-null
+  `defaultNode`. This is what rules out `UPSTREAM PUBLIC IMAGE HOOK DEFECT`;
+- the production body publishes the picture as a node whose `src` is the viewer's
+  own object URL: the platform's allocator is instrumented in the case, the source
+  appears in `created` exactly once, the plugin revokes nothing it does not own,
+  and a synthetic pointer drag on the node leaves the published box byte-identical.
+
+Measured in a real DSH instance (0.1.5-rc.1, profile `dsa-smoke`, 1280x720):
+
+- XLSX: **12 passed / 1 failed / 0 skipped** (13 cases; 6a and 6b are new);
+- case 6, the frozen chart/image case, now reads the picture from direct semantic
+  evidence rather than from canvas colour. Eleven of its twelve picture
+  properties pass: the node is published (`count` 1), its source is `blob:`, it is
+  `complete`, it reports 64x64 natural size, it is laid out in a **64x64 box at
+  924,121** — positive, inside the viewport, `display`/`visibility`/`opacity` all
+  visible — and it carries `alt="Picture 1"` and `draggable="false"`. The chart
+  half still passes unchanged: `<svg role="img" aria-label="Chart 1">` with
+  positive dimensions, ≥2 fills and ≥4 gridlines, asserted as a separate object;
+- the twelfth property — that the picture's bytes decode into the fixture's solid
+  red — fails, and it fails for a cause that no renderer can change:
+  **the fixture's embedded PNG is not a decodable image.**
+
+**Fixture defect — new independent evidence. `tests/fixtures/xlsx/chart-image.xlsx`
+was NOT modified.**
+
+The picture stored at `xl/media/image1.png` is 227 bytes and byte-identical to the
+generator's `SAMPLE_PNG_BASE64` constant (SHA-256
+`8f66e8cd3d8558e86bc0870a8e21adf9f33126d91fc6dee7071b10ec53ff8ca8`). Its IHDR
+parses — 64x64, 8-bit RGBA — which is why an `<img>` element reports
+`complete: true` and `naturalWidth: 64`. Its image data does not:
+
+- `node:zlib.inflateSync` over the IDAT stream: `invalid code lengths set`
+- `fflate.unzlibSync` (the decoder bundled inside `@extend-ai/react-xlsx` itself):
+  `invalid length/literal`; `fflate.inflateSync`: `unexpected EOF`
+- Chromium's own decoder, reached through `createImageBitmap` in the live page:
+  `InvalidStateError: The source image could not be decoded`
+- drawing the node into a canvas yields no colour at all, which is what the
+  round-11A canvas sampling observed
+
+The IDAT payload is 89 bytes behind a valid `78da` zlib header and claims to
+expand to the 16,448 bytes a 64x64 RGBA image needs; every decoder that reaches
+the Huffman tables rejects it. Three independent decoders, two of them not
+browsers, agree, and the bytes in the fixture are the bytes the generator writes.
+
+**Correction to the Task 11A conclusion.** Task 11A recorded "the pinned viewer
+does not paint an embedded picture" as a production defect, on the evidence that
+the sheet canvas carried none of the picture's colour. That evidence has a
+sufficient alternative explanation now: a picture whose pixel data cannot be
+decoded paints no colour under *any* renderer, so the canvas-bake observation did
+not establish a viewer defect. The remediation above remains authorised and
+correct on its own terms — it is plugin-side compatibility hardening through the
+documented replacement boundary, it moves pictures onto the same positioned DOM
+overlay the chart already uses, and it removes no assertion — but it is **not**
+claimed to have fixed a proven upstream defect.
+
+Verification on `eval/gemini-3.8-flash-task11-20260918`:
+
+- `pnpm test`: PASS (945 tests over 54 files, up from 939)
+- `pnpm typecheck`: PASS
+- `pnpm build`: PASS
+- `npm pack --dry-run`: PASS
+- `git diff --check`: PASS
+- targeted suites: `xlsx-wasm` 14, `xlsx-security` 30, `xlsx-renderer` 22 (up
+  from 19: the three new presentation-configuration cases), `xlsx-image-render` 3,
+  `xlsx-selection-bridge` 5, `xlsx-adapter` 9, `xlsx-bundle` 18, `host-entry` 9 —
+  110 passed
+- real DSH 0.1.5-rc.1, profile `dsa-smoke`: XLSX 12/1/0; PPTX 10/0/0; DOCX 6/0/0;
+  PDF 10/0/0; TextPreview 8/0/0 — no cross-format regression
+- XLSX network gates unchanged: parser-asset requests 0, remote requests 0,
+  `/dsa-assets` 0, document uploads 0, WASM HTTP 0, worker HTTP 0; the one real
+  `blob:` Worker is still observed and its object URL still revoked
+- the embedded picture's own object URL is observed in the platform audit:
+  created by the controller, alive while the workbook is open, and revoked after
+  the resource is switched — read from instrumented
+  `URL.createObjectURL`/`revokeObjectURL`
+
+Next:
+
+Task 11B is **not** PASS and Task 11 is still not mergeable. Unblocking it
+requires an authorised decision about the fixture: `chart-image.xlsx` must carry
+a decodable 64x64 PNG before the frozen colour evidence can pass, and repairing
+the fixture is a separate authorised change — this round was instructed not to
+modify it, and did not. Task 12 must not start.
+
 ## Current gate
 
+- Task 11 real DSH XLSX renderer smoke (Playwright, live instance): **12 passed / 1
+  failed / 0 skipped as of Task 11B.** Case 6 — the frozen chart/image fidelity case —
+  still fails, and the failure is a **fixture defect**: the embedded PNG in
+  `tests/fixtures/xlsx/chart-image.xlsx` cannot be decoded by any of three independent
+  decoders (`node:zlib`, the library's own `fflate`, Chromium's `createImageBitmap`), so
+  no renderer can produce the colour that case requires. The published node itself is
+  correct: `blob:` source, `complete`, 64x64, laid out in a 64x64 visible box, with the
+  chart asserted separately and passing. See the Task 11B record for the full evidence
+  and for the correction to the Task 11A conclusion.
+- Task 11 embedded-image presentation client suites: PASS — `xlsx-image-render` (3
+  cases: the public controller image model, the documented `renderImage` callback's
+  invocation and payload, and the production node's source ownership, box and
+  read-only presentation) and `xlsx-renderer` (22 cases, including the three that pin
+  the viewer configuration `XlsxBody` publishes)
 - Task 11 real DSH XLSX renderer smoke (Playwright, live instance): **SUPERSEDED by
   Task 11R — BLOCKED.** The Task 11 record above stands as what that round claimed; the
   reproduction performed in Task 11R shows the same suite's assertions could not have

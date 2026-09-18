@@ -136,6 +136,31 @@ max backing pixels/page: 64 MP
 
 建议 plugin limit 与 DSH byte cap 取更小值。
 
+### 内嵌 worksheet 图片的呈现（Task 11B）
+
+图片经由 pinned `@extend-ai/react-xlsx@0.16.4` 的**公开**替换边界呈现：
+`XlsxViewer` 配置 `showImages={true}` 与 `renderImage`，插件仅从公开的
+`XlsxImageRenderProps` 构造一个 `<img>`。
+
+信任与所有权边界：
+
+- **来源是 viewer 的**：`image.src` 是 controller 为 media 字节创建的 object URL。
+  插件不创建第二份 URL、不 `fetch`、不重新编码、不复制字节。该 URL 的创建与释放
+  均归 controller（资源切换时由它 revoke），插件不调用 `URL.revokeObjectURL`。
+- **几何是 viewer 的**：节点的宽高取自 viewer 发布的 `style`；viewer 已将该 style
+  应用在包裹节点的定位元素上，因此节点填满该盒子。插件不读取 anchor、行高、列宽
+  或 EMU，不做任何坐标换算。
+- **只读**：节点 `draggable={false}`、`pointer-events: none`，不提供
+  `renderImageSelection`，不接入选区手柄，不调用任何 image mutation。
+- **不外联**：`renderImage` 只消费已通过 relationship gate 的 local/embedded 图片；
+  external image relationship 仍在 viewer 之前被拒，因此该边界不会让外部图片重新
+  可达。
+- 图像节点带 `data-dsa-xlsx-image` 标记，仅用于测试观察与所有权区分，不参与
+  selection、provenance 或 cell geometry。
+
+该边界属于 plugin-side compatibility hardening（公开 hook），不是对
+`node_modules` 的 patch，也不是对上游实现的替换。
+
 ## 9. CSP 与 asset packaging
 
 必须测试 DSH web profile 下：
