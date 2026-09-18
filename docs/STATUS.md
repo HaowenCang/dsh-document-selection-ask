@@ -651,11 +651,45 @@ OOXML security pipeline:
 - forged declared size mismatch rejected early during extraction
 - third-party renderer never called on forged archive
 
+- Task 10 — `6aaf0ddc93d97b33da361eab8afd58b069bfe31e` — PASS
+
+PPTX:
+- high-fidelity HTML/SVG renderer
+- native selectable text
+- slide provenance
+- shared OOXML metadata + actual extraction gates
+- external media blocked before rendering
+- windowed/lazy large-deck rendering
+- real DSH Ask verified
+
+- Task 10R — PASS
+
+Review remediation:
+- external hyperlink relationship type uses exact Transitional/Strict allowlist
+- custom /hyperlink suffix rejected
+- active initial PPTX render is destroyed immediately on AbortSignal
+- rapid close verified in real DSH
+- resize stale-selection evidence validates current-generation endpoints and current text
+
+- Task 10S — PASS
+
+Lifecycle:
+- one clearly-owned AbortSignal cancellation path
+- temporary initial-render abort race leaves no listener behind
+- session.dispose removes active abort ownership
+- later signal abort after dispose has no renderer side effect
+
 Next:
-Task 10 — PPTX HTML/SVG renderer and slide provenance
+Task 11 — XLSX read-only workbook renderer and semantic cell-range Ask
 
 ## Current gate
 
+- Task 10S PPTX rendering engine client suite: PASS (12 client cases)
+- Task 10R PPTX relationship security client suite: PASS (18 client cases)
+- Task 10S real DSH PPTX renderer smoke (Playwright, live instance): PASS (10 cases) — text two slides Ask, cross-slide Ask, Unicode CJK Ask, table & embedded PNG image without remote requests, chart rendering output, large 120-slide windowed virtualization and stale selection cleanup on scroll, strict viewport resize current-generation revalidation, external media fail-closed security rejection, dangerous javascript hyperlink blocking, rapid switch/close during in-flight render without error or leakage
+- Task 10 slide range provenance unit suite: PASS (21 unit cases)
+- Task 10 PPTX selection adapter client suite: PASS (23 client cases)
+- Task 10 PPTX bundling integrity unit suite: PASS (2 unit cases)
 - Task 9S OOXML streaming extraction bounds verification suite: PASS (10 client cases)
 - Task 9S DOCX engine & forged-size rejection suite: PASS (13 client cases)
 - Task 9R DOCX hyperlink security client suite: PASS (14 client cases)

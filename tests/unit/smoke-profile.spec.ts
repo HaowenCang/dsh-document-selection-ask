@@ -315,6 +315,56 @@ describe('smoke profile tooling', () => {
     ])
   })
 
+  it('agrees with the driver about which PPTX fixtures exist and where they go', () => {
+    const bootstrap = read('scripts/dsh-smoke-profile.mjs')
+    const driver = read('tests/browser/smoke-driver/src/client/fixtures.ts')
+
+    const sources = readDataTable(bootstrap, 'PPTX_FIXTURE_SOURCES') as { key: string; source: string }[]
+    expect(sources.length, 'the bootstrap must declare the PPTX fixture sources').toBeGreaterThan(0)
+    expect(new Set(sources.map((entry) => entry.source)).size, 'no source may be listed twice').toBe(sources.length)
+
+    const driverFixtures = readDataTable(driver, 'SMOKE_FIXTURES') as {
+      key: string
+      path: string
+      tabKind?: string
+    }[]
+    const byKey = new Map(driverFixtures.map((entry) => [entry.key, entry]))
+
+    for (const entry of sources) {
+      const stem = entry.source.slice(entry.source.lastIndexOf('/') + 1).replace(/\.pptx$/u, '')
+      const destination = `smoke-fixtures/task10-${stem}.pptx`
+
+      expect(existsSync(join(repoRoot, entry.source)), `${entry.source} is not committed`).toBe(true)
+      expect(bootstrap, `the bootstrap must derive ${destination}`).toContain('`smoke-fixtures/task10-${stem}.pptx`')
+
+      const declared = byKey.get(entry.key)
+      expect(declared, `the driver declares no ${entry.key} fixture`).toBeDefined()
+      expect(declared?.path, `the driver must open the file the bootstrap copies`).toBe(destination)
+      expect(declared?.tabKind).toBe('text')
+    }
+
+    for (const name of [
+      'text-two-slides',
+      'table-image',
+      'chart',
+      'large-120-slides',
+      'external-media',
+      'external-links',
+    ]) {
+      expect(existsSync(join(repoRoot, 'tests', 'fixtures', 'pptx', `${name}.pptx`)), `${name}.pptx is missing`).toBe(
+        true,
+      )
+    }
+    expect(sources.map((entry) => entry.key).sort()).toEqual([
+      'pptx-chart',
+      'pptx-external-links',
+      'pptx-external-media',
+      'pptx-large-120-slides',
+      'pptx-table-image',
+      'pptx-text-two-slides',
+    ])
+  })
+
   it('keeps the smoke out of the shipping bundle and out of the published file list', () => {
     const manifest = JSON.parse(read('package.json')) as { files: string[] }
     for (const marker of SMOKE_MARKERS) {

@@ -47,6 +47,12 @@ export interface SmokeFixture {
     | 'docx-table-image'
     | 'docx-headers-footers'
     | 'docx-external-links'
+    | 'pptx-text-two-slides'
+    | 'pptx-table-image'
+    | 'pptx-chart'
+    | 'pptx-large-120-slides'
+    | 'pptx-external-media'
+    | 'pptx-external-links'
   /** Control label, ASCII so the smoke locates it independently of the UI locale. */
   readonly label: string
   /** Path relative to the repository root, which is the Session's workspace. */
@@ -176,6 +182,55 @@ export const SMOKE_FIXTURES: readonly SmokeFixture[] = [
     path: 'smoke-fixtures/task9-external-links.docx',
     tabKind: 'text',
   },
+  {
+    key: 'pptx-text-two-slides',
+    label: 'Open PPTX two slides',
+    path: 'smoke-fixtures/task10-text-two-slides.pptx',
+    tabKind: 'text',
+  },
+  {
+    key: 'pptx-table-image',
+    label: 'Open PPTX table image',
+    path: 'smoke-fixtures/task10-table-image.pptx',
+    tabKind: 'text',
+  },
+  {
+    key: 'pptx-chart',
+    label: 'Open PPTX chart',
+    path: 'smoke-fixtures/task10-chart.pptx',
+    tabKind: 'text',
+  },
+  {
+    key: 'pptx-large-120-slides',
+    label: 'Open PPTX large 120 slides',
+    path: 'smoke-fixtures/task10-large-120-slides.pptx',
+    tabKind: 'text',
+  },
+  {
+    key: 'pptx-external-media',
+    label: 'Open PPTX external media',
+    path: 'smoke-fixtures/task10-external-media.pptx',
+    tabKind: 'text',
+  },
+  {
+    key: 'pptx-external-links',
+    label: 'Open PPTX external links',
+    path: 'smoke-fixtures/task10-external-links.pptx',
+    tabKind: 'text',
+  },
+]
+
+/**
+ * The PPTX fixtures, by key: the committed source file and the workspace name it
+ * is copied to.
+ */
+export const PPTX_FIXTURE_SOURCES: readonly { readonly key: SmokeFixture['key']; readonly source: string }[] = [
+  { key: 'pptx-text-two-slides', source: 'tests/fixtures/pptx/text-two-slides.pptx' },
+  { key: 'pptx-table-image', source: 'tests/fixtures/pptx/table-image.pptx' },
+  { key: 'pptx-chart', source: 'tests/fixtures/pptx/chart.pptx' },
+  { key: 'pptx-large-120-slides', source: 'tests/fixtures/pptx/large-120-slides.pptx' },
+  { key: 'pptx-external-media', source: 'tests/fixtures/pptx/external-media.pptx' },
+  { key: 'pptx-external-links', source: 'tests/fixtures/pptx/external-links.pptx' },
 ]
 
 /**
