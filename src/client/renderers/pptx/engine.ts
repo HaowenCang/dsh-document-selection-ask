@@ -128,8 +128,22 @@ export async function renderPptx(
     }
   }
 
+  let rejectInitialAbort: ((reason: unknown) => void) | null = null
+
+  const initialAbortPromise = new Promise<never>((_, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason ?? new DOMException('The operation was aborted', 'AbortError'))
+      return
+    }
+    rejectInitialAbort = reject
+  })
+
   function onAbort(): void {
+    const reason =
+      signal.reason ??
+      new DOMException('The operation was aborted', 'AbortError')
     invalidateActiveViewer({ notifySelection: true })
+    rejectInitialAbort?.(reason)
   }
 
   // Bind abort listener before creating or running any viewer operations
@@ -181,27 +195,15 @@ export async function renderPptx(
   const viewer = createViewer(initialWidth)
   currentViewer = viewer
 
-  const abortPromise = new Promise<never>((_, reject) => {
-    if (signal.aborted) {
-      reject(signal.reason ?? new DOMException('The operation was aborted', 'AbortError'))
-      return
-    }
-    signal.addEventListener(
-      'abort',
-      () => {
-        reject(signal.reason ?? new DOMException('The operation was aborted', 'AbortError'))
-      },
-      { once: true },
-    )
-  })
-
   try {
     renderChain = renderGeneration(viewer, initialGen)
-    await Promise.race([renderChain, abortPromise])
+    await Promise.race([renderChain, initialAbortPromise])
   } catch (err) {
     invalidateActiveViewer({ notifySelection: true })
     signal.throwIfAborted()
     throw err
+  } finally {
+    rejectInitialAbort = null
   }
 
   if (signal.aborted) {

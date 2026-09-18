@@ -224,6 +224,157 @@ describe('renderPptx engine', () => {
     session3.dispose()
   })
 
+  it('balances signal abort listener ownership during active session and on dispose', async () => {
+    const bytes = readFixture('text-two-slides.pptx')
+    const controller = new AbortController()
+
+    let addCount = 0
+    let removeCount = 0
+    const activeListeners = new Set<EventListenerOrEventListenerObject>()
+    const invokedAfterDispose: EventListenerOrEventListenerObject[] = []
+    const listenerWrapperMap = new Map<EventListenerOrEventListenerObject, EventListener>()
+    let isDisposed = false
+
+    const origAdd = controller.signal.addEventListener.bind(controller.signal)
+    const origRemove = controller.signal.removeEventListener.bind(controller.signal)
+
+    const addSpy = vi
+      .spyOn(controller.signal, 'addEventListener')
+      .mockImplementation((type, listener, options) => {
+        if (type === 'abort' && listener) {
+          addCount++
+          activeListeners.add(listener)
+          const wrappedListener: EventListener = (evt) => {
+            if (isDisposed) {
+              invokedAfterDispose.push(listener)
+            }
+            if (typeof listener === 'function') {
+              listener.call(controller.signal, evt)
+            } else if ('handleEvent' in listener) {
+              listener.handleEvent(evt)
+            }
+          }
+          listenerWrapperMap.set(listener, wrappedListener)
+          return origAdd(type, wrappedListener, options)
+        }
+        return origAdd(type, listener, options)
+      })
+
+    const removeSpy = vi
+      .spyOn(controller.signal, 'removeEventListener')
+      .mockImplementation((type, listener, options) => {
+        if (type === 'abort' && listener) {
+          removeCount++
+          activeListeners.delete(listener)
+          const wrapped = listenerWrapperMap.get(listener) ?? listener
+          return origRemove(type, wrapped, options)
+        }
+        return origRemove(type, listener, options)
+      })
+
+    try {
+      const session = await renderPptx(bytes, host, scrollContainer, 800, controller.signal, {
+        onSelectableDomInvalidated,
+      })
+
+      // Exactly one session-lifetime listener attached; zero unremovable anonymous listeners
+      expect(addCount - removeCount).toBe(1)
+
+      session.dispose()
+      isDisposed = true
+
+      // After dispose, every engine-registered abort listener must be detached
+      expect(addCount - removeCount).toBe(0)
+
+      // Later abort must not invoke any engine listener callback
+      controller.abort()
+      expect(invokedAfterDispose).toHaveLength(0)
+      expect(host.children.length).toBe(0)
+    } finally {
+      addSpy.mockRestore()
+      removeSpy.mockRestore()
+    }
+  })
+
+  it('guarantees dispose followed by abort has zero renderer side effects and no leaked listeners', async () => {
+    const bytes = readFixture('text-two-slides.pptx')
+    const controller = new AbortController()
+
+    const destroySpy = vi.spyOn(PptxViewer.prototype, 'destroy')
+    try {
+      const session = await renderPptx(bytes, host, scrollContainer, 800, controller.signal, {
+        onSelectableDomInvalidated,
+      })
+
+      const destroyCountBeforeDispose = destroySpy.mock.calls.length
+      const invalidationCountBeforeDispose = onSelectableDomInvalidated.mock.calls.length
+
+      session.dispose()
+
+      const destroyCountAfterDispose = destroySpy.mock.calls.length
+      const invalidationCountAfterDispose = onSelectableDomInvalidated.mock.calls.length
+
+      expect(destroyCountAfterDispose).toBeGreaterThanOrEqual(destroyCountBeforeDispose)
+
+      // Firing abort after dispose should have NO further side effects
+      controller.abort()
+
+      expect(destroySpy.mock.calls.length).toBe(destroyCountAfterDispose)
+      expect(onSelectableDomInvalidated.mock.calls.length).toBe(invalidationCountAfterDispose)
+      expect(host.children.length).toBe(0)
+    } finally {
+      destroySpy.mockRestore()
+    }
+  })
+
+  it('detaches abort listeners and cleans up host when renderList fails with non-abort error', async () => {
+    const bytes = readFixture('text-two-slides.pptx')
+    const controller = new AbortController()
+
+    let addCount = 0
+    let removeCount = 0
+    const origAdd = controller.signal.addEventListener.bind(controller.signal)
+    const origRemove = controller.signal.removeEventListener.bind(controller.signal)
+
+    const addSpy = vi
+      .spyOn(controller.signal, 'addEventListener')
+      .mockImplementation((type, listener, options) => {
+        if (type === 'abort') {
+          addCount++
+        }
+        return origAdd(type, listener, options)
+      })
+
+    const removeSpy = vi
+      .spyOn(controller.signal, 'removeEventListener')
+      .mockImplementation((type, listener, options) => {
+        if (type === 'abort') {
+          removeCount++
+        }
+        return origRemove(type, listener, options)
+      })
+
+    const renderListSpy = vi
+      .spyOn(PptxViewer.prototype, 'renderList')
+      .mockRejectedValueOnce(new Error('simulated render failure'))
+
+    try {
+      await expect(
+        renderPptx(bytes, host, scrollContainer, 800, controller.signal, {
+          onSelectableDomInvalidated,
+        }),
+      ).rejects.toThrow('simulated render failure')
+
+      expect(host.children.length).toBe(0)
+      // All abort listeners must be detached after render failure
+      expect(addCount - removeCount).toBe(0)
+    } finally {
+      renderListSpy.mockRestore()
+      addSpy.mockRestore()
+      removeSpy.mockRestore()
+    }
+  })
+
   it('aborts pending resize safely when signal fires during resize', async () => {
     const bytes = readFixture('text-two-slides.pptx')
     const controller = new AbortController()
