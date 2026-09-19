@@ -396,8 +396,8 @@ plugin and are **not** shipped in the published package, which is why the
 | --- | --- | --- | --- |
 | `jsdom` | 30.0.1 | MIT | Test-only DOM implementation. The client specs run under the Vitest `jsdom` environment so that selection ownership, `Range` behaviour and the overlay's render lifecycle are exercised against a real `Selection`/`Range` pair and a real DOM rather than against hand-written stand-ins. No `jsdom` type or value is referenced by `src/`. |
 | `@types/react-dom` | 18.3.7 | MIT | Type declarations for React DOM, required because the client specs mount components with `createRoot` (Task 5). Types only; nothing from this package reaches the bundle. |
-| `@deepseek-ai/dsh-client-ui-sidebar-right` | 0.1.5-rc.1 | MIT | Contract-only pin for the real-DSH smoke added in Task 5B. The compile probe `tests/compatibility/smoke-driver.contracts.compile.ts` reads the `Context.sidebarRight` augmentation and `openResource` from this package's public `./client` declaration, so the one navigation call the test-only driver makes is checked against the published contract. No value or type from it reaches the plugin's bundle, and it is not a dependency of the shipped package. |
-| `@deepseek-ai/dsh-client-ui-layout` | 0.1.5-rc.1 | MIT | Contract-only pin added in Task 5C. The `shell.overlay` root-scoped list slot the Ask surface moved into is declared by this package's public `./client` entry, and `tests/compatibility/contracts.compile.ts` reads that declaration to assert the slot's `kind` and `scope` at compile time. Imported with `import type {}` only — nothing from it reaches the plugin's bundle. |
+| `@deepseek-ai/dsh-client-ui-sidebar-right` | 0.1.5-rc.2 | MIT | Contract-only pin for the real-DSH smoke added in Task 5B. The compile probe `tests/compatibility/smoke-driver.contracts.compile.ts` reads the `Context.sidebarRight` augmentation and `openResource` from this package's public `./client` declaration, so the one navigation call the test-only driver makes is checked against the published contract. No value or type from it reaches the plugin's bundle, and it is not a dependency of the shipped package. |
+| `@deepseek-ai/dsh-client-ui-layout` | 0.1.5-rc.2 | MIT | Contract-only pin added in Task 5C. The `shell.overlay` root-scoped list slot the Ask surface moved into is declared by this package's public `./client` entry, and `tests/compatibility/contracts.compile.ts` reads that declaration to assert the slot's `kind` and `scope` at compile time. Imported with `import type {}` only — nothing from it reaches the plugin's bundle. |
 | `pdf-lib` | 1.17.1 | MIT | PDF fixture generator (`scripts/generate-pdf-fixtures.mjs`) added in Task 7. It writes the four committed fixtures in `tests/fixtures/pdf/`. Nothing from it reaches `src/` or the bundle; `pnpm build` does not read it. |
 | `@pdf-lib/fontkit` | 1.1.1 | MIT | Font parsing and subsetting for the same generator. It reads the CJK font's own `name` and `OS/2` tables so the generator can verify the license and the embedding permission before embedding a subset, and it drives `pdf-lib`'s `registerFontkit`. Development/test-only; nothing from it reaches the bundle. |
 
@@ -461,11 +461,13 @@ license:  MIT
 runtime/test-only: development/contract-only
 ```
 
-Both pins match the primary runtime release family (`0.1.5-rc.1`), which is the
-same release every other DSH contract package in `devDependencies` carries. Each
-license was verified against the published registry metadata (`npm view
-@deepseek-ai/dsh-client-ui-sidebar-right@0.1.5-rc.1 license` and `npm view
-@deepseek-ai/dsh-client-ui-layout@0.1.5-rc.1 license` both report `MIT`) and
+Those two blocks record the versions at introduction and are kept as history.
+Task 14 moved both pins, together with every other release-numbered DSH contract
+package, to the current runtime release family `0.1.5-rc.2`; the table above
+carries the versions actually pinned today. Each license was re-verified against
+the published registry metadata at the new release (`npm view
+@deepseek-ai/dsh-client-ui-sidebar-right@0.1.5-rc.2 license` and `npm view
+@deepseek-ai/dsh-client-ui-layout@0.1.5-rc.2 license` both report `MIT`) and
 against the installed package's own `package.json`.
 
 `layout` is deliberately **not** a Cordis runtime service dependency. The plugin

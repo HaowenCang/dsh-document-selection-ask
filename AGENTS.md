@@ -14,11 +14,17 @@ The intended primary coding model is DeepSeek v4.1 Flash running under DSH.
 
 ## Runtime baseline
 
-Primary runtime baseline: DSH `0.1.5-rc.1`.
+Current official runtime, primary blocking real-app runtime and primary compile-contract
+baseline: DSH `0.1.5-rc.2`.
 
-Forward contract target: DSH `0.1.5-rc.2`.
+The contract packages are pinned to `0.1.5-rc.2` and `pnpm check:dsh-contracts` compiles the
+probes against those declarations and compares them with the installed runtime.
 
-`0.1.5-rc.2` is compile-contract compatible only. Do not claim rc.2 runtime compatibility until a real-app smoke passes on rc.2. Current task status is tracked in `docs/STATUS.md`.
+`0.1.5-rc.1` is historical backward-compatibility evidence, not a maintained baseline: Task 13
+recorded a full real-app matrix on it, and it is no longer the contract pin. No newer release is
+declared as a forward target — a later DSH release stays unsupported until both the contract gate
+and a real-app acceptance pass on it. Current task status is tracked in `docs/STATUS.md`, and the
+support matrix is in `docs/compatibility.md`.
 
 ## Mandatory reading order
 

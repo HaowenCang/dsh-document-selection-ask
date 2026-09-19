@@ -20,9 +20,11 @@
  * test-only smoke driver and is not part of the package's contract.
  *
  * Verified against the installed
- * `@deepseek-ai/dsh-client-ui-sidebar-right@0.1.5-rc.1`, whose `./client` entry
+ * `@deepseek-ai/dsh-client-ui-sidebar-right@0.1.5-rc.2`, whose `./client` entry
  * is the public module that declares both the `sidebarRight` service and
- * `openResource`:
+ * `openResource`. Task 13 recorded the same contract against `0.1.5-rc.1`; from
+ * Task 14 the compile baseline is `0.1.5-rc.2`, and the rc.1 run is retained as
+ * historical backward-compatibility evidence rather than as a current pin.
  *
  * ```ts
  * declare module '@deepseek-ai/cordis' {

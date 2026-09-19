@@ -2,22 +2,74 @@
 
 ## Baseline
 
-- Primary blocking runtime: DSH `0.1.5-rc.2`
-- Optional backward-compatibility runtime: DSH `0.1.5-rc.1` (non-blocking)
-- Forward compile-contract target: to be re-established by Task 14; the earlier
-  "required baseline rc.1 / forward target rc.2" pairing is a **stale roadmap
-  assumption** and no longer describes the acceptance policy
+- Current official runtime, primary blocking real-app runtime and primary
+  compile-contract baseline: DSH `0.1.5-rc.2`
+- Historical / optional backward-compatibility evidence: DSH `0.1.5-rc.1`
+  (non-blocking; Task 13's real-app matrix, and no longer the contract pin)
+- Forward target: none declared. A newer DSH release stays unsupported until both
+  the contract gate and a real-app acceptance pass on it
+- Support matrix: `docs/compatibility.md`. Executable acceptance procedure:
+  `docs/manual-acceptance.md`
 
-The runtime policy changed during Task 13, on the human's explicit revision: this
-machine's installed DSH is `0.1.5-rc.2`, so rc.2 became the current official local
-runtime and the primary blocking acceptance runtime, while rc.1 was demoted to
-optional backward-compatibility evidence. `package.json` still pins the client
-packages and `pdfjs-dist` at the rc.1 release family as the compile contract, and
-Task 13 did not change that: a dependency or compile-contract migration is not a
-test-coverage task. Task 14 owns the compatibility matrix and must restate its own
-baseline from the versions actually installed at that time.
+Task 14 closed the divergence this section used to describe. The runtime policy
+changed during Task 13, on the human's explicit revision: this machine's installed
+DSH is `0.1.5-rc.2`, so rc.2 became the current official local runtime and the
+primary blocking acceptance runtime, while rc.1 was demoted to optional
+backward-compatibility evidence. `package.json` still pinned the client packages
+at the rc.1 release family through the end of Task 13, because a
+compile-contract migration is not a test-coverage task. Task 14 owns that
+migration and performed it: the contract packages are now pinned at `0.1.5-rc.2`,
+`pnpm check:dsh-contracts` compiles the probes against those declarations and
+compares them with the discovered installation, and the earlier "required
+baseline rc.1 / forward target rc.2" pairing is recorded as a stale roadmap
+assumption that no longer describes the acceptance policy.
 
 ## Completed
+
+- Task 14
+  - baseline: `0ed146e8ba8a4831c77eb06ef2b97cb35253849f` (`main`); branch
+    `eval/deepseek-v4.1-flash-task14-20260919`; worktree
+    `dsh-document-selection-ask-deepseek-task14-20260919`. No commit in this
+    round amends Tasks 1–13, and `origin/main` still points at the baseline
+  - the contract divergence is closed: the nine release-numbered `@deepseek-ai/*`
+    contract `devDependencies` moved from `0.1.5-rc.1` to `0.1.5-rc.2`,
+    `@deepseek-ai/cordis` stayed at `4.0.2` (independent versioning), the
+    `pnpm-lock.yaml` diff is exactly the nine packages' `resolution`/`version`
+    entries with no unrelated churn, and no production dependency changed
+  - `scripts/check-dsh-contracts.mjs` (new) is the round's gate, wired as
+    `pnpm check:dsh-contracts`; `scripts/dsh-doctor.mjs` was reduced to a
+    reporter over the same implementation, so the two commands cannot disagree
+  - the checker audits **every** `package.json` in the repository that declares a
+    `@deepseek-ai/*` pin, not only the root one. It found a genuine latent
+    defect the previous doctor could not see: `tests/browser/smoke-driver/package.json`
+    still pinned `@deepseek-ai/dsh-client-ui-sidebar-right@0.1.5-rc.1` while the
+    repository pinned rc.2 — a mixed release family inside one repository. That
+    pin was migrated to `0.1.5-rc.2`
+  - `docs/compatibility.md` (new) is the support matrix; `docs/manual-acceptance.md`
+    (new) is the executable acceptance procedure. `README.md` and `AGENTS.md` lost
+    their stale rc.1-primary / rc.2-forward-only statements, and `README.md`'s
+    withdrawn "XLSX runtime blocked" section now describes the shipped inline
+    runtime instead
+  - the same correction reached the two other places that stated the pin as
+    current: the compatibility section of `docs/07-testing-strategy.md` and the
+    development-dependency table in `THIRD_PARTY_NOTICES.md`. Both records of
+    *what was introduced when* were kept verbatim, with a Task 14 note naming the
+    new pin; the two licenses were re-verified at `0.1.5-rc.2` against the
+    published registry metadata. The published `files` list is unchanged, so
+    nothing was added to or removed from the package surface
+  - the manual procedure was executed in a real rc.2 web UI this round, not only
+    written: all eight formats quoted with the required provenance form while
+    preserving a `MANUAL-DRAFT` sentinel and submitting nothing; the
+    `打开方式` renderer selector was driven plugin → builtin → plugin; the plugin
+    was disabled through the documented `--patch` launch overlay and the builtin
+    preview was proved to keep working, then restored; large PPTX and XLSX
+    documents were cut mid-load with no stale DOM, no stale Ask and no uncaught
+    error; the console and network surfaces were inspected and attributed
+  - production delta is zero: `git diff 0ed146e8 -- src` is empty, and
+    `lib/client.js` (`735F8B77…`) and `lib/index.mjs` (`FAC72B86…`) are
+    byte-identical before and after the pin migration, which is what lets the
+    Task 13 rc.1 evidence keep describing the same shipped artifact
+  - full detail under "Current gate"
 
 - Task 13
   - commits: `9064bfdfc5c14c7e7e48df393e1cee7255830e92` (the round's work),
@@ -1269,6 +1321,250 @@ a WASM integrity failure still fails closed.
 
 ## Current gate
 
+- Task 14 contract migration — baseline pins `0.1.5-rc.1`, runtime `0.1.5-rc.2`,
+  `pnpm dsh:doctor -- --runtime` **FAIL** with "installed DSH is 0.1.5-rc.2 while
+  the contract packages pin 0.1.5-rc.1" (this is the divergence the round exists to
+  close). Every rc.2 package was proved resolvable before any file was touched:
+  `pnpm view @deepseek-ai/<package>@0.1.5-rc.2 version` returned `0.1.5-rc.2` for
+  all nine. After the migration: pins `0.1.5-rc.2`, runtime `0.1.5-rc.2`,
+  `pnpm typecheck` PASS, `pnpm dsh:doctor -- --runtime` PASS,
+  `pnpm check:dsh-contracts` PASS
+- Task 14 compile contract — `tests/compatibility/contracts.compile.ts` and
+  `tests/compatibility/smoke-driver.contracts.compile.ts` both compile against the
+  installed `0.1.5-rc.2` declarations under `tsconfig.client.json`, whose
+  `include` covers `tests/**/*.ts`. No `any`, no `as`, no `@ts-ignore`, no
+  `@ts-expect-error`, no private `@deepseek-ai/.../src/...` import and no copied
+  DSH interface was added; the only edits to those two probes are the historical
+  rc.1 → rc.2 baseline note in the smoke-driver probe's doc comment
+- Task 14 contract checker — `scripts/check-dsh-contracts.mjs`, wired as
+  `pnpm check:dsh-contracts`. It reports the contract release pin, every
+  `package.json` that declares a pin together with declared and installed
+  versions, the current DSH runtime, the runtime's `sidebar-documentpreview`
+  version, the installed `pdfjs-dist` version and the Node version, then compiles
+  the probes and sets a non-zero exit code for any inconsistency. Runtime
+  discovery is `DSH_INSTALL_NODE_MODULES` (exclusive when set), then the `dsh` CLI
+  on `PATH` — whose own version command is executed and whose output shape is
+  validated rather than assumed — then the public `DSH_HOME` layout. It performs
+  no registry query, no download, no install and no file write; the compile step
+  invokes the project's own TypeScript binary directly rather than through the
+  package manager, so it cannot make the package manager decide to install
+- Task 14 negative proofs — seven, on throwaway copies and environment overrides,
+  with the positive worktree never edited to manufacture a failure:
+  - P1 current rc.2: `pnpm check:dsh-contracts` **PASS** (exit 0)
+  - P2 a real rc.1 installation (`@deepseek-ai/dsh@0.1.5-rc.1` plus its
+    `sidebar-documentpreview`, installed into a throwaway directory) named through
+    `DSH_INSTALL_NODE_MODULES`: **FAIL**, exit 1, with
+    "runtime version mismatch: the installed DSH is 0.1.5-rc.1 while the contract
+    packages pin 0.1.5-rc.2". No fallback to the PATH CLI's rc.2 was taken, and
+    the second problem line states that the compared installation is not the one
+    the machine runs. A throwaway override pointing at a directory with no DSH at
+    all also fails loudly instead of falling back
+  - P3 one declared pin mutated to `0.1.5-rc.1` in a throwaway copy: **FAIL**,
+    exit 1 — "do not pin one DSH release: 0.1.5-rc.1, 0.1.5-rc.2" plus the
+    declared/installed mismatch for that package
+  - P4 one installed contract package removed from a throwaway `node_modules`:
+    **FAIL**, exit 1 — "declared at 0.1.5-rc.2 but absent from node_modules"
+  - P4b one installed contract package replaced by a manifest at `0.1.5-rc.1`:
+    **FAIL**, exit 1 — "installed at 0.1.5-rc.1, declared at 0.1.5-rc.2"
+  - P5 a real contract violation introduced into a throwaway copy of
+    `tests/compatibility/contracts.compile.ts` (`SlotMap['shell.overlay']['kind']`
+    given `'panel'`): **FAIL**, exit 1, with the compiler's own
+    `error TS2322: Type '"panel"' is not assignable to type '"list"'`
+  - P6 a `dsh` launcher placed on `PATH` that exits 3 instead of reporting a
+    version: **FAIL**, exit 1 — "a `dsh` launcher is on PATH but `dsh --version`
+    exited 3". The launcher's presence is what makes its failure load-bearing, so
+    it is not downgraded to a note; the healthy route still reports PASS
+  - the checker also fired on a real defect rather than a synthesised one: with
+    the smoke driver's manifest still at rc.1 it reported
+    "tests/browser/smoke-driver/package.json: @deepseek-ai/dsh-client-ui-sidebar-right
+    installed at 0.1.5-rc.2, declared at 0.1.5-rc.1"
+- Task 14 dsh-doctor consistency — `pnpm dsh:doctor -- --runtime` and
+  `pnpm check:dsh-contracts` now share one implementation, so they cannot report
+  contradictory conclusions about the contract pin or the runtime release. The
+  doctor keeps its documented semantics (an absent installation is a note, and a
+  failure with `--runtime`), and the checker requires the installation to be
+  found
+- Task 14 primary rc.2 browser matrix — re-run on the rc.2-pinned checkout against
+  real DSH `0.1.5-rc.2`, profile `dsa-smoke`, `DSH_SMOKE_URL` non-empty,
+  `--workers=1`: universal selection **10 / 0 / 0**, resource cleanup **6 / 0 / 0**,
+  XLSX **13 / 0 / 0**, PPTX **10 / 0 / 0**, DOCX **6 / 0 / 0**, PDF **10 / 0 / 0**,
+  TextPreview **8 / 0 / 0** — **63 passed, 0 failed, 0 skipped**, in 15.4 minutes.
+  The round changed the DSH compile/test dependency baseline, so this re-run is the
+  regression gate; every suite and every case is the one Task 13 added, with no
+  assertion removed or weakened
+- Task 14 real-app acceptance result table — executed in a real rc.2 web UI this
+  round. The runtime, the profile and the executable steps are recorded above;
+  this table is a record of one round's run, not a permanent compatibility promise
+
+  | Item | Result |
+  |---|---|
+  | text | PASS |
+  | markdown | PASS |
+  | code | PASS |
+  | csv | PASS |
+  | pdf | PASS |
+  | docx | PASS |
+  | pptx | PASS |
+  | xlsx | PASS |
+  | draft-preserve | PASS |
+  | auto-submit-zero | PASS |
+  | renderer-selector | PASS |
+  | disable/restore | PASS |
+  | rapid-close | PASS |
+  | console-clean | PASS |
+  | network-local | PASS |
+
+- Task 14 manual acceptance detail — each format was opened through the test-only
+  driver's own control, a `MANUAL-DRAFT` sentinel was typed into the composer with
+  real key presses, the selection was made with the real gesture the procedure
+  names, and Ask was pressed with a real click. The quoted content and the
+  provenance form matched the procedure's expected values exactly: `beta` with
+  `[来源：task5b-smoke.txt，第 2 行]` for text; `alpha paragraph` with
+  `[来源：task5b-smoke.md]` for Markdown — file-only, no line number, as the rule
+  requires where a rendered document has no exact source mapping;
+  `const beta = 2` with `[来源：task5b-smoke.ts，第 2 行]` for code;
+  `south,57,beta` with `[来源：task13-smoke.csv，第 3 行]` for CSV;
+  `Alpha Beta Gamma` with `[来源：task7-single-page.pdf，第 1 页]` for PDF page
+  provenance; `DOCX Alpha: Leading paragraph with bold text for native selection.`
+  with `[来源：task9-paragraphs.docx，第 1 渲染页]` for rendered-page provenance;
+  `PPTX Slide One Alpha` with `[来源：task10-text-two-slides.pptx，第 1 张幻灯片]`
+  for slide provenance; and `Sheet1!A1:C3` with
+  `[来源：task11-simple.xlsx，Sheet1!A1:C3]` for XLSX, whose quote body was the
+  procedure's expected Markdown table of display values — the `0.00`-formatted
+  `3.50`, not the stored `3.5`. In all eight the sentinel survived at offset 0,
+  exactly one quote block was appended after it in the order provenance line,
+  quoted content, question line, the transcript row count stayed at zero and the
+  submit observer counted **0**. The `打开方式` control (aria-label from the
+  product's own `openWith` locale key) was driven through `PDF · Selectable` →
+  `PDF` → `PDF · Selectable`: the plugin's `data-dsa-document-kind="pdf"` root and
+  the Ask control disappear under the builtin renderer and return when it is
+  chosen again, and the menu offered exactly `PDF · Selectable`, `PDF` and
+  `纯文本`. Disabling used the documented `--patch` launch overlay on the plugin's
+  own loader entry id, after
+  `dsh --profile dsa-smoke --patch <file> --dump-config` was used to confirm the
+  overlay actually reaches the entry; with the plugin disabled the builtin PDF
+  renderer drew the document, the menu offered only `PDF` and `纯文本`, and no Ask
+  control existed; restarting without the overlay restored `PDF · Selectable`,
+  the Ask control and the full quote behaviour. The disable file was created
+  inside `<repo>` for the duration of the check and removed afterwards. Large
+  `task10-large-120-slides.pptx` and `task11-large.xlsx` were opened and switched
+  away from 250 ms into loading: no slides, no workbook content, no stale Ask and
+  no stale renderer root survived, and the page recorded no uncaught error. The
+  console's five error-level entries were all same-origin 404s for
+  `/api/pet/pets`, `/api/pet/diagnostics` and `/api/task-board/state`, raised by
+  other plugins in the profile and not by the document renderer under test; no
+  entry originated in the tested renderer and no unhandled rejection occurred. The
+  network surface was origin-exact: zero cross-origin requests, zero `.wasm` HTTP
+  requests, and the XLSX parse ran in a `blob:` worker
+- Task 14 static gates — `pnpm check:dsh-contracts` PASS,
+  `pnpm dsh:doctor -- --runtime` PASS, `pnpm typecheck` PASS, `pnpm test`
+  **1,052 passed / 0 failed over 58 files** (identical to the Task 13 count, so no
+  test was deleted, skipped or weakened), `pnpm build` PASS, `pnpm verify`
+  **12/12**, `git diff --check` clean, and `npm pack --dry-run` **89 files** —
+  the same file count as Task 13, so the published surface did not grow. The
+  tarball is 6.4 MB against Task 13's 6.3 MB, which is the README and notices text
+  this round corrected rather than any new published file
+- Task 14 build identity — `lib/client.js`
+  `735F8B77EC0B899F9740A8C0591AB7FE0A294C9D5F185A69A9B4A8F7134A183D` and
+  `lib/index.mjs`
+  `FAC72B86168E002CB6DD2939C1775CAD0D149AFB24C4C2264B1110B079A60F39` are
+  identical before and after the rc.1 → rc.2 pin migration. The pin upgrade
+  changed type-resolution inputs only, so no production byte moved; this is also
+  why Task 13's rc.1 real-app evidence still describes the shipped artifact
+- Task 14 adversarial review — Agent D's read-only review of the integrated tree,
+  with zero files modified, found no blocking problem and five should-fix items,
+  all of which are closed in the tree being reviewed:
+  - the checker downgraded a failed `dsh --version` probe on a launcher it had
+    found to a note, so a PATH that once held `dsh` could lose the very evidence
+    that established the compared installation is the one this machine runs. It is
+    now a problem: a broken launcher fails the gate at exit 1. Verified by putting
+    a `dsh.cmd` that exits 3 on `PATH` — the gate reports
+    "a `dsh` launcher is on PATH but `dsh --version` exited 3" and exits 1, while
+    the healthy route still reports PASS. This is negative proof P6
+  - `docs/07-testing-strategy.md` still carried an "rc.2 contract probe
+    (disposable environment)" section whose result block read
+    `rc.2 runtime smoke: NOT CLAIMED`, contradicting the same file's rewritten
+    compatibility section and this round's record. The section now states the
+    Task 14 classification
+  - `docs/01-research-open-source.md` still declared rc.1 the project's primary
+    verified runtime, contradicting `AGENTS.md`, `README.md`, this file and
+    `docs/compatibility.md`. It now states the Task 14 policy
+  - the two documents that described the smoke profile as never touching another
+    profile were wrong about the filesystem: `dsa-smoke/node_modules` is a
+    directory link onto the `web` profile's installed tree, so the package links
+    `prepare` maintains physically live in that shared tree, and `cleanup` removes
+    them from there. `README.md`, `docs/manual-acceptance.md` and the safety-rules
+    comment in `scripts/dsh-smoke-profile.mjs` now state that, and scope the
+    isolation claim to manifests and loaders, which is what it actually covers
+  - `docs/manual-acceptance.md` described the workspace picker entry as "the
+    checkout directory's name". That holds for the canonical checkout and not for
+    a `git worktree`, and the failure is silent rather than loud: the registered
+    root exists either way, so a reader working from a worktree would validate a
+    second tree's fixtures and see nothing wrong. The document now says the name
+    is the DSH workspace-registry entry, requires the two trees' `smoke-fixtures/`
+    to be byte-identical before a run, and requires the result record to name the
+    tree the fixtures came from
+  - the review's remaining notes were handled as documentation rather than code:
+    the checker's header comment was stale about how the compile step is invoked
+    and about which dependency fields it owns, both now stated; the Chinese
+    interface strings in the manual are now qualified as locale values with the
+    stable `aria-label` anchor named as the language-independent handle; and
+    `docs/compatibility.md` now records that the evaluated content is the merge
+    baseline plus this branch's uncommitted changes rather than the baseline alone
+- Task 14 known items, recorded rather than fixed — each is out of this round's
+  ownership or forbidden by its constraints:
+  - two production source comments still name rc.1 as the primary runtime
+    (`src/client/renderers/pdf/register.ts` and
+    `src/client/adapters/dsh-text/preview-dom.ts`). Fixing them would put a
+    production diff in a round whose contract is zero production delta, so the
+    conflict is recorded here instead and belongs to whichever round next touches
+    those files
+  - several browser and client suites are still *titled* "real DSH 0.1.5-rc.1 …"
+    although this round ran them against rc.2. The titles are test-file
+    identifiers, the assertions are version-independent, and the round's actual
+    runtime is recorded here; renaming them was neither required nor in any
+    agent's file ownership
+  - `THIRD_PARTY_NOTICES.md`'s contract-only dev-pin rows were corrected because
+    this round's own migration made them false, but that file is otherwise
+    Task 15's; no packaging, shipped-set, or release work was done on it
+  - the isolated `dsa-smoke` profile is left prepared and pointing at this
+    worktree, as Task 13 left it. `pnpm smoke:profile cleanup` removes the test
+    driver; the plugin row and its link stay until another round runs `prepare`
+- Task 14 evidence provenance — the browser matrix and the manual acceptance run
+  executed the plugin built from this worktree while reading fixtures through the
+  registered workspace root, which is the canonical checkout
+  `dsh-universal-document-selection`. Both trees' `smoke-fixtures/` were compared
+  file by file after `prepare` wrote this worktree's copy and were byte-identical
+  (25 files, SHA-256 per file), so the documents under test were the ones this
+  round generated. The condition is stated in `docs/manual-acceptance.md` because
+  a reader reproducing the procedure from a worktree has to re-establish it
+  (`docs/compatibility.md`), Agent C (`docs/manual-acceptance.md`) and Agent D
+  (read-only adversarial review, zero files modified), each with a disjoint file
+  set. The contract-pin migration, the checker, the negative proofs, the
+  `README.md`/`AGENTS.md`/`docs/07-testing-strategy.md` corrections and the entire
+  real-app acceptance execution were integrator-run on the critical path. No
+  sub-agent committed, pushed, merged or created a branch, and no two agents wrote
+  the same file
+
+- Task 14 orchestration freeze — before any final gate ran, every sub-agent was
+  stopped and the registry was confirmed empty: **ACTIVE_SUBAGENTS = 0**, with no
+  write-capable and no read-only agent live, and no two of them sharing a file.
+  `FINAL_FREEZE_HEAD` is the head of the commit that carries this record and
+  `FINAL_FREEZE_STATUS = clean`; every gate below was then run at that exact
+  revision, with no commit, no file edit and no sub-agent started while it ran.
+  The three round commits are the two before it — the contract migration and the
+  documentation — plus the record itself
+- Task 14 production boundary — `git diff 0ed146e8 -- src` is empty.
+  `package.json` gained one script row and nine pin changes; `dependencies`,
+  `exports`, `files`, `engines` and `peerDependencies` are byte-identical, so the
+  published surface did not move and `scripts/verify.mjs` R10 reads the same
+  input it read before. No test was deleted, skipped or weakened: from 1,052
+  passing cases over 58 files in Task 13 to 1,052 over 58 here, and the only test
+  file the round touched is the smoke-driver compile probe's doc comment. No
+  formatter, linter, Playwright, TypeScript, React, bundler or renderer version
+  moved. No Task 15 work is present: nothing was packaged, no release or tag was
+  created, and nothing was published
+
 - Task 13 browser gate — **CLOSED** on the primary runtime, real DSH `0.1.5-rc.2`,
   profile `dsa-smoke`, `DSH_SMOKE_URL` non-empty: universal selection **10 / 0 / 0**,
   resource cleanup **6 / 0 / 0**, XLSX **13 / 0 / 0**, PPTX **10 / 0 / 0**, DOCX
@@ -1959,22 +2255,24 @@ own dependencies.
 
 ## Next
 
-**Task 14 — Compatibility matrix and DSH real-app smoke procedure.**
+**Task 15 is NOT AUTHORIZED.** No release, tag or npm publish is authorized
+either. Nothing in this round opens Task 15 or prepares a release.
 
-Task 13 closed the cross-format acceptance gate; what it deliberately did not do
-is describe the runtime support surface. Task 14 owns that: the compatibility
-matrix, the real-application smoke procedure a human follows, and the manual
-acceptance steps Task 13 left alone — disabling the plugin, restoring the builtin
-preview, and the plugin-management smoke.
+**Task 14 — Compatibility matrix and DSH real-app acceptance procedure — COMPLETE.**
+Task 13 closed the cross-format acceptance gate; what it deliberately did not do is
+describe the runtime support surface. Task 14 owned that: the compatibility matrix
+in `docs/compatibility.md`, the executable acceptance procedure in
+`docs/manual-acceptance.md`, the contract-pin migration that closed the divergence
+between the pins and the installed runtime, and the gate that decides both. All of
+it is delivered and recorded under "Current gate" above.
 
-Two constraints Task 14 inherits rather than chooses. Its baseline must be
-restated from the versions actually installed when it runs: the primary blocking
-runtime is DSH `0.1.5-rc.2` and the earlier "required baseline rc.1 / forward
-target rc.2" pairing is stale. And it must not be served by changing production:
-Task 13 ends with zero production delta, and the four sub-agent rework rounds this
-round required were all test- or gate-side, so a Task 14 that needs a renderer,
-lifecycle, worker/WASM or DSH-integration change is a different kind of round and
-has to say so before it starts.
+The round's own constraint held: it was not served by changing production. Task 13
+ended with zero production delta and Task 14 ends with zero production delta as
+well — `git diff 0ed146e8 -- src` is empty, and both shipped artifacts are
+byte-identical to the Task 13 build. What moved is the compile-contract baseline,
+the gate that decides it, and the documentation that states the support surface.
+
+The handover below is retained as history.
 
 The Task 12 → Task 13 handover is retained as history: Task 12 converged the
 registrations, the selection lifetime, the locale and the renderer fallback
