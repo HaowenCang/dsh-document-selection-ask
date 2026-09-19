@@ -679,11 +679,535 @@ Lifecycle:
 - session.dispose removes active abort ownership
 - later signal abort after dispose has no renderer side effect
 
+- Task 11 — `dc266a6620ccc8889dd69377dd4424761a989358` — PASS
+
+XLSX:
+- read-only local workbook renderer
+- semantic cell-range selection
+- displayed/calculated values
+- 200-cell limit
+- sheet + A1 provenance
+- local Duke WASM
+- worker-backed parsing
+- OOXML metadata + actual extraction gates
+- real DSH Ask verified
+
+- Task 11R — BLOCKED — CLIENT-ASSET CONTRACT BLOCKED
+
+Remediation of the Task 11 merge review. The review's three confirmed production
+defects and its host-architecture deviation are fixed; the XLSX browser evidence is
+**not** green, and the round is reported as BLOCKED rather than PASS.
+
+Fixed, with the failing case observed before the fix:
+
+- **metadata preflight was not awaited.** `XlsxBody` called
+  `preflightOoxml(copy, DEFAULT_OOXML_LIMITS)` fire-and-forget, so extraction
+  verification, the relationship scan and the third-party viewer could all begin while
+  the metadata gate was still reading the central directory. It is now awaited, and the
+  three gates are strictly serial: preflight, then `verifyOoxmlExtraction`, then
+  `assertSafeXlsxRelationships`, then the engine check, then the viewer.
+- **the preflight received no AbortSignal.** Every gate now receives the component's own
+  lifecycle signal, so releasing the tab interrupts metadata preflight, extraction
+  verification and the relationship scan alike. A preflight rejection no longer escapes
+  as an unhandled rejection.
+- **validated bytes and rendered bytes were different objects.** The pipeline validated a
+  defensive copy and the ready render re-sliced `content.data`, so a host that reused or
+  mutated its buffer between the two points changed what the viewer parsed. `ready` now
+  carries the exact `ArrayBuffer` the gates validated (`{ kind: 'ready'; file: ArrayBuffer }`),
+  one defensive copy per resource generation, and nothing re-reads the host array.
+- **`checkSignature: true` in the relationship scanner.** Replaced by
+  `checkCrc32: true` plus `checkOverlappingEntry: true`, stated once as
+  `XLSX_RELATIONSHIP_READER_OPTIONS` and pinned by a spec against the shared verifier's
+  policy.
+- **a cancelled relationship scan resolved successfully.** `if (signal?.aborted) return`
+  reported a security check that never finished as one that passed. Abort now rejects
+  with an `AbortError`, checked before enumeration, between entries and after each
+  entry's content is read, and the reader is still released on that path.
+- **a cleanup failure could replace the verdict.** The scanner now applies the shared
+  verifier's asymmetry: a primary refusal or abort survives a failing `close`, while a
+  cleanup failure after acceptance propagates.
+- **the relationship scan spawned a zip.js codec Web Worker.** Found by running the
+  suite against a live instance and capturing the worker's creation stack:
+  `getData` was called with no options, so zip.js's `useWebWorkers` default built a
+  `Blob` worker *before* the gate had decided the archive was safe. The scan now states
+  `useWebWorkers: false`, matching `verifyOoxmlExtraction`; the browser case asserts a
+  live instance creates no worker at all during the blocked-state path.
+- **the host half was no longer client-only.** `src/index.ts` had grown a `webServer`
+  lookup, two `/dsa-assets` routes and `node:fs` reads. It is restored to the inert
+  client-only baseline; `tests/unit/host-entry.spec.ts` now asserts that applying it
+  touches no context member, registers no route, and that neither the source module nor
+  the built bundle mentions `webServer`, `dsa-assets`, `readFileSync`, `node:fs`,
+  `xlsx-worker` or `duke_sheets_wasm`.
+- **the build no longer rewrites upstream code without checking it.** The two
+  `@extend-ai/react-xlsx` rewrites (the worker construction and the Duke dynamic import)
+  go through `replaceExactlyOnce`, which refuses a build unless each literal occurs
+  exactly once. The host-route worker rewrite and the `lib/assets` copy are deleted, so
+  the package ships no separate worker or WASM asset.
+
+Not fixed, and the reason the round is BLOCKED:
+
+- **the XLSX engine binary has no delivery path.** `@extend-ai/react-xlsx` publishes
+  `duke_sheets_wasm_bg.wasm` at a public subpath, and `setWasmSource` accepts an
+  `ArrayBuffer` that its worker receives verbatim — but nothing can carry those 4.4 MB to
+  the browser client-only. `@deepseek-ai/dsh-client-modules` serves an external plugin's
+  browser half as exactly one generated script (`exports["./client"]` plus its optional
+  source map) through a closed, pre-computed response table; a request for any other path
+  answers 404 and there is no file-system fallback. `ClientModuleRegistry` exposes
+  `graph`, `clientPath`, `fetchBundle`, `artifactBaseline`, `rebuilt`, `onRebuilt` and
+  `onGraphChanged` — no asset or file registration. `DshClientManifest` declares only
+  `platform`, `inject`, `immediately` and `external`, and unknown fields are discarded.
+  The one URL a bundle can learn at run time is that combo endpoint, `import.meta.url` is
+  unavailable in a classic script, and `document.currentScript` is `null` by the time a
+  lazily materialised module body runs. Inlining the binary into `lib/client.js` is
+  technically possible and is what DSH's own PDF preview does, but it is exactly the
+  "base64 the entire WASM into main JS" that this round's constraints forbid, so it was
+  not adopted and the host route was not restored. The renderer therefore fails closed
+  with a typed `XlsxWasmSourceUnavailableError` and a visible message before any
+  third-party viewer is mounted.
+- Consequences: `tests/browser/xlsx-selection.spec.ts` is 1 passed / 9 failed / 0
+  skipped. Case 0 records the blocked state from a live instance (renderer reports the
+  blocked engine, no selectable surface, no worker, no `/dsa-assets` request, no remote
+  request, `/dsa-assets/duke_sheets_wasm_bg.wasm` answers 404). Cases 1–9 encode the
+  tightened evidence the unblock must satisfy — exact published range read before Ask,
+  exact provenance, the sheet-switch intermediate state, painted drawing surfaces for the
+  chart/image workbook, a real client-owned `blob:` Worker, Delete/Backspace/paste
+  read-only attempts — and every one of them fails at the readiness gate because no
+  workbook reaches a viewer. Their assertions beyond that gate are unverified.
+- `tests/client/xlsx-renderer.client.spec.tsx` gained `data-dsa-xlsx-selection` as the
+  renderer's published semantic selection (`"<sheet>!<range>"`), so the browser suite can
+  confirm a gesture's range rather than infer it from a visible button.
+
+Verification (all on `eval/gemini-3.8-flash-task11-20260918`):
+
+- `pnpm test`: PASS (910 tests)
+- `pnpm typecheck`: PASS
+- `pnpm build`: PASS
+- `npm pack --dry-run`: PASS, with `lib/assets/**` removed from the published file list
+- `git diff --check`: PASS
+- real DSH 0.1.5-rc.1, profile `dsa-smoke`:
+  - PDF 10 passed / 0 failed / 0 skipped
+  - DOCX 6 / 0 / 0
+  - PPTX 10 / 0 / 0
+  - TextPreview 8 / 0 / 0
+  - XLSX 1 passed / 9 failed / 0 skipped — BLOCKED (see above)
+
 Next:
-Task 11 — XLSX read-only workbook renderer and semantic cell-range Ask
+
+Architecture decision on client-only binary asset delivery for external DSH client
+plugins. Until it is made, Task 11 cannot be merged and Task 12 must not start.
+
+- Task 11A — PRODUCTION DEFECT FOUND
+
+Delivered the authorised architecture decision. The Duke engine binary and the
+library's worker now travel **inside the single client bundle**; the XLSX browser
+suite reaches 11 passed / 1 failed / 0 skipped, and the one failure is a defect in
+the pinned viewer that this round did not paper over.
+
+Architecture (`docs/06-security-performance.md` §11 records it):
+
+- the exact installed `@extend-ai/react-xlsx@0.16.4` binary is read at build time
+  by `scripts/xlsx-runtime-assets.ts`, which refuses the build unless its byte
+  length is 4,412,299 and its SHA-256 is
+  `24687a3e…5e6ef3d` (`XLSX WASM IDENTITY CHANGED`), compresses it
+  deterministically with `node:zlib` (`mtime = 0`, level 9) and publishes
+  `Base64(gzip)` through the virtual module `virtual:dsa-xlsx-wasm-gzip`
+- the compressed payload is 1,674,037 bytes / 2,232,052 Base64 characters, inside
+  the 1,800,000 / 2,400,000 bounds (`XLSX WASM COMPRESSION REGRESSION` otherwise).
+  The forbidden raw representation is 5,883,066 characters and appears nowhere in
+  the artifact
+- the runtime decodes, inflates with `DecompressionStream('gzip')`, checks the
+  length and the SHA-256 and only then calls `setWasmSource(BufferSource)`. No
+  decompressor dependency was added. Every failure — missing
+  `DecompressionStream`, bad base64, corrupt gzip, wrong length, wrong digest —
+  raises `XlsxWasmIntegrityError` and fails closed
+- initialization is lazy and a session singleton: a session that never opens a
+  workbook runs no `atob`, no inflate and no digest, and parallel or repeated opens
+  share one promise. A failed attempt clears the cache rather than poisoning the
+  session. A caller's `AbortSignal` bounds **its wait only**: a released tab never
+  mounts a viewer, and the shared work still completes
+- the worker is a self-contained module the build synthesizes: the library's
+  `xlsx-worker.js` with its three `fflate` imports rebound to an inlined copy of
+  `fflate/esm/browser.js` and its `import("@dukelib/sheets-wasm")` rebound to an
+  inlined Duke glue factory. Zero static imports, zero dynamic imports, zero
+  `require`, zero `importScripts`, 389,629 characters, no WASM bytes inside it
+- the bundle constructs that worker from a `Blob` and revokes the object URL in the
+  same statement. The rewrite of the library's own
+  `new Worker(new URL("./xlsx-worker.js", import.meta.url), …)` now replaces the
+  **whole** construction: the first live run of this architecture produced
+  `new Worker(__dsa_xlsx_create_worker__(), { type: "module" })`, which stringified
+  the returned `Worker` and made the browser fetch `[object Worker]` relative to the
+  document. The bundle spec now asserts the exact rewritten call site
+- every rewrite of upstream code (two in the library, four in the worker) is
+  asserted to match exactly once, and no `node_modules` file is patched
+
+Measured bundle:
+
+- `lib/client.js` before 13,666,692 bytes (4,482,591 gzipped), after 16,312,972
+  bytes (6,245,766 gzipped); delta 2,646,280 bytes, inside the 3.0 MB gate
+- the compressed payload is the minimal viable DSH-native client-only transport
+  under the current public module contract
+
+**Production defect found — the pinned viewer does not paint an embedded picture.**
+
+`tests/browser/xlsx-selection.spec.ts` case 6 now asserts the two drawing objects
+**separately**, and the picture half fails:
+
+- the chart is drawn. The viewer publishes an inline
+  `<svg role="img" aria-label="Chart 1">` with a 300×189 box, 4 fills and 8
+  gridlines, and the case asserts exactly that
+- the embedded picture is not. The fixture's PNG is a solid red 64×64 image; the
+  case polls the sheet canvas for its own colour and finds 0 pixels. The control
+  case (`6a`) proves the signature is discriminating: the workbook without a
+  drawing part paints none of that colour and publishes no drawing overlay at all
+- the image is present in the model. Probed through the library's own public
+  engine API: `Workbook.fromBytes(fixture).getSheet(0).images` reports one entry,
+  `hidden: false`, `mediaPath: "xl/media/image1.png"`, with a valid anchor rect
+- ruled out by measurement, each with the exact-payload experiment: the malformed
+  drawing part (fixed, see below), the anchor form (`oneCellAnchor` rewritten to
+  `twoCellAnchor` — identical rendering), the picture's own `spPr/xfrm/ext` being
+  `0,0` while the anchor carries 609600×609600 (rewritten to match — identical
+  rendering), and worker-versus-main-thread (`useWorker={false}` — identical
+  rendering)
+- this is the frozen Task 11 chart/image browser-fidelity requirement, so it is
+  reported rather than relaxed
+
+**Fixture defect found and fixed.** `scripts/generate-xlsx-fixtures.mjs` wrote the
+chart's `twoCellAnchor` with a stray `</xdr:rowOff>`, so
+`xl/drawings/drawing1.xml` was not well-formed XML and the viewer parsed no drawing
+at all — neither the chart nor the picture. With the tag removed the chart renders;
+`tests/fixtures/xlsx/chart-image.xlsx` is regenerated from the fixed generator. The
+other five fixtures were regenerated for comparison and **reverted**: their only
+logical difference is the `docProps/core.xml` timestamp, so regenerating them would
+have been unrelated binary churn.
+
+Gesture calibration. The suite's grid offsets were measured against the live
+runtime rather than assumed; the first honest run put a 45 px start on row 2. The
+grid box includes the 40 px row header and the 24 px column header, column A spans
+x ≈ 45–95 and row 1 spans y ≈ 24–44 at 1280×720. Every assertion stays exact — the
+range a gesture produced is read back from `data-dsa-xlsx-selection` and compared
+— and each case records the measurement that fixed its offsets.
+
+Verification (all on `eval/gemini-3.8-flash-task11-20260918`, HEAD before the
+round's commit):
+
+- `pnpm test`: PASS (939 tests, up from 910)
+- `pnpm typecheck`: PASS
+- `pnpm build`: PASS
+- `npm pack --dry-run`: PASS — the tarball carries `lib/client.js`, `lib/index.mjs`
+  and type declarations only; no `*.wasm` side asset, no worker side asset, no
+  smoke fixtures, no Playwright report
+- `git diff --check`: PASS
+- targeted suites: `xlsx-wasm` 14, `xlsx-security` 30, `xlsx-renderer` 19,
+  `xlsx-selection-bridge` 5, `xlsx-adapter` 9, `cell-range` 6, `format-xlsx` 16,
+  `xlsx-bundle` 18, `host-entry` 9 — 126 passed
+- real DSH 0.1.5-rc.1, profile `dsa-smoke`, `DSH_SMOKE_URL` non-empty:
+  - XLSX 11 passed / 1 failed / 0 skipped — the failure is the picture defect above
+  - PPTX 10 / 0 / 0
+  - DOCX 6 / 0 / 0
+  - PDF 10 / 0 / 0
+  - TextPreview 8 / 0 / 0
+- network and host gates inside the XLSX suite: renderer-triggered WASM requests 0,
+  worker requests 0, `/dsa-assets` requests 0, remote requests 0, document uploads
+  0; the one `/dsa-assets/duke_sheets_wasm_bg.wasm` request is the suite's own
+  intentional probe and answers 404
+- one real `blob:` Worker is observed before the workbook is ready, and the object
+  URL the plugin created was revoked — read from instrumented
+  `URL.createObjectURL`/`revokeObjectURL`, not from the code that calls them
+- `src/index.ts` remains inert: `webServer`, `dsa-assets`, `node:fs` serving and
+  any XLSX host service are all absent from the host bundle
+
+Next:
+
+The embedded-picture defect is in the pinned `@extend-ai/react-xlsx@0.16.4` viewer,
+not in this plugin's code: the plugin passes the documented props, the engine's
+public model carries the image, and the chart from the same drawing part renders.
+Task 11A is therefore **not** PASS and Task 11 is still not mergeable. Resolving it
+needs either an upstream fix, a pin to a version that paints pictures, or a
+separate authorised decision — none of which this round may take. Task 12 must not
+start.
+
+Next:
+Task 12 — Unified registration, locale, cleanup and renderer fallback
+
+- Task 11B — FIXTURE DEFECT REMAINS — NOT PASS
+
+Authorised remediation of the embedded-picture rendering path, through the pinned
+viewer's **public** boundary only. The remediation is implemented, verified and
+committed; the frozen chart/image browser gate is still not green, and the
+blocking condition is now identified in the test fixture rather than in the
+plugin or the viewer.
+
+What was done (all of it inside the authorised public boundary):
+
+- `XlsxBody` now configures the viewer explicitly: `showImages={true}` and
+  `renderImage={renderXlsxImage}`. No other viewer or provider prop changed, and
+  the canvas renderer, read-only mode, worker mode and form-control suppression
+  are as they were;
+- `src/client/renderers/xlsx/render-image.tsx` renders one `<img>` per worksheet
+  picture from the `XlsxImageRenderProps` the hook is handed — the model entry's
+  own `src` and its `description`/`name` alt text — and sizes it from the
+  **style the viewer published** (`style.width` / `style.height`). The viewer
+  wraps this node in a positioned element carrying the same style, so the node
+  fills that box; re-applying the style's `left`/`top` would place it a second
+  time inside a box already at those coordinates and clip it away. No anchor, row
+  height, column width or EMU value is read anywhere in the module, and the
+  callback is a module-level constant so the viewer's drawing-layout memoization
+  is not invalidated per render;
+- the node is read-only presentation: `draggable={false}`, `pointer-events: none`,
+  no selection hook, no resize handle, no controller mutation. `renderImageSelection`
+  is deliberately **not** supplied;
+- no dependency, lockfile, bundler, security-pipeline or selection change. The
+  built `lib/client.js` moved from 16,312,972 to 16,314,168 bytes (delta +1,196).
+
+Public contract verified against the installed `@extend-ai/react-xlsx@0.16.4`
+package-root typings: `XlsxViewerProps.renderImage`,
+`XlsxImageRenderProps { defaultNode, image, rect, style }`, `XlsxImage.src`,
+`XlsxImage.mimeType`, `XlsxImage.mediaPath`, `XlsxViewerProps.showImages` (default
+`true`). No private API is required or used, and no `node_modules` file is
+patched.
+
+Measured against the real fixture, real security gates, real engine and real
+viewer (`tests/client/xlsx-image-render.client.spec.tsx`, 3 cases):
+
+- the public controller image model publishes the fixture's one picture with a
+  client-owned source, `mimeType: image/png`, `mediaPath` under `xl/media`,
+  a one-cell anchor at column D / row 2, and sheet indices 0;
+- the documented `renderImage` callback **is** invoked, with a finite positive
+  rectangle (`width`/`height` both 64 in the real browser), an absolute
+  positioned style carrying the same box and a numeric z-order, and a non-null
+  `defaultNode`. This is what rules out `UPSTREAM PUBLIC IMAGE HOOK DEFECT`;
+- the production body publishes the picture as a node whose `src` is the viewer's
+  own object URL: the platform's allocator is instrumented in the case, the source
+  appears in `created` exactly once, the plugin revokes nothing it does not own,
+  and a synthetic pointer drag on the node leaves the published box byte-identical.
+
+Measured in a real DSH instance (0.1.5-rc.1, profile `dsa-smoke`, 1280x720):
+
+- XLSX: **12 passed / 1 failed / 0 skipped** (13 cases; 6a and 6b are new);
+- case 6, the frozen chart/image case, now reads the picture from direct semantic
+  evidence rather than from canvas colour. Eleven of its twelve picture
+  properties pass: the node is published (`count` 1), its source is `blob:`, it is
+  `complete`, it reports 64x64 natural size, it is laid out in a **64x64 box at
+  924,121** — positive, inside the viewport, `display`/`visibility`/`opacity` all
+  visible — and it carries `alt="Picture 1"` and `draggable="false"`. The chart
+  half still passes unchanged: `<svg role="img" aria-label="Chart 1">` with
+  positive dimensions, ≥2 fills and ≥4 gridlines, asserted as a separate object;
+- the twelfth property — that the picture's bytes decode into the fixture's solid
+  red — fails, and it fails for a cause that no renderer can change:
+  **the fixture's embedded PNG is not a decodable image.**
+
+**Fixture defect — new independent evidence. `tests/fixtures/xlsx/chart-image.xlsx`
+was NOT modified.**
+
+The picture stored at `xl/media/image1.png` is 227 bytes and byte-identical to the
+generator's `SAMPLE_PNG_BASE64` constant (SHA-256
+`8f66e8cd3d8558e86bc0870a8e21adf9f33126d91fc6dee7071b10ec53ff8ca8`). Its IHDR
+parses — 64x64, 8-bit RGBA — which is why an `<img>` element reports
+`complete: true` and `naturalWidth: 64`. Its image data does not:
+
+- `node:zlib.inflateSync` over the IDAT stream: `invalid code lengths set`
+- `fflate.unzlibSync` (the decoder bundled inside `@extend-ai/react-xlsx` itself):
+  `invalid length/literal`; `fflate.inflateSync`: `unexpected EOF`
+- Chromium's own decoder, reached through `createImageBitmap` in the live page:
+  `InvalidStateError: The source image could not be decoded`
+- drawing the node into a canvas yields no colour at all, which is what the
+  round-11A canvas sampling observed
+
+The IDAT payload is 89 bytes behind a valid `78da` zlib header and claims to
+expand to the 16,448 bytes a 64x64 RGBA image needs; every decoder that reaches
+the Huffman tables rejects it. Three independent decoders, two of them not
+browsers, agree, and the bytes in the fixture are the bytes the generator writes.
+
+**Correction to the Task 11A conclusion.** Task 11A recorded "the pinned viewer
+does not paint an embedded picture" as a production defect, on the evidence that
+the sheet canvas carried none of the picture's colour. That evidence has a
+sufficient alternative explanation now: a picture whose pixel data cannot be
+decoded paints no colour under *any* renderer, so the canvas-bake observation did
+not establish a viewer defect. The remediation above remains authorised and
+correct on its own terms — it is plugin-side compatibility hardening through the
+documented replacement boundary, it moves pictures onto the same positioned DOM
+overlay the chart already uses, and it removes no assertion — but it is **not**
+claimed to have fixed a proven upstream defect.
+
+Verification on `eval/gemini-3.8-flash-task11-20260918`:
+
+- `pnpm test`: PASS (945 tests over 54 files, up from 939)
+- `pnpm typecheck`: PASS
+- `pnpm build`: PASS
+- `npm pack --dry-run`: PASS
+- `git diff --check`: PASS
+- targeted suites: `xlsx-wasm` 14, `xlsx-security` 30, `xlsx-renderer` 22 (up
+  from 19: the three new presentation-configuration cases), `xlsx-image-render` 3,
+  `xlsx-selection-bridge` 5, `xlsx-adapter` 9, `xlsx-bundle` 18, `host-entry` 9 —
+  110 passed
+- real DSH 0.1.5-rc.1, profile `dsa-smoke`: XLSX 12/1/0; PPTX 10/0/0; DOCX 6/0/0;
+  PDF 10/0/0; TextPreview 8/0/0 — no cross-format regression
+- XLSX network gates unchanged: parser-asset requests 0, remote requests 0,
+  `/dsa-assets` 0, document uploads 0, WASM HTTP 0, worker HTTP 0; the one real
+  `blob:` Worker is still observed and its object URL still revoked
+- the embedded picture's own object URL is observed in the platform audit:
+  created by the controller, alive while the workbook is open, and revoked after
+  the resource is switched — read from instrumented
+  `URL.createObjectURL`/`revokeObjectURL`
+
+Next:
+
+Task 11B is **not** PASS and Task 11 is still not mergeable. Unblocking it
+requires an authorised decision about the fixture: `chart-image.xlsx` must carry
+a decodable 64x64 PNG before the frozen colour evidence can pass, and repairing
+the fixture is a separate authorised change — this round was instructed not to
+modify it, and did not. Task 12 must not start.
+
+- Task 11C — PASS
+
+Repair of the malformed XLSX embedded-image fixture, and re-run of the frozen
+Task 11 browser gate. **No production source was modified**: the delta is the
+fixture generator, the one regenerated fixture, a new fixture-integrity spec, the
+two type declarations that spec needs, and this documentation. Task 11B's public
+`renderImage` path, the WASM runtime architecture and the selection architecture
+are untouched.
+
+The defect, restated from the bytes: `xl/media/image1.png` in
+`chart-image.xlsx` was 227 bytes (SHA-256
+`8f66e8cd3d8558e86bc0870a8e21adf9f33126d91fc6dee7071b10ec53ff8ca8`) and
+byte-identical to the generator's `SAMPLE_PNG_BASE64` constant. Its `IHDR` parsed
+— 64x64, 8-bit RGBA — while its 89-byte `IDAT` stream, behind a valid `78da`
+zlib header, did not inflate (`invalid code lengths set` in `node:zlib`). No
+renderer could have turned it into pixels, which is why the Task 11A conclusion
+that the pinned viewer had a picture defect was withdrawn in 11B and is not
+restored here.
+
+**The replacement is generated, not sourced.** `scripts/generate-xlsx-fixtures.mjs`
+now exposes `createSolidRgbaPng()` / `createSolidRedPng()` and the picture is
+built from exported width, height and pixel constants; the opaque Base64 literal
+is gone from the repository, nothing was downloaded, and no dependency was added
+for it. The chunk CRC-32 uses a table local to the generator, and the compression
+is `node:zlib.deflateSync(raw, { level: 9 })` — a zlib stream, as the PNG
+specification requires.
+
+The new picture is a minimal 8-bit RGBA PNG of **155 bytes**, SHA-256
+`f41dfec153038c92de8517fde6d06d501233515739f292d70e4e095ad27c6852`, containing
+exactly `IHDR`, `IDAT`, `IEND` and no ancillary chunk. Its `IDAT` is 98 bytes and
+inflates to exactly **16,448** bytes: 64 rows × 257 bytes (one filter byte of
+type 0 plus 64 pixels), every one of the 4,096 pixels `[255, 0, 0, 255]`.
+
+`tests/unit/xlsx-fixtures.spec.ts` (13 cases) reads that media part **out of the
+committed workbook** rather than from the generator: signature and exact chunk
+path, every chunk CRC-32, the `IHDR` fields, the inflate length, all 4,096
+pixels, agreement between `node:zlib` and the `fflate` bundled inside
+`@extend-ai/react-xlsx`, byte equality with the generator's output, the drawing
+part parsed as XML with both anchors present, the image and chart relationships
+still internal, and no external relationship target. The spec was observed **RED
+against the unrepaired fixture** — with the generator change temporarily set
+aside, so the failure could not come from the new builder — and the three
+semantic cases failed with exactly
+`the embedded PNG's IDAT stream does not inflate: Error: invalid code lengths set (89 bytes behind a 78da zlib header)`.
+
+Verification on `eval/gemini-3.8-flash-task11-20260918`:
+
+- targeted suites: `xlsx-fixtures` 13, `xlsx-image-render` 3, `xlsx-renderer` 22,
+  `xlsx-wasm` 14, `xlsx-security` 30, `xlsx-bundle` 18 — 100 passed
+- `pnpm test`: PASS (958 tests over 55 files, up from 945)
+- `pnpm typecheck`: PASS, `pnpm build`: PASS, `npm pack --dry-run`: PASS (88
+  files; no XLSX fixture and no smoke fixture in the tarball),
+  `git diff --check`: PASS
+- `lib/client.js` is byte-identical before and after the round
+  (`72dde6ffe6709071fd94a567ef7e90f58fd4a9e676adcf3adb1aa46f729e4521`,
+  16,314,168 bytes) and so is `lib/index.mjs`
+  (`fac72b86168e002cb6dd2939c1775cad0d149afb24c4c2264b1110b079a60f39`, 2,256
+  bytes): the repair changes no production or build input
+- `git diff --name-only tests/fixtures/xlsx` names **only**
+  `tests/fixtures/xlsx/chart-image.xlsx`; the other five fixtures are
+  byte-identical to their committed state (SHA-256 compared before and after the
+  targeted regeneration, and no full regeneration was run)
+- real DSH 0.1.5-rc.1, profile `dsa-smoke`: **XLSX 13 passed / 0 failed / 0
+  skipped** — the same case that failed in 11A and 11B is now green, on the same
+  assertions: PPTX 10/0/0, DOCX 6/0/0, PDF 10/0/0, TextPreview 8/0/0
+
+Case 6's picture evidence, read from the live page rather than from the fixture:
+the node is published (`count` 1) with a `blob:` source the controller allocated
+exactly once, `complete: true`, natural 64x64, laid out in a 64x64 box at
+924,121, visible, `draggable="false"`, positioned by the viewer's own box. The
+platform audit shows the picture blob at **155 bytes** carrying SHA-256
+`f41dfec1…`, `createImageBitmap` returns 64x64, and drawing the decoded node into
+a canvas yields **4,096 of 4,096** red pixels. The chart is asserted separately
+and unchanged: `<svg role="img" aria-label="Chart 1">` with positive dimensions,
+≥2 fills and ≥4 gridlines. Case 6a's control still reports zero image nodes and
+zero red pixels for `simple.xlsx`, and 6b still shows the controller's own object
+URL released when the resource is switched.
+
+One attribution note, recorded because it cost a run: the first execution of this
+round's browser gate read the **stale fixture copy** in the original checkout's
+gitignored `smoke-fixtures/`, which the smoke session's workspace root resolves
+against, and case 6 failed with the same `InvalidStateError` as before — for the
+old bytes, not the new ones. After that copy was refreshed with the regenerated
+fixture (a gitignored local artifact; the original checkout's HEAD and working
+tree are untouched), the case passed. A browser run of this suite is only
+evidence about the fixture the session actually serves.
+
+The correct statement of what this round establishes: the fixture's malformed PNG
+was replaced by a deterministic, valid 64×64 RGBA PNG. The previously authorised
+public `renderImage` compatibility path remains in place and now passes the full
+image-decoding and visual-fidelity gate. It is **not** established — and is not
+claimed — that the pinned viewer ever had a missing-picture defect.
+
+Next:
+
+Task 11C is PASS and Task 11 is a **PASS candidate**. PR #4 stays a draft and
+Task 12 must not start; whether Task 11 merges is an external review decision.
 
 ## Current gate
 
+- Task 11C fixture integrity unit suite: PASS (13 cases) — the committed
+  `xl/media/image1.png` read out of the workbook, its signature and exact chunk
+  path, every chunk CRC-32, its `IHDR` fields, the inflate to exactly 16,448
+  bytes, all 4,096 pixels at `[255, 0, 0, 255]`, `node:zlib` and the viewer's own
+  `fflate` agreeing byte-for-byte, generator determinism and byte equality with
+  the committed media part, `xl/drawings/drawing1.xml` parsed as XML with both
+  anchors present, and the image and chart relationships still internal. Observed
+  RED against the unrepaired fixture on `invalid code lengths set`
+- Task 11 real DSH XLSX renderer smoke (Playwright, live instance): **13 passed /
+  0 failed / 0 skipped as of Task 11C.** Case 6 — the frozen chart/image fidelity
+  case — now passes on the same assertions that failed in 11A and 11B: the
+  published picture's own bytes decode through `createImageBitmap` into a 64x64
+  bitmap and draw into 4,096 of 4,096 red pixels, with the chart asserted
+  separately as a labelled SVG
+- Task 11 embedded-image presentation client suites: PASS — `xlsx-image-render` (3
+  cases: the public controller image model, the documented `renderImage` callback's
+  invocation and payload, and the production node's source ownership, box and
+  read-only presentation) and `xlsx-renderer` (22 cases, including the three that pin
+  the viewer configuration `XlsxBody` publishes)
+- Task 11 real DSH XLSX renderer smoke (Playwright, live instance): **SUPERSEDED by
+  Task 11R — BLOCKED.** The Task 11 record above stands as what that round claimed; the
+  reproduction performed in Task 11R shows the same suite's assertions could not have
+  distinguished the ranges it reported (prefix-only provenance) and that the renderer's
+  runtime depended on host routes. See the Task 11R record for what is now measured:
+  XLSX 1 passed / 9 failed / 0 skipped against a live instance, blocked at the engine
+  binary's delivery path.
+- Task 11 XLSX relationship security client suite: PASS (30 client cases) — the exact
+  Transitional/Strict hyperlink allowlist and its scheme rule, six disallowed external
+  relationship families, malformed XML, CRC-corrupted relationship bytes over a real
+  archive, abort as an `AbortError` at three positions, the reader-close policy on all
+  four outcomes, and the per-entry read options (`useWebWorkers: false`) that keep the
+  scan off a codec worker
+- Task 11 XLSX renderer pipeline client suite: PASS (13 client cases) — preflight pending
+  blocks the later gates, strict gate ordering, preflight rejection never reaching the
+  verifier or the viewer, one lifecycle signal shared by all three gates, one defensive
+  copy reaching every gate and the viewer by identity, host-byte mutation after the copy
+  not reaching the viewer, the blocked engine-binary state, and the published semantic
+  selection attribute
+- Task 11 XLSX bundling integrity unit suite: PASS (7 unit cases) — no host asset path,
+  no worker file, no CDN, the fail-closed worker seam, no second chunk beside
+  `lib/client.js`, no `lib/assets` in the artifact or the published file list, and the
+  host bundle free of routes, filesystem access and XLSX runtime
+- Task 11 cell range provenance unit suite: PASS (6 unit cases)
+- Task 11 XLSX selection bridge client suite: PASS (5 client cases)
+- Task 11 XLSX selection adapter client suite: PASS (9 client cases)
+- Task 11 XLSX renderer & displayed values client suite: superseded by the Task 11R
+  pipeline suite above (13 client cases, of which the public displayed-value cases are
+  the original 3)
+- Task 11 XLSX bundling integrity unit suite: superseded by the Task 11R suite above
+  (7 unit cases)
 - Task 10S PPTX rendering engine client suite: PASS (12 client cases)
 - Task 10R PPTX relationship security client suite: PASS (18 client cases)
 - Task 10S real DSH PPTX renderer smoke (Playwright, live instance): PASS (10 cases) — text two slides Ask, cross-slide Ask, Unicode CJK Ask, table & embedded PNG image without remote requests, chart rendering output, large 120-slide windowed virtualization and stale selection cleanup on scroll, strict viewport resize current-generation revalidation, external media fail-closed security rejection, dangerous javascript hyperlink blocking, rapid switch/close during in-flight render without error or leakage
@@ -866,6 +1390,18 @@ Task 11 — XLSX read-only workbook renderer and semantic cell-range Ask
   predecessor's text behind. No generation token was needed, and the reason is
   recorded)
 - Task 8 — PASS (PDF native TextLayer selection captured with source page provenance, same/cross-page Ask, composer draft integration, and real DSH verification)
+- Task 11R — BLOCKED — CLIENT-ASSET CONTRACT BLOCKED (the Task 11 review's
+  preflight-ordering, validated-bytes, relationship-scanner and host-architecture defects
+  are fixed and covered by new suites; the XLSX engine binary has no client-only delivery
+  path, so the XLSX renderer fails closed and its browser suite is 1 passed / 9 failed /
+  0 skipped against a live instance. PR #4 stays a draft and Task 12 must not start)
+- Task 11C — PASS (the malformed embedded PNG was replaced by a deterministic, valid
+  64x64 RGBA PNG generated by `scripts/generate-xlsx-fixtures.mjs` rather than copied
+  from any binary; the fixture-integrity spec reads the committed media part and fails on
+  `invalid code lengths set` against the unrepaired fixture; the real DSH XLSX suite is
+  13 passed / 0 failed / 0 skipped with no assertion removed or weakened, and the
+  production delta is zero bytes. Task 11 is a PASS candidate pending external review;
+  PR #4 stays a draft and Task 12 must not start)
 - GitHub publication — ACTIVE
 - Repository visibility — public
 - License — MIT

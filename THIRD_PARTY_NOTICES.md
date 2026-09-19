@@ -32,6 +32,8 @@ declared, and it is recorded here as one.
 | `@aiden0z/pptx-renderer` | 1.2.4 | Apache-2.0 | High-fidelity PPTX rendering into HTML/SVG DOM for the selectable PPTX preview. Used through public package exports `PptxViewer`, `parseZipLazyMedia`, `buildPresentation`, and `RECOMMENDED_ZIP_LIMITS`. Bundled into `lib/client.js`. |
 | `echarts` | 6.1.0 | Apache-2.0 | Transitive runtime dependency brought in by `@aiden0z/pptx-renderer` for rendering presentation charts. Bundled into `lib/client.js`. |
 | `zrender` | 6.1.0 | BSD-3-Clause | Transitive runtime dependency brought in by `echarts` for 2D canvas/SVG rendering. Bundled into `lib/client.js`. |
+| `@extend-ai/react-xlsx` | 0.16.4 | MIT | React components and hooks for viewing XLSX workbooks in read-only mode for the selectable XLSX preview. Bundled into `lib/client.js`. |
+| `@dukelib/sheets-wasm` | 0.1.23 | MIT | WebAssembly bindings for the Duke sheets Excel engine used by `@extend-ai/react-xlsx`. Declared as a runtime dependency; **no binary of it is currently delivered to the browser** — see the blocker note below. |
 
 ### `docx-preview` 0.4.0 and `jszip` 3.10.2
 
@@ -115,6 +117,56 @@ runtime/test-only: test-only fixture generator (devDependencies; NOT bundled int
 ```
 
 Used solely in `scripts/generate-pptx-fixtures.mjs` to deterministically create test presentations.
+It is not imported anywhere in `src/` and is verified to have 0 occurrences in `lib/client.js`.
+
+### `@extend-ai/react-xlsx` 0.16.4 and `@dukelib/sheets-wasm` 0.1.23
+
+Task 11 introduced `@extend-ai/react-xlsx` 0.16.4 as the read-only renderer for XLSX spreadsheet workbooks:
+
+```text
+package:  @extend-ai/react-xlsx
+version:  0.16.4
+license:  MIT
+runtime/test-only: runtime dependency (bundled into lib/client.js)
+```
+
+The license was verified against `node_modules/@extend-ai/react-xlsx/package.json` and
+`node_modules/@extend-ai/react-xlsx/LICENSE`. The package brings in `@dukelib/sheets-wasm`
+as its WebAssembly spreadsheet parsing and calculation engine:
+
+```text
+package:  @dukelib/sheets-wasm
+version:  0.1.23
+license:  MIT
+runtime/test-only: runtime dependency of @extend-ai/react-xlsx (BSD-3-Clause/MIT engine)
+```
+
+The engine binary is `@extend-ai/react-xlsx`'s own `duke_sheets_wasm_bg.wasm`
+(4,412,299 bytes, SHA-256
+`24687a3e6d051689d7ff0fdde5148ff527744100d4fd70efa3d1580a05e6ef3d`), published by that package
+at the subpath `@extend-ai/react-xlsx/duke_sheets_wasm_bg.wasm`. It is not fetched from any
+CDN, and no remote fallback exists.
+
+**Delivery blocker.** The binary is *not* currently reachable from the browser at run time.
+DSH serves an external client plugin's browser half as exactly one generated script — the file
+`exports["./client"]` names, plus its optional source map — through a closed, pre-computed
+response table, and exposes no public client-only API by which a plugin may contribute a second
+file. An earlier revision registered `/dsa-assets/...` routes in the host half to work around
+that; the routes were removed because a host dependency is not the frozen client-only
+architecture. Until an architecture decision is made, the XLSX renderer reports the blocked
+state instead of rendering, which is what `tests/browser/xlsx-selection.spec.ts` case 0
+records.
+
+### `exceljs` 4.4.0 (Development / Fixture Generator Only)
+
+```text
+package:  exceljs
+version:  4.4.0
+license:  MIT
+runtime/test-only: test-only fixture generator (devDependencies; NOT bundled into lib/client.js)
+```
+
+Used solely in `scripts/generate-xlsx-fixtures.mjs` to deterministically create test spreadsheet fixtures.
 It is not imported anywhere in `src/` and is verified to have 0 occurrences in `lib/client.js`.
 
 ### `pdfjs-dist` 6.3.289

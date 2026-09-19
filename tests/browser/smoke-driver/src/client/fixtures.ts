@@ -53,6 +53,12 @@ export interface SmokeFixture {
     | 'pptx-large-120-slides'
     | 'pptx-external-media'
     | 'pptx-external-links'
+    | 'xlsx-simple'
+    | 'xlsx-formula-values'
+    | 'xlsx-multi-sheet'
+    | 'xlsx-merged-frozen'
+    | 'xlsx-chart-image'
+    | 'xlsx-large'
   /** Control label, ASCII so the smoke locates it independently of the UI locale. */
   readonly label: string
   /** Path relative to the repository root, which is the Session's workspace. */
@@ -218,6 +224,55 @@ export const SMOKE_FIXTURES: readonly SmokeFixture[] = [
     path: 'smoke-fixtures/task10-external-links.pptx',
     tabKind: 'text',
   },
+  {
+    key: 'xlsx-simple',
+    label: 'Open XLSX simple',
+    path: 'smoke-fixtures/task11-simple.xlsx',
+    tabKind: 'text',
+  },
+  {
+    key: 'xlsx-formula-values',
+    label: 'Open XLSX formula values',
+    path: 'smoke-fixtures/task11-formula-values.xlsx',
+    tabKind: 'text',
+  },
+  {
+    key: 'xlsx-multi-sheet',
+    label: 'Open XLSX multi sheet',
+    path: 'smoke-fixtures/task11-multi-sheet.xlsx',
+    tabKind: 'text',
+  },
+  {
+    key: 'xlsx-merged-frozen',
+    label: 'Open XLSX merged frozen',
+    path: 'smoke-fixtures/task11-merged-frozen.xlsx',
+    tabKind: 'text',
+  },
+  {
+    key: 'xlsx-chart-image',
+    label: 'Open XLSX chart image',
+    path: 'smoke-fixtures/task11-chart-image.xlsx',
+    tabKind: 'text',
+  },
+  {
+    key: 'xlsx-large',
+    label: 'Open XLSX large',
+    path: 'smoke-fixtures/task11-large.xlsx',
+    tabKind: 'text',
+  },
+]
+
+/**
+ * The XLSX fixtures, by key: the committed source file and the workspace name it
+ * is copied to.
+ */
+export const XLSX_FIXTURE_SOURCES: readonly { readonly key: SmokeFixture['key']; readonly source: string }[] = [
+  { key: 'xlsx-simple', source: 'tests/fixtures/xlsx/simple.xlsx' },
+  { key: 'xlsx-formula-values', source: 'tests/fixtures/xlsx/formula-values.xlsx' },
+  { key: 'xlsx-multi-sheet', source: 'tests/fixtures/xlsx/multi-sheet.xlsx' },
+  { key: 'xlsx-merged-frozen', source: 'tests/fixtures/xlsx/merged-frozen.xlsx' },
+  { key: 'xlsx-chart-image', source: 'tests/fixtures/xlsx/chart-image.xlsx' },
+  { key: 'xlsx-large', source: 'tests/fixtures/xlsx/large.xlsx' },
 ]
 
 /**

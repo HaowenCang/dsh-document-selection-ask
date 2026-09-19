@@ -27,6 +27,7 @@
     "lib/types/**/*.d.ts",
     "cordis.patch.yml",
     "README.md",
+    "LICENSE",
     "THIRD_PARTY_NOTICES.md"
   ],
   "dsh": {
@@ -73,6 +74,7 @@
     "@types/react": "18.3.27",
     "@types/react-dom": "18.3.7",
     "docx": "9.7.1",
+    "exceljs": "4.4.0",
     "jsdom": "30.0.1",
     "pdf-lib": "1.17.1",
     "playwright": "1.63.0",
@@ -85,6 +87,7 @@
   },
   "dependencies": {
     "@aiden0z/pptx-renderer": "1.2.4",
+    "@extend-ai/react-xlsx": "0.16.4",
     "@zip.js/zip.js": "2.15.0",
     "docx-preview": "0.4.0",
     "pdfjs-dist": "6.3.289"

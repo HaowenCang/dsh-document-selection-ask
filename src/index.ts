@@ -33,6 +33,14 @@ export const inject: readonly string[] = []
  * Empty by design: every contribution this plugin makes is a browser one, and
  * registering nothing host-side keeps disabling the plugin a pure client
  * operation.
+ *
+ * An earlier revision of the XLSX renderer registered two asset routes here so
+ * the browser could fetch the Duke engine binary and the library's worker
+ * bundle. That was an architecture change rather than an implementation detail:
+ * it made the plugin's browser runtime depend on a host service, which the
+ * frozen client-only design does not permit. Task 11A carries both assets inside
+ * the single client bundle instead, so this half stays inert. Nothing host-side
+ * is reintroduced here.
  */
 export function apply(): void {
   // A host contribution is introduced only if a later version needs one.

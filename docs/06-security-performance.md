@@ -136,6 +136,31 @@ max backing pixels/page: 64 MP
 
 建议 plugin limit 与 DSH byte cap 取更小值。
 
+### 内嵌 worksheet 图片的呈现（Task 11B）
+
+图片经由 pinned `@extend-ai/react-xlsx@0.16.4` 的**公开**替换边界呈现：
+`XlsxViewer` 配置 `showImages={true}` 与 `renderImage`，插件仅从公开的
+`XlsxImageRenderProps` 构造一个 `<img>`。
+
+信任与所有权边界：
+
+- **来源是 viewer 的**：`image.src` 是 controller 为 media 字节创建的 object URL。
+  插件不创建第二份 URL、不 `fetch`、不重新编码、不复制字节。该 URL 的创建与释放
+  均归 controller（资源切换时由它 revoke），插件不调用 `URL.revokeObjectURL`。
+- **几何是 viewer 的**：节点的宽高取自 viewer 发布的 `style`；viewer 已将该 style
+  应用在包裹节点的定位元素上，因此节点填满该盒子。插件不读取 anchor、行高、列宽
+  或 EMU，不做任何坐标换算。
+- **只读**：节点 `draggable={false}`、`pointer-events: none`，不提供
+  `renderImageSelection`，不接入选区手柄，不调用任何 image mutation。
+- **不外联**：`renderImage` 只消费已通过 relationship gate 的 local/embedded 图片；
+  external image relationship 仍在 viewer 之前被拒，因此该边界不会让外部图片重新
+  可达。
+- 图像节点带 `data-dsa-xlsx-image` 标记，仅用于测试观察与所有权区分，不参与
+  selection、provenance 或 cell geometry。
+
+该边界属于 plugin-side compatibility hardening（公开 hook），不是对
+`node_modules` 的 patch，也不是对上游实现的替换。
+
 ## 9. CSP 与 asset packaging
 
 必须测试 DSH web profile 下：
@@ -164,3 +189,96 @@ max backing pixels/page: 64 MP
 - tab close 后 heap 可回落
 - 没有 worker 永久残留
 - selection 不因 lazy/windowing 完全失效
+
+## 11. XLSX 引擎与 Worker 的客户端内联（Task 11A 有限例外）
+
+DSH 不提供独立的客户端二进制资源契约。因此，Duke WASM 以确定性的 gzip 压缩
+Base64 负载的形式，随单一 client bundle 一起交付，并在首次打开 XLSX 时于本地
+解压并做 SHA-256 校验。
+
+原始未压缩 WASM 的 Base64 内联仍然禁止。不使用网络，也不使用任何 host route。
+
+### 允许与禁止的表示
+
+| 表示 | 大小 | 状态 |
+| --- | --- | --- |
+| 原始 WASM | 4,412,299 字节 | 唯一合法来源 |
+| 原始 WASM 的 Base64 | 5,883,066 字符 | 禁止 |
+| 确定性 gzip | 1,674,037 字节 | 允许 |
+| gzip 的 Base64 | 2,232,052 字符 | 允许 |
+
+例外范围严格限定为 `@extend-ai/react-xlsx@0.16.4` 的
+`duke_sheets_wasm_bg.wasm` 这一个二进制。它不推广到用户文档、PDF 或 PPTX 资源、
+任意插件二进制、后续任务的资源，也不构成重构既有 renderer 的依据。
+
+### 交付链路
+
+```text
+exact WASM bytes
+→ build-time deterministic gzip (node:zlib, mtime = 0)
+→ Base64(gzip bytes)
+→ single lib/client.js
+→ lazy browser decode (atob over the Base64 literal)
+→ DecompressionStream('gzip')
+→ exact WASM ArrayBuffer
+→ length check + SHA-256 check
+→ setWasmSource(BufferSource)
+→ worker receives the same BufferSource
+```
+
+构建期硬门：原始字节长度与 SHA-256 必须等于已评审值，否则以
+`XLSX WASM IDENTITY CHANGED` 使 build 失败；gzip 超过 1,800,000 字节或 Base64
+超过 2,400,000 字符，则以 `XLSX WASM COMPRESSION REGRESSION` 失败。运行期再次
+校验长度与 SHA-256，任何不一致以 `XlsxWasmIntegrityError` fail closed，不回落
+CDN、host route、主线程解析或 `useWorker=false`。
+
+### Worker
+
+library worker 以 build 期合成的**自包含模块源码**交付，经 `Blob` URL 构造为
+module worker：源码内联 Duke JS glue 与 fflate 浏览器构建，不含任何静态
+`import`、动态 `import()`、`require(`、`importScripts` 或可达远端地址。WASM 本体
+不重复内嵌进 worker，它经 `setWasmSource` 的公开消息路径传入。
+
+object URL 在 `new Worker(url)` 之后立即 revoke：worker 的脚本抓取已由构造函数
+启动，而 library 自身拥有 Worker 生命周期（`dispose()` 调用 `terminate()`），并
+未提供插件可挂接的释放点。
+
+### 内存
+
+- 非 XLSX 工作流不分配引擎内存：解压、校验与安装均发生在首次打开 XLSX 时。
+- 初始化是 session 级单例，并发与后续调用共享同一 Promise；失败不写入缓存，
+  以免一次失败永久禁用该 session 的表格渲染。
+- Base64 字面量本身常驻已加载的 bundle，这是单 bundle 方案的固有成本；运行期
+  不再额外缓存解压后的副本。
+
+## 12. XLSX fixture 内嵌图片的完整性（Task 11C）
+
+`tests/fixtures/xlsx/chart-image.xlsx` 承载的图片是 frozen chart/image 浏览器门禁
+唯一的解码对象，因此该 media part 本身纳入门禁，而不是被当作既定事实。
+
+该部分**由 generator 生成，而非采集**：`scripts/generate-xlsx-fixtures.mjs` 的
+`createSolidRedPng()` 写出字节，workbook 内嵌同一 buffer。宽、高和像素值以导出常量
+声明；仓库中不再保留这张图片的任何不可审计 Base64 字面量，也从未提交来源不明的
+下载二进制。
+
+字节流是该格式允许的最小结构：8 字节签名、`IHDR`、单个 `IDAT`、`IEND`，不含
+`pHYs`、`tIME` 或 `iTXt`。总长 155 字节，SHA-256 为
+`f41dfec153038c92de8517fde6d06d501233515739f292d70e4e095ad27c6852`。`IDAT` 是
+`node:zlib.deflateSync(raw, { level: 9 })`，即规范要求的 zlib 包裹 DEFLATE 流
+（不是 gzip，也不是 raw deflate），解压后为 16,448 字节：64 行 × 257 字节，每行一个
+filter 字节（类型 0）加 64 个 `[255, 0, 0, 255]` 像素。每个 chunk 的 CRC-32 由
+generator 内部的局部表计算，未引入任何依赖。
+
+`tests/unit/xlsx-fixtures.spec.ts` 从**已提交的 workbook** 中读取
+`xl/media/image1.png`（不是读取 generator 的返回值），断言签名、chunk 路径、每个
+chunk 的 CRC-32、`IHDR` 各字段、解压长度恰为 16,448 字节、`node:zlib` 与
+`@extend-ai/react-xlsx` 自带 `fflate` 的结果逐字节一致，以及全部 4,096 个像素。
+另有两个 case 断言 generator 的确定性，以及其输出与已提交 media part 逐字节相等——
+后者是防止“修好的 fixture 与过期的 generator 静默分叉”的漂移门。drawing part 以
+XML parser 解析而非字符串匹配，因此 Task 11A 发现的 malformed anchor 缺陷不会无声
+回归。
+
+本节记录的规则是：**浏览器 `<img>` 报告 `complete` 与 `naturalWidth` 不构成其字节可
+解码的证据。** 两者都只从 `IHDR` 读出，这正是 Task 11A 的 canvas 观察无法区分
+“viewer 没有绘制”与“图片本身没有可绘制内容”的原因。关于图片像素的证据必须来自对其
+字节的解码。

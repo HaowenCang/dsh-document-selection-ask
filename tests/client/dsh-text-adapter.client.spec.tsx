@@ -1113,9 +1113,10 @@ describe('client registration', () => {
 
     // Task 4 reuses the builtin renderers; registering a replacement for text,
     // Markdown, code or CSV would replace the very DOM this adapter reads. Task 7
-    // added one extension renderer for PDF, Task 9 added one for DOCX, and Task 10
-    // added one for PPTX, which are classes no builtin adapter reads — so the set is asserted exactly.
+    // added one extension renderer for PDF, Task 9 added one for DOCX, Task 10
+    // added one for PPTX, and Task 11 added one for XLSX, which are classes no builtin adapter reads — so the set is asserted exactly.
     expect(registered).toEqual([
+      'dsh-document-selection-ask/xlsx',
       'dsh-document-selection-ask/pdf',
       'dsh-document-selection-ask/docx',
       'dsh-document-selection-ask/pptx',

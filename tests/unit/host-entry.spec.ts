@@ -10,18 +10,27 @@
  *
  * The check runs against both the source module and the built bundle, because
  * the two can diverge: bundling decides which exports survive.
+ *
+ * The second half of the suite is the client-only architecture gate. This plugin
+ * is frozen as a browser-only plugin: the host half contributes no service, no
+ * route and no filesystem access, and an earlier revision of the XLSX renderer
+ * broke that by registering two asset routes here. The assertions below are what
+ * makes the restored baseline checkable rather than merely intended — a
+ * re-introduced `webServer` lookup, a `node:fs` import or an asset path would
+ * fail this suite instead of shipping.
  */
 
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import * as source from '../../src/index.js'
 
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url))
 const hostBundle = join(repoRoot, 'lib', 'index.mjs')
+const hostSource = join(repoRoot, 'src', 'index.ts')
 
 /** The plugin shape the Cordis loader accepts. */
 interface HostPlugin {
@@ -65,5 +74,100 @@ describe('host entry', () => {
     expect(existsSync(hostBundle), `${hostBundle} is missing; run \`pnpm build\``).toBe(true)
     const built = (await import(pathToFileURL(hostBundle).href)) as HostPlugin
     expectLoadablePlugin(built, 'lib/index.mjs')
+  })
+})
+
+/** A host context, as a recording double. */
+type ContextSpy = {
+  readonly get: ReturnType<typeof vi.fn>
+  readonly inject: ReturnType<typeof vi.fn>
+  readonly effect: ReturnType<typeof vi.fn>
+  readonly on: ReturnType<typeof vi.fn>
+  readonly provide: ReturnType<typeof vi.fn>
+}
+
+/**
+ * Apply the host body with a context, from a spec.
+ *
+ * The body's published signature takes no argument, because v1 contributes
+ * nothing to the host; passing one anyway is the probe. The cast is stated here,
+ * once, rather than widening the production signature to admit a context the
+ * implementation has no use for.
+ *
+ * @param context - the recording context.
+ */
+function applyWithContext(context: ContextSpy | Record<string, unknown>): void {
+  ;(source.apply as unknown as (ctx: unknown) => void)(context)
+}
+
+describe('host entry is inert', () => {
+  it('touches no service lookup, no injection and no effect when applied', () => {
+    // A host contribution has to reach the context to exist at all: it resolves
+    // a service, waits for one to appear, or registers an effect. Recording
+    // every one of those calls is what turns "contributes nothing" from a
+    // reading of the source into an observation about the call.
+    const fakeContext: ContextSpy = {
+      get: vi.fn(() => undefined),
+      inject: vi.fn(),
+      effect: vi.fn(),
+      on: vi.fn(),
+      provide: vi.fn(),
+    }
+
+    expect(applyWithContext(fakeContext)).toBeUndefined()
+
+    expect(fakeContext.get).not.toHaveBeenCalled()
+    expect(fakeContext.inject).not.toHaveBeenCalled()
+    expect(fakeContext.effect).not.toHaveBeenCalled()
+    expect(fakeContext.on).not.toHaveBeenCalled()
+    expect(fakeContext.provide).not.toHaveBeenCalled()
+  })
+
+  it('registers no route and reaches no web server', () => {
+    const register = vi.fn()
+    const fakeContext = {
+      get: vi.fn((name: string) => (name === 'webServer' ? { register } : undefined)),
+      inject: vi.fn(),
+      effect: vi.fn(),
+    }
+
+    applyWithContext(fakeContext)
+
+    expect(register).not.toHaveBeenCalled()
+    expect(fakeContext.get).not.toHaveBeenCalled()
+    expect(fakeContext.effect).not.toHaveBeenCalled()
+  })
+})
+
+describe('host entry carries no XLSX or filesystem dependency', () => {
+  const FORBIDDEN = [
+    'webServer',
+    'dsa-assets',
+    'readFileSync',
+    'node:fs',
+    'xlsx-worker',
+    'duke_sheets_wasm',
+  ] as const
+
+  it('keeps the source module free of host-service and asset references', () => {
+    const text = readFileSync(hostSource, 'utf8')
+    for (const needle of FORBIDDEN) {
+      expect(text, `src/index.ts must not mention ${needle}`).not.toContain(needle)
+    }
+  })
+
+  it('keeps the compiled host bundle free of host-service and asset references', () => {
+    expect(existsSync(hostBundle), `${hostBundle} is missing; run \`pnpm build\``).toBe(true)
+    const text = readFileSync(hostBundle, 'utf8')
+    for (const needle of FORBIDDEN) {
+      expect(text, `lib/index.mjs must not mention ${needle}`).not.toContain(needle)
+    }
+  })
+
+  it('keeps the host bundle free of Node built-ins beyond its own envelope', () => {
+    const text = readFileSync(hostBundle, 'utf8')
+    for (const needle of ['node:path', "require('fs')", 'node:http', 'express']) {
+      expect(text, `lib/index.mjs must not mention ${needle}`).not.toContain(needle)
+    }
   })
 })
