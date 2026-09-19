@@ -250,3 +250,35 @@ object URL 在 `new Worker(url)` 之后立即 revoke：worker 的脚本抓取已
   以免一次失败永久禁用该 session 的表格渲染。
 - Base64 字面量本身常驻已加载的 bundle，这是单 bundle 方案的固有成本；运行期
   不再额外缓存解压后的副本。
+
+## 12. XLSX fixture 内嵌图片的完整性（Task 11C）
+
+`tests/fixtures/xlsx/chart-image.xlsx` 承载的图片是 frozen chart/image 浏览器门禁
+唯一的解码对象，因此该 media part 本身纳入门禁，而不是被当作既定事实。
+
+该部分**由 generator 生成，而非采集**：`scripts/generate-xlsx-fixtures.mjs` 的
+`createSolidRedPng()` 写出字节，workbook 内嵌同一 buffer。宽、高和像素值以导出常量
+声明；仓库中不再保留这张图片的任何不可审计 Base64 字面量，也从未提交来源不明的
+下载二进制。
+
+字节流是该格式允许的最小结构：8 字节签名、`IHDR`、单个 `IDAT`、`IEND`，不含
+`pHYs`、`tIME` 或 `iTXt`。总长 155 字节，SHA-256 为
+`f41dfec153038c92de8517fde6d06d501233515739f292d70e4e095ad27c6852`。`IDAT` 是
+`node:zlib.deflateSync(raw, { level: 9 })`，即规范要求的 zlib 包裹 DEFLATE 流
+（不是 gzip，也不是 raw deflate），解压后为 16,448 字节：64 行 × 257 字节，每行一个
+filter 字节（类型 0）加 64 个 `[255, 0, 0, 255]` 像素。每个 chunk 的 CRC-32 由
+generator 内部的局部表计算，未引入任何依赖。
+
+`tests/unit/xlsx-fixtures.spec.ts` 从**已提交的 workbook** 中读取
+`xl/media/image1.png`（不是读取 generator 的返回值），断言签名、chunk 路径、每个
+chunk 的 CRC-32、`IHDR` 各字段、解压长度恰为 16,448 字节、`node:zlib` 与
+`@extend-ai/react-xlsx` 自带 `fflate` 的结果逐字节一致，以及全部 4,096 个像素。
+另有两个 case 断言 generator 的确定性，以及其输出与已提交 media part 逐字节相等——
+后者是防止“修好的 fixture 与过期的 generator 静默分叉”的漂移门。drawing part 以
+XML parser 解析而非字符串匹配，因此 Task 11A 发现的 malformed anchor 缺陷不会无声
+回归。
+
+本节记录的规则是：**浏览器 `<img>` 报告 `complete` 与 `naturalWidth` 不构成其字节可
+解码的证据。** 两者都只从 `IHDR` 读出，这正是 Task 11A 的 canvas 观察无法区分
+“viewer 没有绘制”与“图片本身没有可绘制内容”的原因。关于图片像素的证据必须来自对其
+字节的解码。

@@ -1058,17 +1058,120 @@ a decodable 64x64 PNG before the frozen colour evidence can pass, and repairing
 the fixture is a separate authorised change — this round was instructed not to
 modify it, and did not. Task 12 must not start.
 
+- Task 11C — PASS
+
+Repair of the malformed XLSX embedded-image fixture, and re-run of the frozen
+Task 11 browser gate. **No production source was modified**: the delta is the
+fixture generator, the one regenerated fixture, a new fixture-integrity spec, the
+two type declarations that spec needs, and this documentation. Task 11B's public
+`renderImage` path, the WASM runtime architecture and the selection architecture
+are untouched.
+
+The defect, restated from the bytes: `xl/media/image1.png` in
+`chart-image.xlsx` was 227 bytes (SHA-256
+`8f66e8cd3d8558e86bc0870a8e21adf9f33126d91fc6dee7071b10ec53ff8ca8`) and
+byte-identical to the generator's `SAMPLE_PNG_BASE64` constant. Its `IHDR` parsed
+— 64x64, 8-bit RGBA — while its 89-byte `IDAT` stream, behind a valid `78da`
+zlib header, did not inflate (`invalid code lengths set` in `node:zlib`). No
+renderer could have turned it into pixels, which is why the Task 11A conclusion
+that the pinned viewer had a picture defect was withdrawn in 11B and is not
+restored here.
+
+**The replacement is generated, not sourced.** `scripts/generate-xlsx-fixtures.mjs`
+now exposes `createSolidRgbaPng()` / `createSolidRedPng()` and the picture is
+built from exported width, height and pixel constants; the opaque Base64 literal
+is gone from the repository, nothing was downloaded, and no dependency was added
+for it. The chunk CRC-32 uses a table local to the generator, and the compression
+is `node:zlib.deflateSync(raw, { level: 9 })` — a zlib stream, as the PNG
+specification requires.
+
+The new picture is a minimal 8-bit RGBA PNG of **155 bytes**, SHA-256
+`f41dfec153038c92de8517fde6d06d501233515739f292d70e4e095ad27c6852`, containing
+exactly `IHDR`, `IDAT`, `IEND` and no ancillary chunk. Its `IDAT` is 98 bytes and
+inflates to exactly **16,448** bytes: 64 rows × 257 bytes (one filter byte of
+type 0 plus 64 pixels), every one of the 4,096 pixels `[255, 0, 0, 255]`.
+
+`tests/unit/xlsx-fixtures.spec.ts` (13 cases) reads that media part **out of the
+committed workbook** rather than from the generator: signature and exact chunk
+path, every chunk CRC-32, the `IHDR` fields, the inflate length, all 4,096
+pixels, agreement between `node:zlib` and the `fflate` bundled inside
+`@extend-ai/react-xlsx`, byte equality with the generator's output, the drawing
+part parsed as XML with both anchors present, the image and chart relationships
+still internal, and no external relationship target. The spec was observed **RED
+against the unrepaired fixture** — with the generator change temporarily set
+aside, so the failure could not come from the new builder — and the three
+semantic cases failed with exactly
+`the embedded PNG's IDAT stream does not inflate: Error: invalid code lengths set (89 bytes behind a 78da zlib header)`.
+
+Verification on `eval/gemini-3.8-flash-task11-20260918`:
+
+- targeted suites: `xlsx-fixtures` 13, `xlsx-image-render` 3, `xlsx-renderer` 22,
+  `xlsx-wasm` 14, `xlsx-security` 30, `xlsx-bundle` 18 — 100 passed
+- `pnpm test`: PASS (958 tests over 55 files, up from 945)
+- `pnpm typecheck`: PASS, `pnpm build`: PASS, `npm pack --dry-run`: PASS (88
+  files; no XLSX fixture and no smoke fixture in the tarball),
+  `git diff --check`: PASS
+- `lib/client.js` is byte-identical before and after the round
+  (`72dde6ffe6709071fd94a567ef7e90f58fd4a9e676adcf3adb1aa46f729e4521`,
+  16,314,168 bytes) and so is `lib/index.mjs`
+  (`fac72b86168e002cb6dd2939c1775cad0d149afb24c4c2264b1110b079a60f39`, 2,256
+  bytes): the repair changes no production or build input
+- `git diff --name-only tests/fixtures/xlsx` names **only**
+  `tests/fixtures/xlsx/chart-image.xlsx`; the other five fixtures are
+  byte-identical to their committed state (SHA-256 compared before and after the
+  targeted regeneration, and no full regeneration was run)
+- real DSH 0.1.5-rc.1, profile `dsa-smoke`: **XLSX 13 passed / 0 failed / 0
+  skipped** — the same case that failed in 11A and 11B is now green, on the same
+  assertions: PPTX 10/0/0, DOCX 6/0/0, PDF 10/0/0, TextPreview 8/0/0
+
+Case 6's picture evidence, read from the live page rather than from the fixture:
+the node is published (`count` 1) with a `blob:` source the controller allocated
+exactly once, `complete: true`, natural 64x64, laid out in a 64x64 box at
+924,121, visible, `draggable="false"`, positioned by the viewer's own box. The
+platform audit shows the picture blob at **155 bytes** carrying SHA-256
+`f41dfec1…`, `createImageBitmap` returns 64x64, and drawing the decoded node into
+a canvas yields **4,096 of 4,096** red pixels. The chart is asserted separately
+and unchanged: `<svg role="img" aria-label="Chart 1">` with positive dimensions,
+≥2 fills and ≥4 gridlines. Case 6a's control still reports zero image nodes and
+zero red pixels for `simple.xlsx`, and 6b still shows the controller's own object
+URL released when the resource is switched.
+
+One attribution note, recorded because it cost a run: the first execution of this
+round's browser gate read the **stale fixture copy** in the original checkout's
+gitignored `smoke-fixtures/`, which the smoke session's workspace root resolves
+against, and case 6 failed with the same `InvalidStateError` as before — for the
+old bytes, not the new ones. After that copy was refreshed with the regenerated
+fixture (a gitignored local artifact; the original checkout's HEAD and working
+tree are untouched), the case passed. A browser run of this suite is only
+evidence about the fixture the session actually serves.
+
+The correct statement of what this round establishes: the fixture's malformed PNG
+was replaced by a deterministic, valid 64×64 RGBA PNG. The previously authorised
+public `renderImage` compatibility path remains in place and now passes the full
+image-decoding and visual-fidelity gate. It is **not** established — and is not
+claimed — that the pinned viewer ever had a missing-picture defect.
+
+Next:
+
+Task 11C is PASS and Task 11 is a **PASS candidate**. PR #4 stays a draft and
+Task 12 must not start; whether Task 11 merges is an external review decision.
+
 ## Current gate
 
-- Task 11 real DSH XLSX renderer smoke (Playwright, live instance): **12 passed / 1
-  failed / 0 skipped as of Task 11B.** Case 6 — the frozen chart/image fidelity case —
-  still fails, and the failure is a **fixture defect**: the embedded PNG in
-  `tests/fixtures/xlsx/chart-image.xlsx` cannot be decoded by any of three independent
-  decoders (`node:zlib`, the library's own `fflate`, Chromium's `createImageBitmap`), so
-  no renderer can produce the colour that case requires. The published node itself is
-  correct: `blob:` source, `complete`, 64x64, laid out in a 64x64 visible box, with the
-  chart asserted separately and passing. See the Task 11B record for the full evidence
-  and for the correction to the Task 11A conclusion.
+- Task 11C fixture integrity unit suite: PASS (13 cases) — the committed
+  `xl/media/image1.png` read out of the workbook, its signature and exact chunk
+  path, every chunk CRC-32, its `IHDR` fields, the inflate to exactly 16,448
+  bytes, all 4,096 pixels at `[255, 0, 0, 255]`, `node:zlib` and the viewer's own
+  `fflate` agreeing byte-for-byte, generator determinism and byte equality with
+  the committed media part, `xl/drawings/drawing1.xml` parsed as XML with both
+  anchors present, and the image and chart relationships still internal. Observed
+  RED against the unrepaired fixture on `invalid code lengths set`
+- Task 11 real DSH XLSX renderer smoke (Playwright, live instance): **13 passed /
+  0 failed / 0 skipped as of Task 11C.** Case 6 — the frozen chart/image fidelity
+  case — now passes on the same assertions that failed in 11A and 11B: the
+  published picture's own bytes decode through `createImageBitmap` into a 64x64
+  bitmap and draw into 4,096 of 4,096 red pixels, with the chart asserted
+  separately as a labelled SVG
 - Task 11 embedded-image presentation client suites: PASS — `xlsx-image-render` (3
   cases: the public controller image model, the documented `renderImage` callback's
   invocation and payload, and the production node's source ownership, box and
@@ -1292,6 +1395,13 @@ modify it, and did not. Task 12 must not start.
   are fixed and covered by new suites; the XLSX engine binary has no client-only delivery
   path, so the XLSX renderer fails closed and its browser suite is 1 passed / 9 failed /
   0 skipped against a live instance. PR #4 stays a draft and Task 12 must not start)
+- Task 11C — PASS (the malformed embedded PNG was replaced by a deterministic, valid
+  64x64 RGBA PNG generated by `scripts/generate-xlsx-fixtures.mjs` rather than copied
+  from any binary; the fixture-integrity spec reads the committed media part and fails on
+  `invalid code lengths set` against the unrepaired fixture; the real DSH XLSX suite is
+  13 passed / 0 failed / 0 skipped with no assertion removed or weakened, and the
+  production delta is zero bytes. Task 11 is a PASS candidate pending external review;
+  PR #4 stays a draft and Task 12 must not start)
 - GitHub publication — ACTIVE
 - Repository visibility — public
 - License — MIT
