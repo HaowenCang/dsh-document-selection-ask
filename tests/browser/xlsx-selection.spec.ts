@@ -195,6 +195,68 @@ async function openShell(page: Page): Promise<void> {
 }
 
 /**
+ * Assert that a fixture control is genuinely reachable before it is clicked.
+ *
+ * The click below is an ordinary actionability-checked `locator.click()`, so a
+ * control the browser will not accept as clickable fails the case anyway — but
+ * it fails with "element is outside of the viewport" after thirty seconds, which
+ * names a Playwright retry rather than a geometry. That message is exactly what
+ * a test-driver layout defect looks like, and it is indistinguishable from one
+ * in a bare timeout. Stating the four bounds first turns it into a measurement:
+ * the failing case names the control, its box and the viewport it did not fit.
+ *
+ * `toBeVisible` and the box read are the whole assertion — no forcing, no
+ * scrolling into view, no widening of the viewport. The strip is `position:
+ * fixed`, so it is not scrollable page content and `scrollIntoViewIfNeeded`
+ * could not rescue a control that overflowed it in the first place.
+ *
+ * @param button - the fixture control about to be clicked.
+ * @param key - the fixture key, for the failure message.
+ * @returns the measured bounds, so a caller may record them.
+ */
+async function expectControlReachable(
+  button: Locator,
+  key: string,
+): Promise<{ x: number; y: number; width: number; height: number }> {
+  await expect(button, `the driver must publish a control for ${key}`).toBeVisible({ timeout: 20_000 })
+
+  const box = await button.boundingBox()
+  expect(box, `the control for ${key} must publish a bounding box`).not.toBeNull()
+  if (box === null) throw new Error(`the control for ${key} published no bounding box`)
+
+  const viewport = button.page().viewportSize()
+  expect(viewport, 'the smoke viewport must be a known size').not.toBeNull()
+  if (viewport === null) throw new Error('the smoke viewport is unknown')
+
+  const bounds = `the control for ${key} must lie inside the ${viewport.width}x${viewport.height} viewport; ` +
+    `its box is x=${box.x.toFixed(1)} y=${box.y.toFixed(1)} w=${box.width.toFixed(1)} h=${box.height.toFixed(1)}`
+
+  expect(box.x, bounds).toBeGreaterThanOrEqual(0)
+  expect(box.y, bounds).toBeGreaterThanOrEqual(0)
+  expect(box.x + box.width, bounds).toBeLessThanOrEqual(viewport.width)
+  expect(box.y + box.height, bounds).toBeLessThanOrEqual(viewport.height)
+
+  return box
+}
+
+/**
+ * Click one fixture control, asserting its geometry first.
+ *
+ * Every control this suite presses goes through here, so "the fixture was
+ * opened by an ordinary click on a control that was inside the window" is a
+ * property of the suite rather than of the one helper that happens to open a
+ * workbook.
+ *
+ * @param page - the browser page.
+ * @param key - the fixture key.
+ */
+async function clickFixtureControl(page: Page, key: string): Promise<void> {
+  const button = page.locator(`[data-dsa-smoke-open="${key}"]`)
+  await expectControlReachable(button, key)
+  await button.click()
+}
+
+/**
  * Open one XLSX fixture through the driver's public navigation call and wait
  * for the plugin's XLSX renderer to publish its root.
  * @param page - the browser page.
@@ -202,7 +264,7 @@ async function openShell(page: Page): Promise<void> {
  * @returns the published resource address.
  */
 async function openXlsxFixture(page: Page, key: string): Promise<string> {
-  await page.locator(`[data-dsa-smoke-open="${key}"]`).click()
+  await clickFixtureControl(page, key)
 
   const root = page.locator(XLSX_ROOT).first()
   await expect(root).toBeVisible({ timeout: 40_000 })
@@ -994,7 +1056,7 @@ test.describe('real DSH XLSX preview & selection smoke', () => {
     // resource included. The plugin never revokes it — the URL is not the
     // plugin's to release — so a revoked URL here is the controller cleaning up
     // after itself rather than the renderer reaching for the platform.
-    await page.locator(`[data-dsa-smoke-open="docx-paragraphs"]`).click()
+    await clickFixtureControl(page, 'docx-paragraphs')
     await expect(page.locator(XLSX_CONTENT)).toHaveCount(0, { timeout: 20_000 })
 
     await expect
@@ -1105,8 +1167,8 @@ test.describe('real DSH XLSX preview & selection smoke', () => {
 
     // The large workbook is opened and left immediately: the switch happens while
     // the worker is still parsing, which is the window the cleanup has to survive.
-    await page.locator('[data-dsa-smoke-open="xlsx-large"]').click()
-    await page.locator('[data-dsa-smoke-open="docx-paragraphs"]').click()
+    await clickFixtureControl(page, 'xlsx-large')
+    await clickFixtureControl(page, 'docx-paragraphs')
 
     const content = page.locator(XLSX_CONTENT)
     const askButton = page.locator(ASK_BUTTON)
