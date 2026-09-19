@@ -75,18 +75,28 @@
  * - Bundle size, gzip size or performance bounds (a number that moves for
  *   legitimate reasons trains its reader to ignore it).
  * - A duplicate-package check (the pnpm lockfile already forbids the shape).
+ * - Any claim about code a third party vendored inside its own prebuilt
+ *   distribution. `jszip` is inlined from its own browserify bundle, and
+ *   `@extend-ai/react-xlsx` from a published bundle that already carries the
+ *   `us-atlas` and `world-atlas` data it was built with. Those contents are
+ *   attributed in `THIRD_PARTY_NOTICES.md` to the package that distributes them
+ *   and are not enumerated here as packages of this repository. No text scan can
+ *   establish that no other vendored copy exists, and R8's own doc comment says
+ *   so rather than leaving it implied.
  * - Any attempt to prove the absence of *unknown* private React access; see the
  *   honesty note above.
  *
  * ## Structure
  *
  * A flat list of small pure rule functions plus a driver, split only where a rule
- * owns a distinct input format (the lockfile, the notices tables and the published
- * surface each get their own). If the rule set grows past roughly 350 lines of code
- * again, move rules into a sibling module rather than growing one function.
+ * owns a distinct input format (the lockfile, the shipped-library discovery, the
+ * notices tables and the published surface each get their own). If the rule set
+ * grows past roughly 350 lines of code again, move rules into a sibling module
+ * rather than growing one function.
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { builtinModules } from 'node:module'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -357,30 +367,77 @@ const PRIVATE_SEND_PATTERNS = [
 ]
 
 /**
- * The runtime libraries this package ships, which R8 requires a notice for.
+ * The project-owned files that decide what this package embeds at build time.
  *
- * The graph is derived, not assumed. `package.json` `dependencies` supplies the
- * direct edges; `pnpm-lock.yaml` `packages` is the authority for the resolved
- * version of every node and `snapshots` for the runtime edges between them; the
- * built `lib/client.js` is the authority for what actually reached the browser.
- * This list is the union of those three, and the transitive members are the ones
- * the second and third contribute: `echarts` and `zrender` arrive through
- * `@aiden0z/pptx-renderer`, `jszip` through `docx-preview` and that renderer, and
- * `@dukelib/sheets-wasm` through `@extend-ai/react-xlsx`. A library named here
- * that no longer resolves in the lockfile is itself a failure: the notice would
- * then describe a package this build cannot ship.
+ * The XLSX runtime-asset builder synthesizes the embedded worker together with
+ * the libraries it inlines into it, and the bundler configuration decides what
+ * else reaches `lib/client.js`. The two are named rather than globbed, so that
+ * adding an unrelated script to `scripts/` does not quietly change what this rule
+ * requires a notice for.
  */
-const SHIPPED_RUNTIME_LIBRARIES = [
-  'pdfjs-dist',
-  'docx-preview',
-  '@aiden0z/pptx-renderer',
-  '@extend-ai/react-xlsx',
-  '@zip.js/zip.js',
-  'echarts',
-  'zrender',
-  'jszip',
-  '@dukelib/sheets-wasm',
+const SHIPPING_PIPELINE_FILES = ['scripts/xlsx-runtime-assets.ts', 'tsdown.config.ts']
+
+/**
+ * The build-pipeline statements that name a package whose installed bytes the
+ * build reads in order to embed them.
+ *
+ * Two spellings occur in this repository and both are statements of the same
+ * kind. One is a module-resolution call — `req.resolve("jszip/dist/jszip.min.js",
+ * …)`, `reactXlsxRequire.resolve("fflate/package.json")`,
+ * `reactXlsxRequire.resolve("@dukelib/sheets-wasm")`. The other is a path join
+ * against an installed package directory — `join(import.meta.dirname,
+ * "node_modules", "pdfjs-dist")`. Each says that the named package's own files
+ * are about to become shipped bytes, so each names a package this rule must see.
+ *
+ * This is deliberately not "every npm-shaped token in the build scripts". A
+ * discovery over arbitrary strings would report the bundler's `alwaysBundle`
+ * patterns, its aliases, the package names in its own comments and every
+ * dependency of a dependency, and a gate whose findings are mostly not findings
+ * is a gate that gets switched off. What is recognised here is the build's own
+ * statement that it is about to read a package's installed bytes.
+ */
+const BUILD_PACKAGE_REFERENCE_PATTERNS = [
+  { pattern: /\b(?:require|resolve)\s*\(\s*(['"])([^'"\n]+)\1/g, group: 2 },
+  { pattern: /(['"])node_modules\1\s*,\s*(['"])([^'"\n]+)\2/g, group: 3 },
 ]
+
+/**
+ * The bundler's own record of which packages it inlined into an artifact.
+ *
+ * `tsdown` emits one `//#region node_modules/<path>` comment per module it
+ * includes, and that path names the installed package the module came from —
+ * through the pnpm store when the package is not hoisted. The built artifact is
+ * therefore an authority for what actually shipped rather than a place a library
+ * can be forgotten in: a package whose code is in `lib/client.js` is recorded
+ * there by the build, not by a maintainer's memory.
+ *
+ * A build whose bundler stopped emitting these comments is a failure of this
+ * rule and not a quiet empty set; see {@link discoverBundledLibraries}.
+ */
+const BUNDLER_REGION_PATTERN = /\/\/#region (node_modules\/[^\n]*)/g
+
+/**
+ * The package a bundler region path names, or `null` when it names none.
+ *
+ * Both shapes are read: the hoisted one (`node_modules/react/index.js`) and the
+ * pnpm store one (`node_modules/.pnpm/echarts@6.1.0/node_modules/echarts/lib/…`).
+ * The trailing segment is optional, so a region that ends at the package
+ * directory is still attributed to its package.
+ */
+const BUNDLER_REGION_PACKAGE_PATTERN =
+  /^node_modules\/(?:\.pnpm\/[^/]+\/node_modules\/)?((?:@[^/]+\/)?[^/]+)(?:\/|$)/
+
+/**
+ * The shapes a package name may take: one segment, or a scope and one segment.
+ *
+ * Applied to whatever a build reference reduces to, so that a relative import, a
+ * data URL or a half-written specifier cannot enter the shipped set and demand a
+ * notice for a package that does not exist.
+ */
+const PACKAGE_NAME_PATTERN = /^(?:@[^@/\s]+\/[^@/\s]+|[^@/\s]+)$/
+
+/** Node's own module names, which name no installed package. */
+const BUILTIN_MODULE_NAMES = new Set(builtinModules)
 
 /** Hosts whose URIs are OOXML, W3C and Adobe namespace identifiers: names, not addresses. */
 const NAMESPACE_HOSTS = [
@@ -1122,6 +1179,137 @@ function keyResolves(key, name) {
 }
 
 /**
+ * Reduce a module specifier to the package name it belongs to, or `null`.
+ *
+ * A specifier that leaves the published surface — a relative path, an absolute
+ * path, a `node:` builtin, a bare builtin (`url`, `path`) — names no installed
+ * package and must not enter the shipped set: a package name invented by the
+ * reduction would produce a notice requirement for something that does not exist,
+ * which is the false-positive failure mode this whole discovery is written
+ * against. A subpath is discarded and a scope is kept, so
+ * `jszip/dist/jszip.min.js` reduces to `jszip` and `@dukelib/sheets-wasm` stays
+ * whole.
+ *
+ * @param specifier - the literal a build reference was found with.
+ * @returns the package name, or `null` when the specifier names no package.
+ */
+function packageNameOfSpecifier(specifier) {
+  const text = specifier.trim()
+  if (text === '' || text.startsWith('.') || text.startsWith('/') || isAbsolute(text)) return null
+  if (text.startsWith('node:') || BUILTIN_MODULE_NAMES.has(text)) return null
+  const segments = text.split('/')
+  const name = segments[0].startsWith('@') ? `${segments[0]}/${segments[1] ?? ''}` : segments[0]
+  return PACKAGE_NAME_PATTERN.test(name) ? name : null
+}
+
+/**
+ * The packages the project-owned build pipeline explicitly reads and embeds.
+ *
+ * This is the channel that closes the discovery hole `fflate` exposed. The XLSX
+ * runtime-asset builder resolves `fflate/package.json` out of the installed
+ * `@extend-ai/react-xlsx` dependency and inlines `fflate/esm/browser.js` into the
+ * synthesized worker source, which then travels to the browser as a string inside
+ * `lib/client.js`. Nothing about that route is visible to a scan of the bundle,
+ * so before this channel existed the only way to require a notice for `fflate`
+ * was for a maintainer to remember to add it to a second list inside this file —
+ * which is precisely the double-bookkeeping that produced the defect.
+ *
+ * A pipeline file that cannot be read is a finding rather than a skip: the set of
+ * embedded packages would otherwise shrink silently.
+ *
+ * @param findings - this rule's finding list.
+ * @returns the package names found, as a set.
+ */
+function discoverExplicitlyEmbeddedLibraries(findings) {
+  const names = new Set()
+  for (const path of SHIPPING_PIPELINE_FILES) {
+    const text = readText(join(ROOT, path))
+    if (text === null) {
+      report(findings, 'a project-owned shipping-pipeline file is missing, so the packages it embeds cannot be discovered', path)
+      continue
+    }
+    for (const { pattern, group } of BUILD_PACKAGE_REFERENCE_PATTERNS) {
+      for (const match of text.matchAll(new RegExp(pattern.source, 'g'))) {
+        const name = packageNameOfSpecifier(match[group] ?? '')
+        if (name !== null) names.add(name)
+      }
+    }
+  }
+  return names
+}
+
+/**
+ * The packages this project's own bundler inlined into the shipped client.
+ *
+ * The artifact is read rather than assumed, because it is the only input that
+ * knows what actually shipped: `alwaysBundle` says what may be inlined, a
+ * lockfile edge says what could be, and the region comments say what was.
+ *
+ * The empty case is reported instead of returning nothing. A rule that iterates
+ * an empty set passes, so a bundler upgrade that changed the comment shape would
+ * turn this rule green while it measured nothing at all — the failure mode the
+ * whole script is written against.
+ *
+ * @param findings - this rule's finding list.
+ * @returns the package names found, as a set.
+ */
+function discoverBundledLibraries(findings) {
+  const names = new Set()
+  const artifact = 'lib/client.js'
+  const text = readText(join(ROOT, artifact))
+  if (text === null) return names // R1 already named the missing artifact.
+  let regions = 0
+  for (const match of text.matchAll(new RegExp(BUNDLER_REGION_PATTERN.source, 'g'))) {
+    regions += 1
+    const found = BUNDLER_REGION_PACKAGE_PATTERN.exec(match[1] ?? '')
+    const name = found?.[1] ?? ''
+    if (PACKAGE_NAME_PATTERN.test(name)) names.add(name)
+  }
+  if (regions === 0) {
+    report(findings, 'the built client carries no bundler region comment, so this rule cannot see which packages were inlined into it; the bundler\'s emitted shape may have changed', artifact)
+  }
+  return names
+}
+
+/**
+ * The set of packages this build ships, assembled from project-owned evidence.
+ *
+ * Three authorities are read and unioned, and there is no hand-maintained list of
+ * shipped libraries in this file any more:
+ *
+ * 1. the declared production dependencies, from the root importer's
+ *    `dependencies` — a declared runtime dependency is recorded whether or not a
+ *    renderer currently reaches it, which is how `@zip.js/zip.js` is treated;
+ * 2. the packages the project-owned build pipeline explicitly resolves and reads
+ *    installed bytes out of (see {@link discoverExplicitlyEmbeddedLibraries});
+ * 3. the packages the project's own bundler inlined into `lib/client.js` (see
+ *    {@link discoverBundledLibraries}).
+ *
+ * The second and third replace what used to be a hand-written list of transitive
+ * members. That list named `echarts`, `zrender`, `jszip` and
+ * `@dukelib/sheets-wasm`, and all four are still covered — `jszip` and
+ * `@dukelib/sheets-wasm` by the build's own resolve calls, `echarts` and
+ * `zrender` by the bundler's region comments — but they are now covered because
+ * the build says so rather than because someone remembered to write them down.
+ * A library can therefore no longer ship silently by being absent from one of two
+ * lists that had to be kept in step by hand.
+ *
+ * The result is sorted, so the report is deterministic regardless of the order
+ * the authorities contributed their names in.
+ *
+ * @param findings - this rule's finding list.
+ * @param lock - the parsed lockfile.
+ * @returns the shipped package names, sorted.
+ */
+function discoverShippedRuntimeLibraries(findings, lock) {
+  const names = new Set(lock.dependencies.keys())
+  for (const name of discoverExplicitlyEmbeddedLibraries(findings)) names.add(name)
+  for (const name of discoverBundledLibraries(findings)) names.add(name)
+  reportEmptyInputSet(findings, 'the declared dependency list and the project-owned shipping pipeline', names.size)
+  return [...names].sort()
+}
+
+/**
  * Decide whether a character offset lies in the notices file's shipped region.
  * @param text - the whole notices file.
  * @param index - a character offset into it.
@@ -1250,13 +1438,24 @@ function findInstalledManifest(name, versions) {
 /**
  * R8: every shipped runtime library has a notice carrying identity, version and license.
  *
- * The shipped graph is resolved from the lockfile, not restated: a library's
- * version is the version its own lockfile key resolves to, and a library named in
- * `SHIPPED_RUNTIME_LIBRARIES` whose name resolves to nothing is reported rather
- * than skipped. The direct edges are also checked for format, because this
- * repository's dependency rule requires an exact pin and a `^`/`~` range would let
- * two installs of one commit ship different bytes from a notice that names one
- * version.
+ * The shipped set is **discovered**, by {@link discoverShippedRuntimeLibraries},
+ * from three project-owned authorities: the declared production dependencies, the
+ * packages the build pipeline explicitly reads installed bytes out of, and the
+ * packages the bundler inlined into `lib/client.js`. It used to be a hand-written
+ * list in this file, and a hand-written list is a false negative waiting to
+ * happen: `fflate`'s browser build is inlined into the synthesized XLSX worker by
+ * `scripts/xlsx-runtime-assets.ts` and travels to the browser inside
+ * `lib/client.js`, and no scan of the bundle can see it, so a list that was not
+ * updated by hand let a shipped library pass with no notice and no finding. The
+ * detection proof caught exactly that, and the channel that closes it is the
+ * build's own resolve call rather than a second list.
+ *
+ * The version each notice is compared against is the version the lockfile
+ * resolves, not a value restated here. A library the discovery names whose name
+ * resolves to nothing in the lockfile is reported rather than skipped. The direct
+ * edges are also checked for format, because this repository's dependency rule
+ * requires an exact pin and a `^`/`~` range would let two installs of one commit
+ * ship different bytes from a notice that names one version.
  *
  * The three parts of a notice are checked separately so that a failure says which
  * one is wrong. The recorded version is compared with the lockfile's resolved
@@ -1316,18 +1515,11 @@ function ruleThirdPartyNotices(findings) {
     }
   }
 
-  // A declared runtime dependency that is not on the shipped list is a coverage
-  // hole by construction: the list is what the rest of this rule iterates, so a new
-  // dependency would otherwise ship with no notice and no finding. The detection
-  // proof caught this as a false negative — `"left-pad": "1.3.0"` added to
-  // `dependencies` produced a PASS. The check is a set equality between the two
-  // sides, restricted to the runtime graph: a devDependency is not shipped, and a
-  // library on the list that nothing declares is caught in the loop below.
-  for (const name of lock.dependencies.keys()) {
-    if (!SHIPPED_RUNTIME_LIBRARIES.includes(name)) {
-      report(findings, 'runtime dependency is not covered by this rule\'s shipped-library list, so its notice is never checked', 'package.json', undefined, undefined, `${name} = ${lock.dependencies.get(name)}`)
-    }
-  }
+  // The shipped set: discovered, not restated. A library the discovery names and
+  // the notices file does not record is reported by the loop below, so a package
+  // that starts shipping cannot arrive without a notice — which is the failure
+  // this rule exists to catch, and the one it previously could not see.
+  const shipped = discoverShippedRuntimeLibraries(findings, lock)
 
   const rows = parseNoticeTables(notices)
   const resolvedVersions = (name) => {
@@ -1344,10 +1536,10 @@ function ruleThirdPartyNotices(findings) {
     return [...found].sort()
   }
 
-  for (const library of SHIPPED_RUNTIME_LIBRARIES) {
+  for (const library of shipped) {
     const resolved = resolvedVersions(library)
     if (resolved.length === 0) {
-      report(findings, 'library is treated as a shipped runtime dependency but nothing of that name resolves in pnpm-lock.yaml', library)
+      report(findings, 'library ships in this build but nothing of that name resolves in pnpm-lock.yaml, so its identity cannot be established', library)
       continue
     }
     const resolvedList = resolved.join(', ')
