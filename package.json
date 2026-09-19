@@ -49,6 +49,7 @@
     "typecheck": "tsc -p tsconfig.client.json --noEmit",
     "test": "vitest run",
     "test:browser": "playwright test",
+    "verify": "node scripts/verify.mjs",
     "build": "tsdown && tsc -p tsconfig.build.json",
     "smoke:driver": "tsdown --config tsdown.smoke-driver.config.ts",
     "smoke:profile": "node scripts/dsh-smoke-profile.mjs"

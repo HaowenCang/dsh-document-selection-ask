@@ -110,6 +110,18 @@ const SMOKE_FIXTURES = [
       '',
     ].join('\n'),
   },
+  {
+    // Task 13 added this fixture: CSV is a supported document class — the
+    // builtin-text adapter classifies it by its own `.csv` suffix — and Tasks
+    // 5–11 shipped no CSV fixture at all, so the cross-format acceptance suite
+    // had no file to open. The rows are chosen so one of them is unmistakable
+    // and no two are equal: a case can select row 3 and assert the exact text
+    // and the exact source line, and a case that accidentally selected a
+    // neighbouring row fails instead of passing on a shared word.
+    key: 'csv',
+    path: 'smoke-fixtures/task13-smoke.csv',
+    text: 'region,units,note\nnorth,41,alpha\nsouth,57,beta\neast,63,gamma\n',
+  },
 ]
 
 /**

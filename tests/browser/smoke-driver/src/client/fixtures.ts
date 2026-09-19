@@ -38,6 +38,7 @@ export interface SmokeFixture {
     | 'txt'
     | 'code'
     | 'markdown'
+    | 'csv'
     | 'pdf-single'
     | 'pdf-two'
     | 'pdf-cjk'
@@ -132,6 +133,19 @@ export const SMOKE_FIXTURES: readonly SmokeFixture[] = [
       '```',
       '',
     ].join('\n'),
+    tabKind: 'text',
+  },
+  {
+    // Task 13's fixture. CSV is one of the eight supported document classes and
+    // was the only one with no committed or written fixture, so the universal
+    // acceptance suite could not open one. It names the product's document
+    // preview like every other fixture: which renderer then draws a `.csv` is
+    // the preview's own ranking decision, and the adapter classifies the
+    // document as CSV from the address alone.
+    key: 'csv',
+    label: 'Open smoke CSV',
+    path: 'smoke-fixtures/task13-smoke.csv',
+    text: 'region,units,note\nnorth,41,alpha\nsouth,57,beta\neast,63,gamma\n',
     tabKind: 'text',
   },
   {
