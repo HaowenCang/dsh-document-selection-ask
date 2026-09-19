@@ -21,11 +21,12 @@ baseline from the versions actually installed at that time.
 
 - Task 13
   - commits: `9064bfdfc5c14c7e7e48df393e1cee7255830e92` (the round's work),
-    `08d93f910b71c8db01f0bd8839c1e480d5779cc5` (this record) and
-    `9f8b5c7adc7dba3e7a4a31345b75d6b71bf737e9` (one later correction to
-    `scripts/verify.mjs`, described under "Current gate"; the correction is a
-    third commit rather than an amend because the branch was already published and
-    this round does not force-push)
+    `08d93f910b71c8db01f0bd8839c1e480d5779cc5` (the round's record),
+    `9f8b5c7adc7dba3e7a4a31345b75d6b71bf737e9` and
+    `f916ed8f5278071265bc728b9d69dbf7dd7d2831` (two successive corrections to
+    `scripts/verify.mjs`, described under "Current gate"), plus a closing docs
+    correction. The corrections are separate commits rather than amendments because
+    the branch was already published and this round does not force-push
   - `tests/browser/universal-selection.spec.ts` (new, 10 cases): one case per
     supported class — TXT, Markdown, code, CSV, PDF, DOCX, PPTX, XLSX — plus a real
     cross-root refusal and a recovery after it. Each class keeps its own real
@@ -1323,18 +1324,30 @@ a WASM integrity failure still fails closed.
     rows, so the recorded strip box `292, 490.4, 408 x 217.6` is unchanged; the
     commentary now states the count as a measured quantity rather than an
     assumption
-- Task 13 gate-script correction after review — one further defect in
-  `scripts/verify.mjs`'s notices rule was found while re-proving the license
-  injection, and is committed as `9f8b5c7`. The block-record lookup searched
-  `package: <name>` followed by up to 240 arbitrary characters before `license:`,
-  and on a 400-line notices file that gap runs straight through the markdown table
-  into a **later** library's block record: blanking `pdfjs-dist`'s license cell
-  still matched another library's license and the rule reported nothing. A field
-  lookup keyed on a package name must not be able to answer with another package's
-  value, so the lookup is now anchored to the `package:` line and bounded to the
-  four lines that follow it. The injection that exposed it — blanking a license
-  cell — now fails the rule, the other injections still fire, and the real tree
-  remains 12/12
+- Task 13 gate-script corrections after review — the notices rule needed **two**
+  successive corrections, and the first was not sufficient. Both are committed
+  (`9f8b5c7`, then `f916ed8`) because the branch was already published and this
+  round does not force-push.
+  - `9f8b5c7`: the block-record lookup searched `package: <name>` followed by up to
+    240 arbitrary characters before `license:`, and on a 400-line notices file that
+    gap runs straight through the markdown table into a **later** library's block
+    record. A field lookup keyed on a package name must not be able to answer with
+    another package's value, so the lookup is anchored to the `package:` line and
+    bounded to the four lines that follow it.
+  - `f916ed8`: anchoring alone did not close Agent D's finding. A row whose license
+    *cell* exists but is blank still fell through to the block record, so blanking
+    `pdfjs-dist`'s license cell found a license in that package's own fenced block
+    and the rule reported nothing. A row that carries a version cell and an empty
+    license cell is a notice claiming the identity and omitting the license, so it
+    is now reported on the empty cell itself, and only a row with no license cell
+    at all consults the block form.
+  - The integrator verified the second correction by A/B, not by reading it: on a
+    throwaway copy of the tree with `pdfjs-dist`'s license cell blanked, the
+    previously committed script reports `PASS R8` and 12/12 — the false negative —
+    while the corrected script reports `FAIL R8` with exactly one finding,
+    `notices carry no license for this shipped library … THIRD_PARTY_NOTICES.md:28
+    -> pdfjs-dist`. The unmodified copy is 12/12 under both, so the rule still
+    passes a correct notices file.
 - Task 13 adversarial review — Agent D's read-only review of the integrated tree
   raised three blocking findings and the integrator fixed all three before the
   final matrix: the cleanup case that names "a late old resource cannot clear the
@@ -1786,7 +1799,8 @@ user's own `dsa-smoke` profile tree, whose links already point at this worktree.
   `735F8B77EC0B899F9740A8C0591AB7FE0A294C9D5F185A69A9B4A8F7134A183D`; see the
   Task 12R record above)
 - Task 13 — PASS (`9064bfdfc5c14c7e7e48df393e1cee7255830e92`, with the gate-script
-  correction at `9f8b5c7adc7dba3e7a4a31345b75d6b71bf737e9` and this record at
+  corrections at `9f8b5c7adc7dba3e7a4a31345b75d6b71bf737e9` and
+  `f916ed8f5278071265bc728b9d69dbf7dd7d2831`, and the status records at
   `08d93f910b71c8db01f0bd8839c1e480d5779cc5`; one universal
   acceptance case per supported class plus a real cross-root refusal and a recovery
   after it, per-format resource cleanup with a late old resource proved unable to
