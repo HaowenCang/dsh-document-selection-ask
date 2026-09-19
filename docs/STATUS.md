@@ -1228,6 +1228,14 @@ a WASM integrity failure still fails closed.
 
 ## Current gate
 
+- Task 12R browser gate — **CLOSED** on real DSH `0.1.5-rc.1` and `0.1.5-rc.2`:
+  the smoke driver keeps all twenty-four fixture controls inside the viewport
+  (strip `292, 490, 408 x 218` at 1280 x 720), every one of them is opened by an
+  ordinary actionability-checked `locator.click()`, and each suite is XLSX
+  **13 / 0 / 0**, PPTX **10 / 0 / 0**, DOCX **6 / 0 / 0**, PDF **10 / 0 / 0**,
+  TextPreview **8 / 0 / 0**. The earlier rc.1 result of XLSX 7 / 6 is retained
+  below as history: it demonstrated non-regression against the pre-Task-12
+  baseline and did not meet the frozen acceptance gate
 - Task 12 registration ownership: PASS — one top-level `ctx.effect` per apply,
   `applyClient` effect-free, exactly four extension renderer definitions with
   `priority: 'extension'` / `loading: 'bytes-complete'` / `wrap: false`, zero
@@ -1286,6 +1294,74 @@ a WASM integrity failure still fails closed.
   English document was worded in Chinese whenever no button was on screen. Fixed
   in `SelectionAskOverlay` by falling back to the ambient document — the one
   change Task 12 permits in that file, and it is a copy-resolution change only
+
+### Task 12R — closing the rc.1 browser gate
+
+The Task 12 record above reports the rc.1 XLSX suite as 7 passed / 6 failed and
+explains those failures as environmental, evidenced by the pre-Task-12 baseline
+failing the identical six cases on the same instance. That evidence establishes
+non-regression and nothing more: a frozen acceptance gate that requires 13 passed
+/ 0 failed / 0 skipped is not met by showing that the baseline failed the same
+way. Task 12R therefore treats the rc.1 gate as open and closes it without
+weakening what the gate measures.
+
+Root cause, measured rather than inferred. The smoke driver renders one control
+per fixture in a single `position: fixed` flex row with `left: 12px`, no `right`,
+no wrap and no width bound. At the 1,280 x 720 viewport the smoke runs at, the
+twenty-four controls measured 1,568.6 px wide against a 1,280 px window, and the
+five XLSX controls — the tail of `SMOKE_FIXTURES` — sat 294 px past the right
+edge. Playwright reported `locator.click` with "element is outside of the
+viewport", which is a statement about the control's geometry, not about the XLSX
+renderer: every failing case failed at the click that opens the fixture, before
+the plugin under test was exercised. RED was reproduced on a real DSH
+`0.1.5-rc.1` instance before any source was touched, with the failing control's
+bounding box and the viewport recorded.
+
+Remediation is test infrastructure only. `SmokeDriverControl.tsx` now renders the
+controls as a grid anchored at `left: 292px` with `width: 408px`, four 1fr columns
+per row, `white-space: nowrap` on the labels and `overflow: hidden` on the strip.
+Each bound answers a measured occluder: the window-wide row reached under the
+preview column (which begins at `x = 704` and wins the hit test over the strip,
+because the overlay slot's composer column establishes the stacking context), and
+a second attempt bounded only by `width: 680px` lost `pptx-external-media` to the
+shell's right-sidebar resize handle at `x = 276`. `x = 292` clears the handle and
+`x = 700` ends before the preview column, and seven rows of four fit in 218 px,
+whose top edge stays below the composer's published `y = 447`. No forced click,
+no DOM-dispatched event, no viewport widening, no `scrollIntoViewIfNeeded`, and no
+scaling or zoom: every case still opens its fixture with an ordinary
+actionability-checked `locator.click()`. `xlsx-selection.spec.ts` adds
+`expectControlReachable`, which asserts the four bounds of each control against
+the viewport before clicking it, so a layout regression names the control, its
+box and the viewport instead of surfacing as a bare retry timeout. No product
+assertion was removed or weakened.
+
+- Task 12R real DSH `0.1.5-rc.1`, isolated install at
+  `E:\Projects\DSHarness\.dsa-rc1` (`@deepseek-ai/dsh@0.1.5-rc.1` with a fresh
+  profile driven by `scripts/dsh-smoke-profile.mjs`): XLSX **13 / 0 / 0**, PPTX
+  **10 / 0 / 0**, DOCX **6 / 0 / 0**, PDF **10 / 0 / 0**, TextPreview **8 / 0 / 0**
+  — 47 passed, 0 failed, 0 skipped. The previous round's rc.1 XLSX result of
+  7 / 6 stands as history and established non-regression only; it did not meet the
+  frozen acceptance gate
+- Task 12R geometry evidence, rc.1 at 1280 x 720 with a workbook open: strip box
+  `292, 490, 408 x 218`; all twenty-four controls inside the viewport and receiving
+  a click; the six XLSX controls at `xlsx-simple` 600.5, 617.6, 95.5 x 24.8;
+  `xlsx-formula-values` 296.0, 648.4; `xlsx-multi-sheet` 397.5, 648.4;
+  `xlsx-merged-frozen` 499.0, 648.4; `xlsx-chart-image` 600.5, 648.4; `xlsx-large`
+  296.0, 679.2 — every right edge at or below 696 and every bottom edge at or below
+  704
+- Task 12R rc.2 regression, real DSH `0.1.5-rc.2`, all five suites re-run because
+  the harness layout changed: XLSX **13 / 0 / 0**, PPTX **10 / 0 / 0**, DOCX
+  **6 / 0 / 0**, PDF **10 / 0 / 0**, TextPreview **8 / 0 / 0** — the wrapped
+  controls interfere with no existing interaction
+- Task 12R static gates: `pnpm test` **1,052 passed / 0 failed over 58 files**,
+  `pnpm typecheck`, `pnpm build`, `npm pack --dry-run` (89 files, no fixture, no
+  smoke driver, no Playwright artefact, no local path), `git diff --check`
+- Task 12R production identity: `git diff fc5ea8f -- src/client` is empty;
+  `lib/client.js` is byte-identical to the Task 12 build at
+  `735F8B77EC0B899F9740A8C0591AB7FE0A294C9D5F185A69A9B4A8F7134A183D` and
+  `lib/index.mjs` at
+  `FAC72B86168E002CB6DD2939C1775CAD0D149AFB24C4C2264B1110B079A60F39`;
+  `package.json`, `pnpm-lock.yaml` and the Task 11 runtime assets are unchanged
 
 - Task 11C fixture integrity unit suite: PASS (13 cases) — the committed
   `xl/media/image1.png` read out of the workbook, its signature and exact chunk
@@ -1509,6 +1585,18 @@ document or test file. The user's own profile tree, credentials and workspace
 store were not modified: the scratch home holds its own settings file and a copy
 of the workspace store, and the isolated profile points at this worktree.
 
+Task 12R re-ran both runtimes on the same terms. The isolated rc.1 home needed one
+environmental repair before the gate could be measured at all: a fresh rc.1 home
+has no model provider, and the client's first-run onboarding step is a *blocking*
+modal — it sets `inert` on the application root and lays a full-viewport mask over
+it, so no control in the shell, including the smoke driver's, receives a click.
+The modal's primary action cannot be satisfied without a credential, so the home
+was given a declared `llm-pi-ai` provider row plus a placeholder credential
+reference: enough for the provider join to report the route usable, which is the
+condition that ends the step. This is scratch-home configuration, written outside
+this repository, and no credential value in it is real. The rc.2 run used the
+user's own `dsa-smoke` profile tree, whose links already point at this worktree.
+
 ## Open source
 
 - Task 3A — PASS
@@ -1558,6 +1646,11 @@ of the workspace store, and the isolated profile points at this worktree.
   `too-many-cells` reported as its own refusal, builtin definitions surviving
   plugin disposal with no automatic fallback, and the five existing browser suites
   green on the Task 12 build; see the Current gate and the runtime note above)
+- Task 12R — PASS (smoke-driver viewport remediation; the rc.1 XLSX gate is
+  closed at 13 / 0 / 0 and rc.2 stays green at 47 / 0 / 0, production delta zero,
+  `lib/client.js` unchanged at
+  `735F8B77EC0B899F9740A8C0591AB7FE0A294C9D5F185A69A9B4A8F7134A183D`; see the
+  Task 12R record above)
 
 `LICENSE` is the standard MIT text with the copyright holder taken from the
 authenticated GitHub account. `package.json` declares `"license": "MIT"`.
