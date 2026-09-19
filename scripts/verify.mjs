@@ -1386,20 +1386,30 @@ function ruleThirdPartyNotices(findings) {
       : Array.isArray(manifest.licenses)
         ? manifest.licenses.map((entry) => entry?.type).filter((type) => typeof type === 'string').join(' OR ')
         : undefined
+    // Is a license recorded at all, and is it the one the installed package declares?
+    //
+    // The table cell is authoritative when the row has one. A row that carries a version
+    // cell and an empty license cell is a notice claiming the identity and omitting the
+    // license, so it is reported. Falling through to the block record there was the defect
+    // Agent D found: the block form is a *different statement about the same package*, and
+    // the earlier, unbounded lookup reached a later library’s block record and answered
+    // with that library’s licence. Only a row with no license cell at all consults the
+    // block form, which is how this file records a package no table row covers.
     const recorded = (row.license ?? '').trim()
     if (recorded === '') {
-      // Symmetric with the version side above, and for the same reason: a notice is
-      // required to carry identity, **version** and **license**, so an empty license
-      // cell is an unrecorded license, not a comparison that can be skipped. The first
-      // version of this rule ran the manifest comparison only when both sides were
-      // non-empty, which meant blanking one cell produced a silent PASS — a notice
-      // that records no license passed a rule whose whole purpose is to require one.
-      // The file's other record form is a fenced `package:/version:/license:` block.
-      const recordedLicense = findPackageRecordValue(notices, library, 'license')
-      if (recordedLicense === null) {
+      // A row that *has* a license cell and leaves it blank is reported here, and the
+      // empty string is the whole test: the earlier version computed the lookup result
+      // and then compared it with `null`, which a blanked cell never is, so the finding
+      // was never produced and blanking a license cell still passed. Only a row with no
+      // license cell at all — `row.license === undefined` — consults the block form.
+      const recordedLicense = row.license === undefined
+        ? findPackageRecordValue(notices, library, 'license')
+        : ''
+      if (recordedLicense === null || recordedLicense.trim() === '') {
         report(findings, 'notices carry no license for this shipped library, so its license is unrecorded', at, undefined, undefined, library)
       }
     } else if (typeof declared === 'string' && declared !== '') {
+
       // A manifest may state a disjunction or wrap it in parentheses — `jszip`
       // declares `(MIT OR GPL-3.0-or-later)` — while the notice records the branch
       // the package is used under. Both are statements about the same package, so
