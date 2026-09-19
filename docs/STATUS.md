@@ -20,7 +20,12 @@ baseline from the versions actually installed at that time.
 ## Completed
 
 - Task 13
-  - commit: `9064bfdfc5c14c7e7e48df393e1cee7255830e92`
+  - commits: `9064bfdfc5c14c7e7e48df393e1cee7255830e92` (the round's work),
+    `08d93f910b71c8db01f0bd8839c1e480d5779cc5` (this record) and
+    `9f8b5c7adc7dba3e7a4a31345b75d6b71bf737e9` (one later correction to
+    `scripts/verify.mjs`, described under "Current gate"; the correction is a
+    third commit rather than an amend because the branch was already published and
+    this round does not force-push)
   - `tests/browser/universal-selection.spec.ts` (new, 10 cases): one case per
     supported class — TXT, Markdown, code, CSV, PDF, DOCX, PPTX, XLSX — plus a real
     cross-root refusal and a recovery after it. Each class keeps its own real
@@ -1318,6 +1323,18 @@ a WASM integrity failure still fails closed.
     rows, so the recorded strip box `292, 490.4, 408 x 217.6` is unchanged; the
     commentary now states the count as a measured quantity rather than an
     assumption
+- Task 13 gate-script correction after review — one further defect in
+  `scripts/verify.mjs`'s notices rule was found while re-proving the license
+  injection, and is committed as `9f8b5c7`. The block-record lookup searched
+  `package: <name>` followed by up to 240 arbitrary characters before `license:`,
+  and on a 400-line notices file that gap runs straight through the markdown table
+  into a **later** library's block record: blanking `pdfjs-dist`'s license cell
+  still matched another library's license and the rule reported nothing. A field
+  lookup keyed on a package name must not be able to answer with another package's
+  value, so the lookup is now anchored to the `package:` line and bounded to the
+  four lines that follow it. The injection that exposed it — blanking a license
+  cell — now fails the rule, the other injections still fire, and the real tree
+  remains 12/12
 - Task 13 adversarial review — Agent D's read-only review of the integrated tree
   raised three blocking findings and the integrator fixed all three before the
   final matrix: the cleanup case that names "a late old resource cannot clear the
@@ -1768,7 +1785,9 @@ user's own `dsa-smoke` profile tree, whose links already point at this worktree.
   `lib/client.js` unchanged at
   `735F8B77EC0B899F9740A8C0591AB7FE0A294C9D5F185A69A9B4A8F7134A183D`; see the
   Task 12R record above)
-- Task 13 — PASS (`9064bfdfc5c14c7e7e48df393e1cee7255830e92`; one universal
+- Task 13 — PASS (`9064bfdfc5c14c7e7e48df393e1cee7255830e92`, with the gate-script
+  correction at `9f8b5c7adc7dba3e7a4a31345b75d6b71bf737e9` and this record at
+  `08d93f910b71c8db01f0bd8839c1e480d5779cc5`; one universal
   acceptance case per supported class plus a real cross-root refusal and a recovery
   after it, per-format resource cleanup with a late old resource proved unable to
   clear the live selection that replaced it, a cross-format network gate that is
