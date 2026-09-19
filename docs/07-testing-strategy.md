@@ -179,23 +179,28 @@ Candidate migration:
 
 ## 9. Compatibility
 
-版本策略：
+版本策略（Task 14 修订）：
 
-- Primary verified runtime: DSH `0.1.5-rc.1`
-- Forward contract target: DSH `0.1.5-rc.2`
-- rc.2 目前仅完成 **contract-compatible** 验证（编译期 probe 通过）；在真实应用 smoke 之前，不得声称完整支持 rc.2 runtime。
-- future versions: best effort only until CI matrix proves compatibility
+- Current official runtime / primary blocking real-app runtime / primary compile-contract
+  baseline: DSH `0.1.5-rc.2`
+- Historical backward-compatibility evidence: DSH `0.1.5-rc.1`（Task 13 的真实应用矩阵，
+  不再是 contract pin，也不再作为维护基线）
+- No separate forward target is declared。更新的 DSH release 必须同时通过 contract gate 与
+  real-app acceptance，之后才可声称支持；矩阵见 `docs/compatibility.md`。
 
 Contract 依赖不从机器上的 DSH 安装解析，而是在本项目 `devDependencies` 中按同一 release 精确固定：
 
 ```text
 @deepseek-ai/cordis                              4.0.2
-@deepseek-ai/dsh-client-ui-slots                 0.1.5-rc.1
-@deepseek-ai/dsh-client-store                    0.1.5-rc.1
-@deepseek-ai/dsh-client-ui-dockkit               0.1.5-rc.1
-@deepseek-ai/dsh-client-ui-session               0.1.5-rc.1
-@deepseek-ai/dsh-client-ui-conversation          0.1.5-rc.1
-@deepseek-ai/dsh-client-ui-sidebar-documentpreview 0.1.5-rc.1
+@deepseek-ai/dsh-client-store                    0.1.5-rc.2
+@deepseek-ai/dsh-client-ui-conversation          0.1.5-rc.2
+@deepseek-ai/dsh-client-ui-dockkit               0.1.5-rc.2
+@deepseek-ai/dsh-client-ui-layout                0.1.5-rc.2
+@deepseek-ai/dsh-client-ui-renderer              0.1.5-rc.2
+@deepseek-ai/dsh-client-ui-session               0.1.5-rc.2
+@deepseek-ai/dsh-client-ui-sidebar-documentpreview 0.1.5-rc.2
+@deepseek-ai/dsh-client-ui-sidebar-right         0.1.5-rc.2
+@deepseek-ai/dsh-client-ui-slots                 0.1.5-rc.2
 ```
 
 因此：
@@ -204,22 +209,23 @@ Contract 依赖不从机器上的 DSH 安装解析，而是在本项目 `devDepe
 git clone && pnpm install && pnpm typecheck && pnpm test && pnpm build
 ```
 
-只需本项目自身 `node_modules` 即可完成，不依赖也不修改用户级 DSH 安装。`pnpm dsh:doctor` 只做检测：比对 pin 与本机 DSH 安装，并在不一致时以非零退出码报告。
+只需本项目自身 `node_modules` 即可完成，不依赖也不修改用户级 DSH 安装。`pnpm dsh:doctor`
+只做检测：比对 pin 与本机 DSH 安装，并在不一致时以非零退出码报告。`pnpm check:dsh-contracts`
+是 Task 14 的完整 gate：在版本一致性之外，还编译 contract probes 并据此决定 PASS/FAIL。
 
-### rc.2 contract probe（可丢弃环境）
+### rc.2 编译契约与真实应用（Task 14 修订）
 
-```bash
-# 项目外/项目内 ignored 的临时目录，安装同一组 public packages 的 0.1.5-rc.2
-# 仅运行 tests/compatibility/contracts.compile.ts 的等价 probe
-```
-
-结果分类：
+Task 14 之后不再需要「可丢弃环境里的 rc.2 contract probe」这一独立步骤：rc.2 本身就是当前
+基线，编译契约与真实应用验收都在同一运行时上进行。
 
 ```text
-rc.1 contract: PASS
-rc.2 contract: PASS | FAIL
-rc.2 runtime smoke: NOT CLAIMED
+rc.2 contract:       PASS — pnpm check:dsh-contracts（pin 一致性 + 探针编译）
+rc.2 runtime smoke:  PASS — 七个真实 DSH 浏览器套件 63 / 0 / 0，外加 docs/manual-acceptance.md
+rc.1 contract:       历史证据，不再是 pin，也不再作为维护基线
 ```
+
+`docs/compatibility.md` 是支持矩阵，`docs/manual-acceptance.md` 是可执行的人工验收程序；
+每轮的实际数值记入 `docs/STATUS.md`，不写回本文件。
 
 ## 10. Real DSH acceptance checklist
 

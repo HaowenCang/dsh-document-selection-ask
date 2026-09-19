@@ -4,7 +4,7 @@
 
 本节的技术调研基于 DeepSeek Harness `0.1.5-rc.2` 源码进行。
 
-调研对象与项目的运行时基线是两件事：项目主验证运行时为 `0.1.5-rc.1`，`0.1.5-rc.2` 仅为 forward compile-contract target。当前基线见 `docs/STATUS.md`。
+调研对象与项目的运行时基线自 Task 14 起是同一个版本：当前官方运行时、主要阻塞性真实应用运行时与主要编译契约基线都是 `0.1.5-rc.2`；`0.1.5-rc.1` 只作为历史向后兼容证据保留，不再是 pin，也不是维护基线。支持矩阵见 `docs/compatibility.md`，当前进度见 `docs/STATUS.md`。
 
 DSH 已提供右侧 Document Preview，并公开 renderer registry。第三方 renderer 可注册：
 
