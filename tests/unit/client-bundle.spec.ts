@@ -171,18 +171,30 @@ describe('built client bundle', () => {
     }
   })
 
-  it('registers through the fiber effect hook and owes the fiber a disposer', () => {
+  it('registers through exactly one fiber effect and owes the fiber a disposer', () => {
     const calls = evaluateAsClassicScript(readFileSync(bundlePath, 'utf8'))
     const exports = calls[0]?.factory?.(requireShared) as { apply: (ctx: unknown) => void }
     // `effect` is the fiber's own lifecycle contract: a contribution is made
     // inside the effect body and its teardown is what the body returns. The hook
     // is stubbed because the bundle runs outside a DSH fiber here, and the
     // assertion is on that boundary rather than on the body's contents.
+    //
+    // `documentPreviews` is supplied because the runtime validates it before it
+    // registers anything: since Task 12 a missing required service fails the
+    // apply rather than producing a plugin that contributed everything except the
+    // renderers.
     const bodies: (() => (() => void) | void)[] = []
+    const registered: string[] = []
     const ctx = {
       effect: (execute: () => (() => void) | void): (() => void) => {
         bodies.push(execute)
         return () => undefined
+      },
+      documentPreviews: {
+        register: (definition: { readonly id: string }): (() => void) => {
+          registered.push(definition.id)
+          return () => undefined
+        },
       },
       slots: {
         inject: (_key: string, callback: () => (() => void) | void): (() => void) => {
@@ -196,18 +208,46 @@ describe('built client bundle', () => {
     expect(() => {
       exports.apply(ctx)
     }).not.toThrow()
-    expect(bodies.length).toBeGreaterThan(0)
 
-    // Every body has to produce a real disposer: one that returns nothing would
-    // leave the fiber with nothing to unload, and `Fiber.effect` rejects that
-    // shape with a `TypeError`.
-    for (const body of bodies) {
-      const produced = body()
-      expect(typeof produced).toBe('function')
-      expect(() => {
-        produced?.()
-      }).not.toThrow()
+    // One plugin-owned effect, whatever the plugin contributes. The body is the
+    // runtime's constructor and its return value is the whole teardown.
+    expect(bodies).toHaveLength(1)
+    const body = bodies[0]
+    if (body === undefined) throw new Error('apply must register one effect')
+
+    const produced = body()
+    expect(typeof produced).toBe('function')
+    expect(registered).toEqual([
+      'dsh-document-selection-ask/xlsx',
+      'dsh-document-selection-ask/pdf',
+      'dsh-document-selection-ask/docx',
+      'dsh-document-selection-ask/pptx',
+    ])
+    expect(() => {
+      produced?.()
+    }).not.toThrow()
+  })
+
+  it('fails the apply when a required service is missing', () => {
+    const calls = evaluateAsClassicScript(readFileSync(bundlePath, 'utf8'))
+    const exports = calls[0]?.factory?.(requireShared) as { apply: (ctx: unknown) => void }
+    const ctx = {
+      effect: (execute: () => (() => void) | void): (() => void) => {
+        execute()
+        return () => undefined
+      },
+      slots: {
+        inject: (_key: string, callback: () => (() => void) | void): (() => void) => {
+          const produced = callback()
+          return typeof produced === 'function' ? produced : () => undefined
+        },
+        register: (): (() => void) => () => undefined,
+      },
     }
+
+    expect(() => {
+      exports.apply(ctx)
+    }).toThrow(/document preview registry/)
   })
 
   it('fails on the shapes the loader cannot accept', () => {

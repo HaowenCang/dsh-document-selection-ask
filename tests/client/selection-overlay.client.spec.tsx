@@ -80,6 +80,16 @@ const ASK_LABEL_EN = 'Ask DeepSeek'
 /** The size-limit notice, from the plugin's own copy. */
 const TOO_LARGE = '\u9009\u533a\u8fc7\u5927\uff0c\u8bf7\u7f29\u5c0f\u8303\u56f4'
 
+/** The cell-limit notice, from the plugin's own copy. */
+const TOO_MANY_CELLS =
+  '\u9009\u4e2d\u7684\u5355\u5143\u683c\u8fc7\u591a\uff0c\u8bf7\u9009\u62e9\u4e0d\u8d85\u8fc7 200 \u4e2a\u5355\u5143\u683c'
+
+/** The English cell-limit notice, used by the locale cases. */
+const TOO_MANY_CELLS_EN = 'Too many cells selected. Select no more than 200 cells.'
+
+/** The English size-limit notice, used by the locale cases. */
+const TOO_LARGE_EN = 'The selection is too large. Select a smaller range.'
+
 /** Selector for the Ask button. */
 const BUTTON = '[data-dsa-selection-ask-button]'
 
@@ -533,6 +543,13 @@ const OVERSIZED_GESTURE = {
   feedback: 'too-large' as SelectionRejectReason,
 }
 
+/** A spreadsheet gesture that selected more than the 200-cell limit. */
+const TOO_MANY_CELLS_GESTURE = {
+  snapshot: null,
+  rejectReason: 'too-many-cells' as SelectionRejectReason,
+  feedback: 'too-many-cells' as SelectionRejectReason,
+}
+
 /** A capture context with no browser selection. */
 function emptyContext(): SelectionContext {
   return { selection: null, target: null, now: NOW }
@@ -738,6 +755,21 @@ describe('overlay rejection feedback', () => {
     fixture.tree.unmount()
   })
 
+  it('renders the cell-limit notice for a range beyond the limit', () => {
+    const fixture = mountOverlay({ snapshot: null })
+
+    captureNext(fixture, TOO_MANY_CELLS_GESTURE)
+
+    const toast = fixture.tree.container.querySelector(TOAST)
+    // The kind is asserted beside the wording, because the two limits are
+    // different refusals: showing the character limit's notice for a cell
+    // overflow would name a limit the reader never reached.
+    expect(toast?.getAttribute('data-dsa-selection-error')).toBe('too-many-cells')
+    expect(toast?.textContent).toBe(TOO_MANY_CELLS)
+    expect(toast?.textContent).not.toBe(TOO_LARGE)
+    fixture.tree.unmount()
+  })
+
   it('clears the notice when a later capture succeeds', () => {
     const fixture = mountOverlay({ snapshot: null })
 
@@ -780,6 +812,21 @@ describe('overlay copy', () => {
 
     expect(fixture.tree.container.querySelector(BUTTON)?.textContent).toBe(ASK_LABEL_EN)
     fixture.tree.unmount()
+  })
+
+  it.each([
+    ['zh-CN', TOO_LARGE, TOO_MANY_CELLS],
+    ['en', TOO_LARGE_EN, TOO_MANY_CELLS_EN],
+  ])('words both refusals in the document language (%s)', (lang, tooLarge, tooManyCells) => {
+    const oversized = mountOverlay({ snapshot: null, lang })
+    captureNext(oversized, OVERSIZED_GESTURE)
+    expect(oversized.tree.container.querySelector(TOAST)?.textContent).toBe(tooLarge)
+    oversized.tree.unmount()
+
+    const cells = mountOverlay({ snapshot: null, lang })
+    captureNext(cells, TOO_MANY_CELLS_GESTURE)
+    expect(cells.tree.container.querySelector(TOAST)?.textContent).toBe(tooManyCells)
+    cells.tree.unmount()
   })
 })
 

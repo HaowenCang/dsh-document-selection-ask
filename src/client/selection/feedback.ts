@@ -22,19 +22,23 @@
 
 import type { SelectionRejectReason } from './types.js'
 
-/** The one thing the Ask UI has to say about a refused capture. */
-export type SelectionFeedback = { readonly kind: 'too-large' } | null
+/** The two things the Ask UI has to say about a refused capture. */
+export type SelectionFeedback = { readonly kind: 'too-large' } | { readonly kind: 'too-many-cells' } | null
 
 /**
  * Map a rejection reason to what the reader is told.
  *
- * Only the size limits are surfaced. `too-many-cells` is the same class of
- * statement as `too-large`: a real selection inside a supported preview that the
- * product declines, with a limit the reader can act on. Everything else —
- * `collapsed`, `outside-supported-preview`, `cross-root`, `interactive-control`,
- * `empty-after-normalization`, `renderer-not-ready` — describes an ordinary
- * gesture rather than a refusal, and reporting it would put an error in front of
- * the reader for clicking in a paragraph.
+ * Only the size limits are surfaced, and both of them are: `too-large` refuses a
+ * capture whose text exceeds the documented character limit and `too-many-cells`
+ * refuses a spreadsheet range beyond the 200-cell limit. They are the same class
+ * of statement — a real selection inside a supported preview that the product
+ * declines, with a limit the reader can act on — and each names its own limit, so
+ * one limit's notice is never shown for the other's refusal.
+ *
+ * Everything else — `collapsed`, `outside-supported-preview`, `cross-root`,
+ * `interactive-control`, `empty-after-normalization`, `renderer-not-ready` —
+ * describes an ordinary gesture rather than a refusal, and reporting it would put
+ * an error in front of the reader for clicking in a paragraph.
  *
  * @param reason - the reason a capture was refused.
  * @returns the feedback to publish, or `null` when the reason stays silent.
@@ -43,6 +47,8 @@ function feedbackFor(reason: SelectionRejectReason): SelectionFeedback {
   switch (reason) {
     case 'too-large':
       return { kind: 'too-large' }
+    case 'too-many-cells':
+      return { kind: 'too-many-cells' }
     default:
       return null
   }

@@ -18,8 +18,11 @@ import type { SelectionFeedback } from '../selection/feedback.js'
 import type { SelectionStrings } from './locales.js'
 
 /** The message each reported feedback kind renders. */
-const MESSAGE: Readonly<Record<'too-large', (strings: SelectionStrings) => string>> = {
+const MESSAGE: Readonly<
+  Record<'too-large' | 'too-many-cells', (strings: SelectionStrings) => string>
+> = {
   'too-large': (strings) => strings.selectionTooLarge,
+  'too-many-cells': (strings) => strings.tooManyCells,
 }
 
 /** Props of the rejection notice. */

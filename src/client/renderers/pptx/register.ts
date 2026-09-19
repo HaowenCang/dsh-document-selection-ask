@@ -1,14 +1,28 @@
 /**
  * Register the plugin's selectable PPTX renderer.
  *
- * Contributes the document preview definition to `ctx.documentPreviews`
- * and registers the `PptxBody` component into the `sidebar.right.tab.document` slot.
+ * Contributes the document preview definition to the document-preview registry
+ * and registers the `PptxBody` component into the `sidebar.right.tab.document`
+ * slot.
+ *
+ * As of Task 12 the two contributions, the style sheet and the keyed body are
+ * aggregated here and released by one idempotent disposer; the client runtime is
+ * the plugin's single top-level lifecycle owner. A failed registration releases
+ * what it already installed and rethrows.
  */
 
-import type { ClientContext, DocumentPreviewDefinition } from '../../dsh/contracts.js'
+import type { DocumentPreviewDefinition, RendererRegistrationHost } from '../../dsh/contracts.js'
+import { Disposer, rollback } from '../../selection/lifecycle.js'
+import type { Dispose } from '../../selection/lifecycle.js'
 import { PPTX_RENDERER_ID } from './identity.js'
-import { PptxBody, type PptxRendererInjectFace } from './PptxBody.js'
+import { PptxBody } from './PptxBody.js'
+import type { PptxRendererInjectFace } from './PptxBody.js'
 import { installPptxStyles } from './styles.js'
+
+// The injected face is declared beside the body that consumes it and re-exported
+// here, so every renderer publishes the shape the runtime injects from the same
+// module the runtime registers through.
+export type { PptxRendererInjectFace }
 
 /** The keyed list slot DSH mounts a selected document definition's body into. */
 export const DOCUMENT_BODY_SLOT = 'sidebar.right.tab.document'
@@ -30,46 +44,42 @@ export function pptxRendererDefinition(): DocumentPreviewDefinition {
 }
 
 /**
- * Register the selectable PPTX renderer into the client context.
+ * Register the selectable PPTX renderer.
  *
- * @param ctx - the client root context.
- * @param onSelectableDomInvalidated - callback when rendered slide DOM is invalidated.
- * @returns whether the renderer was successfully registered.
+ * @param host - the resolved DSH services the registration contributes through.
+ * @param inject - the callbacks the registered body is injected with.
+ * @returns an idempotent disposer releasing the definition, the body and the sheet.
  */
 export function registerPptxRenderer(
-  ctx: ClientContext,
-  onSelectableDomInvalidated?: () => void,
-): boolean {
-  const previews = ctx.documentPreviews
-  if (previews === undefined) {
-    console.error(
-      '[dsa-pptx] the DSH document preview registry is not available; the PPTX renderer was not registered',
+  host: RendererRegistrationHost,
+  inject: PptxRendererInjectFace = {},
+): Dispose {
+  const disposer = new Disposer()
+
+  try {
+    if (host.document !== undefined) {
+      disposer.add(installPptxStyles(host.document))
+    }
+
+    disposer.add(host.previews.register(pptxRendererDefinition()))
+
+    disposer.add(
+      host.slots.inject(DOCUMENT_BODY_SLOT, () =>
+        host.slots.register(
+          {
+            name: DOCUMENT_BODY_SLOT,
+            key: PPTX_RENDERER_ID,
+            inject: (): PptxRendererInjectFace => ({ ...inject }),
+          },
+          PptxBody,
+        ),
+      ),
     )
-    return false
+  } catch (error: unknown) {
+    rollback(disposer, error)
   }
 
-  const doc: Document | undefined = globalThis.document
-  if (doc !== undefined) {
-    ctx.effect(() => installPptxStyles(doc), 'dsh-document-selection-ask: pptx renderer styles')
+  return () => {
+    disposer.disposeAll()
   }
-
-  ctx.effect(
-    () => previews.register(pptxRendererDefinition()),
-    'dsh-document-selection-ask: pptx renderer definition',
-  )
-
-  ctx.slots.inject(DOCUMENT_BODY_SLOT, () =>
-    ctx.slots.register(
-      {
-        name: DOCUMENT_BODY_SLOT,
-        key: PPTX_RENDERER_ID,
-        inject: (): PptxRendererInjectFace => ({
-          onSelectableDomInvalidated,
-        }),
-      },
-      PptxBody,
-    ),
-  )
-
-  return true
 }

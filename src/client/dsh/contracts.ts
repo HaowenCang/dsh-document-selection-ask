@@ -62,6 +62,37 @@ import type {
 /** The client root context DSH hands to a plugin's browser `apply`. */
 export type ClientContext = Context
 
+/**
+ * The document-preview registry service.
+ *
+ * Stated as an indexed access rather than as an import because the class behind
+ * it is not re-exported from the package's `./client` entry: that entry declares
+ * `ctx.documentPreviews` by augmenting `Context`, which is the published route to
+ * the type. Reaching for the declaration file directly would be the private
+ * import this project forbids, and re-spelling the registry structurally would
+ * let a renamed method keep compiling.
+ */
+export type DocumentPreviewRegistry = ClientContext['documentPreviews']
+
+/**
+ * The DSH services one renderer registration contributes through.
+ *
+ * Resolved once by the client runtime before any renderer is registered, and
+ * passed down as this explicit face rather than as the whole context. Two
+ * consequences are deliberate: a renderer cannot reach a service the runtime did
+ * not vouch for, and the absence of a required service fails the runtime's own
+ * validation instead of half-installing a renderer that would only report the
+ * problem to the console.
+ */
+export interface RendererRegistrationHost {
+  /** The extension-renderer registry the definition is ranked in. */
+  readonly previews: DocumentPreviewRegistry
+  /** The slot registry the renderer's keyed body is mounted from. */
+  readonly slots: SlotRegistry
+  /** The document a renderer's style sheet is installed into, when there is one. */
+  readonly document?: Document | undefined
+}
+
 /** The renderer-owned slot registry the Ask overlay registers into. */
 export type { SlotRegistry }
 

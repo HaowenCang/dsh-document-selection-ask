@@ -20,6 +20,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { JSX } from 'react'
 
 import type { DocumentPreviewProps } from '../../dsh/contracts.js'
+import { documentSelectionStrings } from '../../ui/locales.js'
+import { useResourceInvalidation } from '../resource-invalidation.js'
 import { renderDocx } from './engine.js'
 import {
   DOCX_DOCUMENT_KIND,
@@ -28,15 +30,13 @@ import {
   DOCX_SELECTABLE_ATTRIBUTE,
   DOCX_STYLE_HOST_ATTRIBUTE,
 } from './identity.js'
-
-/** Copy shown while a document opens. */
-const LOADING_TEXT = '正在打开 Word 文档…'
-
-/** Copy shown when the file could not be opened. */
-const FAILED_TEXT = '无法显示 Word 文档'
+import type { DocxRendererInjectFace } from './register.js'
 
 /** Copy shown when the preview has no complete bytes to render. */
 const NO_BYTES_TEXT = 'DOCX 预览需要完整文件内容。'
+
+/** Props this body receives: the framework's own, plus the slot-injected callbacks. */
+export type DocxBodyProps = DocumentPreviewProps & Partial<DocxRendererInjectFace>
 
 type DocxLoadState =
   | { readonly kind: 'loading' }
@@ -49,11 +49,20 @@ type DocxLoadState =
  * @param props - standard document-body props provided by DSH.
  * @returns the renderer root.
  */
-export function DocxBody(props: DocumentPreviewProps): JSX.Element {
-  const { content, resourceAddress, scrollportRef } = props
+export function DocxBody(props: DocxBodyProps): JSX.Element {
+  const { content, resourceAddress, scrollportRef, onResourceInvalidated } = props
 
   const { tab } = props.useTabInfo()
   const tabSignal = tab.signal
+
+  // Resolved on every render rather than captured once, so the copy follows the
+  // document's language without a second subscription to observe a change.
+  const strings = documentSelectionStrings(globalThis.document)
+
+  // The resource this body renders stops being selectable when the body unmounts,
+  // when the address changes, or when its tab is released. The renderer publishes
+  // that fact and nothing else: which snapshot to clear is the runtime's decision.
+  useResourceInvalidation(resourceAddress, tabSignal, onResourceInvalidated)
 
   const [state, setState] = useState<DocxLoadState>({ kind: 'loading' })
   const generationRef = useRef(0)
@@ -111,7 +120,11 @@ export function DocxBody(props: DocumentPreviewProps): JSX.Element {
         if (ac.signal.aborted || currentGeneration !== generationRef.current) {
           return
         }
-        const message = err instanceof Error && err.message ? err.message : FAILED_TEXT
+        // The parser's own message when it has one, and the locale's generic
+        // "could not be displayed" when it does not: a renderer that always
+        // replaced the underlying diagnosis with the generic copy would hide the
+        // one piece of evidence a failure report needs.
+        const message = err instanceof Error && err.message ? err.message : strings.rendererFailed
         setState({ kind: 'failed', message })
       })
 
@@ -135,7 +148,7 @@ export function DocxBody(props: DocumentPreviewProps): JSX.Element {
       <div ref={contentHostRef} {...{ [DOCX_SELECTABLE_ATTRIBUTE]: '' }} />
       {state.kind === 'loading' && (
         <div style={{ padding: '32px', textAlign: 'center', color: '#666' }}>
-          {LOADING_TEXT}
+          {strings.loading}
         </div>
       )}
       {state.kind === 'failed' && (

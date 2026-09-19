@@ -1,17 +1,41 @@
 /**
  * Register the plugin's selectable DOCX renderer.
  *
- * Contributes the document preview definition to `ctx.documentPreviews`
- * and registers the `DocxBody` component into the `sidebar.right.tab.document` slot.
+ * Contributes the document preview definition to the document-preview registry
+ * and registers the `DocxBody` component into the `sidebar.right.tab.document`
+ * slot.
+ *
+ * ## Lifecycle
+ *
+ * As of Task 12 this function owns its own contributions and hands back one
+ * idempotent disposer instead of wrapping each one in a `ctx.effect`. The client
+ * runtime is the single top-level lifecycle owner; a registration that took a
+ * context and registered effects of its own would multiply the plugin's
+ * top-level effects with the number of renderers, and the runtime would have no
+ * single point at which the whole contribution set could be released — which is
+ * exactly how the two Ask slot entries were leaked before this task.
+ *
+ * A registration that throws halfway releases what it already installed and
+ * rethrows the original failure, so a failed renderer never leaves a definition
+ * or a body behind.
  */
 
-import type { ClientContext, DocumentPreviewDefinition } from '../../dsh/contracts.js'
+import type { RendererRegistrationHost } from '../../dsh/contracts.js'
+import type { DocumentPreviewDefinition } from '../../dsh/contracts.js'
+import { Disposer, rollback } from '../../selection/lifecycle.js'
+import type { Dispose } from '../../selection/lifecycle.js'
 import { DocxBody } from './DocxBody.js'
 import { DOCX_RENDERER_ID } from './identity.js'
 import { installDocxStyles } from './styles.js'
 
 /** The keyed list slot DSH mounts a selected document definition's body into. */
 export const DOCUMENT_BODY_SLOT = 'sidebar.right.tab.document'
+
+/** Injected callbacks the DOCX renderer body receives from the plugin runtime. */
+export interface DocxRendererInjectFace {
+  /** Called when a resource stops owning a selectable selection. */
+  readonly onResourceInvalidated?: ((resourceAddress: string) => void) | undefined
+}
 
 /**
  * The DOCX renderer's preview definition.
@@ -30,36 +54,45 @@ export function docxRendererDefinition(): DocumentPreviewDefinition {
 }
 
 /**
- * Register the selectable DOCX renderer into the client context.
+ * Register the selectable DOCX renderer.
  *
- * @param ctx - the client root context.
- * @returns whether the renderer was successfully registered.
+ * @param host - the resolved DSH services the registration contributes through.
+ * @param inject - the callbacks the registered body is injected with.
+ * @returns an idempotent disposer releasing the definition, the body and the sheet.
  */
-export function registerDocxRenderer(ctx: ClientContext): boolean {
-  const previews = ctx.documentPreviews
-  if (previews === undefined) {
-    console.error(
-      '[dsa-docx] the DSH document preview registry is not available; the DOCX renderer was not registered',
+export function registerDocxRenderer(
+  host: RendererRegistrationHost,
+  inject: DocxRendererInjectFace = {},
+): Dispose {
+  const disposer = new Disposer()
+
+  try {
+    if (host.document !== undefined) {
+      // Installed from the registration rather than from the component so it
+      // exists once per document for the runtime's lifetime, and is removed with
+      // it.
+      disposer.add(installDocxStyles(host.document))
+    }
+
+    disposer.add(host.previews.register(docxRendererDefinition()))
+
+    disposer.add(
+      host.slots.inject(DOCUMENT_BODY_SLOT, () =>
+        host.slots.register(
+          {
+            name: DOCUMENT_BODY_SLOT,
+            key: DOCX_RENDERER_ID,
+            inject: (): DocxRendererInjectFace => ({ ...inject }),
+          },
+          DocxBody,
+        ),
+      ),
     )
-    return false
+  } catch (error: unknown) {
+    rollback(disposer, error)
   }
 
-  const doc: Document | undefined = globalThis.document
-  if (doc !== undefined) {
-    ctx.effect(() => installDocxStyles(doc), 'dsh-document-selection-ask: docx renderer styles')
+  return () => {
+    disposer.disposeAll()
   }
-
-  ctx.effect(() => previews.register(docxRendererDefinition()), 'dsh-document-selection-ask: docx renderer definition')
-
-  ctx.slots.inject(DOCUMENT_BODY_SLOT, () =>
-    ctx.slots.register(
-      {
-        name: DOCUMENT_BODY_SLOT,
-        key: DOCX_RENDERER_ID,
-      },
-      DocxBody,
-    ),
-  )
-
-  return true
 }

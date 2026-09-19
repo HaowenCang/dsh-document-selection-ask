@@ -139,6 +139,32 @@ const FULL_WIDTH_COMMA = String.fromCodePoint(0xff0c)
 /** `请缩小范围` */
 const TOO_LARGE_REQUEST = String.fromCodePoint(0x8bf7, 0x7f29, 0x5c0f, 0x8303, 0x56f4)
 
+/** `选区过大，请缩小范围` — the whole notice, composed from its named groups. */
+const TOO_LARGE_TEXT = TOO_LARGE_SUBJECT + FULL_WIDTH_COMMA + TOO_LARGE_REQUEST
+
+/** `选中的单元格过多` */
+const TOO_MANY_CELLS_SUBJECT = String.fromCodePoint(
+  0x9009, 0x4e2d, 0x7684, 0x5355, 0x5143, 0x683c, 0x8fc7, 0x591a,
+)
+/** `请选择不超过` */
+const TOO_MANY_CELLS_REQUEST = String.fromCodePoint(0x8bf7, 0x9009, 0x62e9, 0x4e0d, 0x8d85, 0x8fc7)
+/** `个单元格` */
+const CELL_NOUN = String.fromCodePoint(0x4e2a, 0x5355, 0x5143, 0x683c)
+
+/** `无法显示文档` */
+const RENDERER_FAILED_TEXT = String.fromCodePoint(0x65e0, 0x6cd5, 0x663e, 0x793a, 0x6587, 0x6863)
+
+/** `当前内容没有可选择文本` */
+const NO_SELECTABLE_TEXT = String.fromCodePoint(
+  0x5f53, 0x524d, 0x5185, 0x5bb9, 0x6ca1, 0x6709, 0x53ef, 0x9009, 0x62e9, 0x6587, 0x672c,
+)
+
+/** `正在加载文档` */
+const LOADING_TEXT = String.fromCodePoint(0x6b63, 0x5728, 0x52a0, 0x8f7d, 0x6587, 0x6863)
+
+/** `…` — the single horizontal-ellipsis code point, not three periods. */
+const ELLIPSIS = String.fromCodePoint(0x2026)
+
 describe('Ask UI copy', () => {
   it('names the Ask button with exactly the documented code points', () => {
     expect(ZH.ask).toBe(ASK_TEXT)
@@ -148,11 +174,43 @@ describe('Ask UI copy', () => {
   })
 
   it('words the size limit with exactly the documented code points', () => {
-    const expected = TOO_LARGE_SUBJECT + FULL_WIDTH_COMMA + TOO_LARGE_REQUEST
-
-    expect(ZH.selectionTooLarge).toBe(expected)
+    expect(ZH.selectionTooLarge).toBe(TOO_LARGE_TEXT)
     expect([...ZH.selectionTooLarge].map((character) => character.codePointAt(0))).toEqual([
       0x9009, 0x533a, 0x8fc7, 0x5927, 0xff0c, 0x8bf7, 0x7f29, 0x5c0f, 0x8303, 0x56f4,
+    ])
+  })
+
+  it('words the cell limit with exactly the documented code points', () => {
+    // `选中的单元格过多，请选择不超过 200 个单元格` — the digit group is ASCII and
+    // is the same limit the adapter enforces, so it is asserted as digits rather
+    // than as a code-point run.
+    expect(ZH.tooManyCells).toBe(
+      TOO_MANY_CELLS_SUBJECT + FULL_WIDTH_COMMA + TOO_MANY_CELLS_REQUEST + ' 200 ' + CELL_NOUN,
+    )
+    expect([...ZH.tooManyCells].map((character) => character.codePointAt(0))).toEqual([
+      0x9009, 0x4e2d, 0x7684, 0x5355, 0x5143, 0x683c, 0x8fc7, 0x591a, 0xff0c, 0x8bf7, 0x9009,
+      0x62e9, 0x4e0d, 0x8d85, 0x8fc7, 0x20, 0x32, 0x30, 0x30, 0x20, 0x4e2a, 0x5355, 0x5143, 0x683c,
+    ])
+  })
+
+  it('words the generic renderer failure with exactly the documented code points', () => {
+    expect(ZH.rendererFailed).toBe(RENDERER_FAILED_TEXT)
+    expect([...ZH.rendererFailed].map((character) => character.codePointAt(0))).toEqual([
+      0x65e0, 0x6cd5, 0x663e, 0x793a, 0x6587, 0x6863,
+    ])
+  })
+
+  it('words the image-only state with exactly the documented code points', () => {
+    expect(ZH.noSelectableText).toBe(NO_SELECTABLE_TEXT)
+    expect([...ZH.noSelectableText].map((character) => character.codePointAt(0))).toEqual([
+      0x5f53, 0x524d, 0x5185, 0x5bb9, 0x6ca1, 0x6709, 0x53ef, 0x9009, 0x62e9, 0x6587, 0x672c,
+    ])
+  })
+
+  it('words the loading state with exactly the documented code points', () => {
+    expect(ZH.loading).toBe(LOADING_TEXT + ELLIPSIS)
+    expect([...ZH.loading].map((character) => character.codePointAt(0))).toEqual([
+      0x6b63, 0x5728, 0x52a0, 0x8f7d, 0x6587, 0x6863, 0x2026,
     ])
   })
 

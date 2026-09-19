@@ -19,6 +19,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { JSX } from 'react'
 
 import type { DocumentPreviewProps } from '../../dsh/contracts.js'
+import { documentSelectionStrings } from '../../ui/locales.js'
+import { useResourceInvalidation } from '../resource-invalidation.js'
 import { renderPptx } from './engine.js'
 import type { PptxEngineSession } from './engine.js'
 import {
@@ -32,15 +34,11 @@ import {
 export interface PptxRendererInjectFace {
   /** Re-evaluate live selection when rendered slide DOM is invalidated. */
   readonly onSelectableDomInvalidated?: (() => void) | undefined
+  /** Called when a resource stops owning a selectable selection. */
+  readonly onResourceInvalidated?: ((resourceAddress: string) => void) | undefined
 }
 
 export type PptxBodyProps = DocumentPreviewProps & Partial<PptxRendererInjectFace>
-
-/** Copy shown while a presentation opens. */
-const LOADING_TEXT = '正在打开幻灯片…'
-
-/** Copy shown when the presentation could not be opened. */
-const FAILED_TEXT = '无法显示幻灯片'
 
 /** Copy shown when the preview has no complete bytes to render. */
 const NO_BYTES_TEXT = 'PPTX 预览需要完整文件内容。'
@@ -57,10 +55,19 @@ type PptxLoadState =
  * @returns the renderer root.
  */
 export function PptxBody(props: PptxBodyProps): JSX.Element {
-  const { content, resourceAddress, scrollportRef, onSelectableDomInvalidated } = props
+  const { content, resourceAddress, scrollportRef, onSelectableDomInvalidated, onResourceInvalidated } =
+    props
 
   const { tab } = props.useTabInfo()
   const tabSignal = tab.signal
+
+  // Resolved on every render so the copy follows the document's language.
+  const strings = documentSelectionStrings(globalThis.document)
+
+  // The windowed renderer's selectable DOM is recycled as slides scroll, which is
+  // why slide invalidation is a recapture rather than a clear; a resource that
+  // goes away is the clear.
+  useResourceInvalidation(resourceAddress, tabSignal, onResourceInvalidated)
 
   const [state, setState] = useState<PptxLoadState>({ kind: 'loading' })
   const generationRef = useRef(0)
@@ -133,7 +140,9 @@ export function PptxBody(props: PptxBodyProps): JSX.Element {
           return
         }
         console.error('[dsa-pptx] failed to render presentation:', err)
-        setState({ kind: 'failed', message: FAILED_TEXT })
+        // The generic copy is the locale's; the underlying failure is still
+        // logged above rather than absorbed into it.
+        setState({ kind: 'failed', message: strings.rendererFailed })
       })
 
     // ResizeObserver for plugin-owned width adaptation
@@ -184,7 +193,7 @@ export function PptxBody(props: PptxBodyProps): JSX.Element {
       <div ref={contentHostRef} {...{ [PPTX_SELECTABLE_ATTRIBUTE]: '' }} />
       {state.kind === 'loading' && (
         <div style={{ padding: '32px', textAlign: 'center', color: '#666' }}>
-          {LOADING_TEXT}
+          {strings.loading}
         </div>
       )}
       {state.kind === 'failed' && (
