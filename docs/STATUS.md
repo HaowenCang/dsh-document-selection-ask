@@ -1442,6 +1442,125 @@ a WASM integrity failure still fails closed.
   in `SelectionAskOverlay` by falling back to the ambient document — the one
   change Task 12 permits in that file, and it is a copy-resolution change only
 
+### Task 13S — closing the shipped-library discovery hole
+
+Task 13's gate script was green while a shipped library had no notice. The external
+final audit of `ada7224` is what observed it: `scripts/xlsx-runtime-assets.ts`
+resolves `fflate/package.json` out of the installed `@extend-ai/react-xlsx`, reads
+`fflate/esm/browser.js`, and inlines it into the synthesized XLSX worker source, which
+is embedded in `lib/client.js` and delivered to the browser. `fflate@0.8.3` was
+therefore shipped code with no record in `THIRD_PARTY_NOTICES.md`, and `verify.mjs` R8
+could not see it, because the set that rule iterated was nine package names written
+inside the gate script and `fflate` was not one of them.
+
+The record above states `pnpm verify` **12/12** as a Task 13 result. That measurement
+was correct and its reading was wrong: it was a false PASS, not a passed gate.
+
+**RED, taken before any file was modified.** On a throwaway copy of `ada7224` with a
+real `node_modules` junction, `lib/client.js` carries one
+`var __dsa_fflate__ = (function ()` declaration and the three rewritten worker
+imports — four occurrences of the identifier; `THIRD_PARTY_NOTICES.md` contains no
+occurrence of `fflate`; `verify.mjs` contains none either; and the unmodified gate
+still reports `PASS R8` and 12/12. The junction is what makes that a statement about
+the rule rather than about a missing dependency tree, and it is why every proof copy
+below carries one.
+
+**The defect is the discovery, not the missing name.** Repairing only the data would
+have left the same false negative for the next explicitly inlined package, because
+the maintainer would still have had to remember to edit the build script *and* a
+second list inside the gate. R8 now derives the shipped set from three project-owned
+authorities:
+
+- the declared production dependencies, read from the lockfile's root importer;
+- the packages the project-owned build pipeline explicitly resolves installed bytes
+  out of, found by scanning `scripts/xlsx-runtime-assets.ts` and `tsdown.config.ts`
+  for module-resolution calls and `node_modules` path joins. This is the channel that
+  makes `fflate` impossible to ship unnoticed;
+- the packages the project's own bundler records as inlined into `lib/client.js`,
+  read from the `//#region node_modules/<path>` comment rolldown emits per module.
+
+There is no hand-maintained shipped-library list left in `verify.mjs`, so the class-B
+members the old list named are covered by the derivation rather than by a restatement:
+`jszip` and `@dukelib/sheets-wasm` through the build's own resolve calls, `echarts` and
+`zrender` through the bundler's region comments. A derivation that reads nothing is a
+failure and not a pass — an unreadable pipeline file, a bundle with no region comment,
+and an empty union are each reported — and the discovery is deliberately not a scan for
+npm-shaped strings, which would have reported `alwaysBundle`'s wildcard patterns, the
+bundler's aliases and every dependency of a dependency.
+
+**What the corrected rule found.** Against the tree at `ada7224` it reports 16 findings,
+not one. `fflate` is the reported blocker; the other fifteen are packages the bundler
+region comments prove were already shipping with no notice — `@tanstack/react-virtual`
+3.14.13, `@tanstack/virtual-core` 3.17.11, `d3-array` 3.2.4, `d3-color` 3.1.0,
+`d3-format` 3.1.2, `d3-geo` 3.1.1, `d3-hierarchy` 3.1.2, `d3-interpolate` 3.0.1,
+`d3-path` 3.1.0, `d3-scale` 4.0.2, `d3-shape` 3.2.0, `internmap` 2.0.3, `regl` 2.1.1,
+`topojson-client` 3.1.0 and `tslib` 2.3.0. All fifteen arrive through
+`@extend-ai/react-xlsx`'s chart, map and viewport support; each was recorded with the
+version the lockfile resolves and the license its own installed manifest declares, and
+R8 re-checks both. The shipped set is now 25 packages, all of them in the notices table.
+
+**Notices.** `fflate` is recorded as 0.8.3, MIT — read from
+`node_modules/.pnpm/fflate@0.8.3/node_modules/fflate/package.json` and its `LICENSE`,
+not from this prompt — with the purpose stated as what it is: a transitive runtime
+dependency of `@extend-ai/react-xlsx` whose browser ESM implementation the
+project-owned XLSX runtime-asset builder inlines into the self-contained XLSX worker,
+with a second copy embedded because a worker has its own global scope. The stale Duke
+delivery text is corrected in place rather than deleted: the passage recording *why*
+the `/dsa-assets/...` host routes were removed and why the compressed-inline
+architecture was adopted is kept, and the "no binary of it is currently delivered to
+the browser" blocker statement is replaced by the architecture that shipped — exact
+installed WASM, identity gate, deterministic gzip, base64 payload in `lib/client.js`,
+local inflate, runtime SHA-256 verification, `setWasmSource(BufferSource)`; worker
+self-contained and started from a `Blob`; zero HTTP requests for either.
+`tests/browser/xlsx-selection.spec.ts` case 0 is cited by its current title, because it
+asserts the delivered engine now and no longer records a blocked state.
+
+**Proof matrix**, all on throwaway copies with `node_modules` junctions:
+
+| Proof | Injected change | Observed |
+| --- | --- | --- |
+| P1 clean | none | `PASS R8`, 12/12, 0 findings |
+| P2 remove fflate | fflate notice row deleted | `FAIL R8`, 1 finding naming `fflate` |
+| P3 blank fflate license | license cell emptied, identity intact | `FAIL R8`, `notices carry no license … -> fflate` |
+| P4 wrong fflate version | row records 0.8.2 | `FAIL R8`, `record version "0.8.2" but the lockfile resolves 0.8.3` |
+| P5 wrong fflate license | row records Apache-2.0 | `FAIL R8`, `record license "Apache-2.0" but the installed manifest declares "MIT"` |
+| P6 synthetic inliner | a new explicit inliner for `us-atlas` added to `scripts/xlsx-runtime-assets.ts`, no notice | `FAIL R8`, 1 finding naming `us-atlas` |
+| P7 class-B coverage | `echarts`, `zrender`, `jszip` and `@dukelib/sheets-wasm` rows deleted | `FAIL R8`, 4 findings, one per package |
+| P8 blank-cell rule | `pdfjs-dist` license cell blanked while its own fenced block still carries Apache-2.0 | `FAIL R8`, `notices carry no license … -> pdfjs-dist` |
+| P9 bounded block record | shipped table rebuilt with no license column, plus a `package: fflate` block inside the bound | `fflate` has **0** findings; the block form still answers |
+| P10 the bound holds | same, with `license:` five lines below `package:` | `FAIL R8`, `notices carry no license … -> fflate` |
+
+P6 is the acceptance proof that the discovery is not `fflate`-shaped: it names a package
+that is installed and lockfile-resolved but appears in no region comment, no dependency
+list and no existing table row, and the rule reports it because the build's own pipeline
+says it is being embedded. P9 and P10 re-establish the two corrections Task 13 made to
+this rule — a blank license cell is authoritative and the block-record lookup stays
+anchored to its own package and bounded to four following lines — which the discovery
+change deliberately does not touch.
+
+**Orchestration and freeze.** The round ran with no write-capable sub-agent and no
+read-only reviewer: `active write-capable sub-agents: 0` and `active read-only
+sub-agents: 0` were recorded before the first edit, and `active sub-agents before
+freeze = 0` before the final gates. This is also the round that records the earlier
+orchestration failure, which the commits make visible: the first completion record
+(`08d93f9`) was written while `scripts/verify.mjs`'s owner was still working, so the
+integrator's first final report was invalidated and the record was superseded twice
+(`477f221`, then `ada7224`) before the external audit reopened the round again. The
+Task 13 chain is therefore: initial integration → a gate-file owner working past the
+first freeze → the first final report invalidated → two R8 parser corrections → the
+external audit's missing `fflate` finding → Task 13S → the final freeze with zero
+active sub-agents. The errors are kept because the sequence is the audit trail.
+
+**Static gates on the frozen tree** — `pnpm test` **1,052 passed / 0 failed over 58
+files** (unchanged, so no test was deleted or weakened), `pnpm typecheck`, `pnpm build`,
+`pnpm verify` **12/12**, `npm pack --dry-run` (89 files, no test tree, no fixture, no
+proof copy, no local path), `git diff --check`. Production identity is unchanged:
+`git diff ada7224 -- src` is empty, `pnpm-lock.yaml` is unchanged, no dependency was
+added — `fflate` stays a transitive dependency and was not promoted to make the gate
+easier — and `package.json` was not touched. No browser or production file changed in
+this round, so the frozen rc.2 matrix (63 / 0 / 0) and the optional rc.1 matrix
+(63 / 0 / 0) are retained rather than re-run.
+
 ### Task 12R — closing the rc.1 browser gate
 
 The Task 12 record above reports the rc.1 XLSX suite as 7 passed / 6 failed and
@@ -1809,17 +1928,34 @@ user's own `dsa-smoke` profile tree, whose links already point at this worktree.
   production delta and one new smoke fixture; the primary gate is real DSH
   `0.1.5-rc.2` at 63 passed / 0 failed / 0 skipped, with rc.1 recorded separately
   as optional backward-compatibility evidence; see the Task 13 record above)
+- Task 13S — PASS (`03e62cc729952b76c9e04de9e54fb2ee53900675`, with the status
+  record in the Task 13S section above). The round's own `pnpm verify` 12/12 from
+  `ada7224` was a false PASS: `fflate` was shipping inside the embedded XLSX worker
+  with no notice, because R8 iterated a hand-written list of nine names. R8 now
+  derives the shipped set from the declared dependencies, the packages the
+  project-owned build pipeline explicitly resolves installed bytes out of, and the
+  packages the bundler records as inlined into `lib/client.js`; against `ada7224`
+  that derivation reports 16 packages with no notice, and all sixteen are now
+  recorded. The two earlier R8 corrections are preserved, ten injection proofs
+  (P1–P10) on throwaway copies with real `node_modules` junctions confirm the rule
+  fires, production delta stays zero, no browser file changed so the frozen rc.2
+  and rc.1 matrices are retained, and the final tree was frozen with zero active
+  sub-agents
 
 `LICENSE` is the standard MIT text with the copyright holder taken from the
 authenticated GitHub account. `package.json` declares `"license": "MIT"`.
 `THIRD_PARTY_NOTICES.md` records each dependency's own license separately, and it
-is now part of the published package. `pdfjs-dist` (6.3.289, Apache-2.0) and
-`@zip.js/zip.js` (2.15.0, BSD-3-Clause) are the two shipped runtime dependencies;
-the first is bundled with its worker and its three asset families, each of which
-carries its own license file in the package and its own row in the notices.
-`jsdom` (30.0.1) is recorded as MIT, development/test-only, verified against the
-installed package metadata, as are `pdf-lib` (1.17.1) and `@pdf-lib/fontkit`
-(1.1.1), which are the fixture generator's own dependencies.
+is now part of the published package. Its shipped table is the complete shipped set —
+25 packages, of which the direct runtime dependencies are `pdfjs-dist` (6.3.289,
+Apache-2.0), `@zip.js/zip.js` (2.15.0, BSD-3-Clause), `docx-preview` (0.4.0,
+Apache-2.0), `@aiden0z/pptx-renderer` (1.2.4, Apache-2.0) and `@extend-ai/react-xlsx`
+(0.16.4, MIT) — and `scripts/verify.mjs` R8 derives that set from the build instead of
+restating it, as the Task 13S record above describes. `pdfjs-dist` is bundled with its
+worker and its three asset families, each of which carries its own license file in the
+package and its own row in the notices. `jsdom` (30.0.1) is recorded as MIT,
+development/test-only, verified against the installed package metadata, as are
+`pdf-lib` (1.17.1) and `@pdf-lib/fontkit` (1.1.1), which are the fixture generator's
+own dependencies.
 
 ## Next
 
