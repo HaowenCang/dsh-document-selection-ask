@@ -5,17 +5,43 @@
  * DSH text adapter, the Ask surface, the PDF/DOCX/PPTX/XLSX renderers — arrives
  * with its own task and its own registration call here.
  *
- * As of Task 11 it composes the pieces into one runtime and gives that runtime
- * to the plugin fiber:
+ * ## One owner, one effect
+ *
+ * As of Task 12 this module is a **factory**, not a registrar: `applyClient`
+ * creates one local runtime, registers every contribution into it, and hands back
+ * an object whose `dispose` releases all of them exactly once. It calls
+ * `ctx.effect` nowhere. `src/client/index.tsx` is the single top-level lifecycle
+ * owner, and its one effect is the only thing the Cordis fiber has to unwind — so
+ * "how many registrations does this plugin make" and "how many effects does the
+ * fiber hold" stop being the same question.
+ *
+ * What the runtime owns:
  *
  * - a `SelectionAdapterRegistry` holding format adapters in strict priority:
- *   XLSX -> PDF -> DOCX -> PPTX -> builtin text
- * - an isolated `XlsxSelectionBridge` per applyClient;
- * - an XLSX semantic selection lifecycle driving kernel captures;
- * - a `SelectionKernel` over it;
- * - a `SelectionFeedbackSource`;
- * - a `ComposerTargetRegistry`;
- * - a browser selection lifecycle for DOM-based formats.
+ *   XLSX -> PDF -> DOCX -> PPTX -> builtin text;
+ * - a `SelectionLifecycleCoordinator` over the browser lifecycle and the XLSX
+ *   semantic subscription, which is the only object that clears the kernel;
+ * - a `SelectionKernel` over the registry and a `SelectionFeedbackSource`;
+ * - a `ComposerTargetRegistry` and the two Ask slot contributions;
+ * - the overlay's style sheet;
+ * - the four extension renderers, each with its definition, its keyed body and
+ *   its own style sheet.
+ *
+ * ## Failure is all-or-nothing
+ *
+ * The two public services this half injects through are validated before anything
+ * is registered, and a registration that throws anywhere releases everything
+ * registered before it and rethrows the original failure. A half-installed
+ * runtime is the one outcome this shape exists to prevent: before Task 12 a
+ * missing preview registry produced a `console.error` and a plugin that had
+ * contributed its adapters, its overlay and its slots but no renderers at all,
+ * which no test could distinguish from a working boot.
+ *
+ * Every mutable object above is local to one `applyClient` call. Nothing is
+ * stored at module scope and nothing is published on a global, so a plugin reload
+ * cannot leave a previous runtime's registry, kernel or bridge reachable — which
+ * is what makes a serial apply/dispose cycle leak-free rather than merely
+ * usually clean.
  */
 
 import { createDshTextAdapter } from '../adapters/dsh-text/adapter.js'
@@ -30,19 +56,24 @@ import { registerXlsxRenderer } from '../renderers/xlsx/register.js'
 import { createXlsxSelectionBridge } from '../renderers/xlsx/selection-bridge.js'
 import type { XlsxSelectionBridge } from '../renderers/xlsx/selection-bridge.js'
 import { installXlsxSelectionLifecycle } from '../renderers/xlsx/selection-lifecycle.js'
-import { installBrowserSelectionLifecycle } from '../selection/browser-lifecycle.js'
-import type { BrowserSelectionLifecycle } from '../selection/browser-lifecycle.js'
 import { createSelectionFeedback } from '../selection/feedback.js'
 import type { SelectionFeedbackSource } from '../selection/feedback.js'
 import { createSelectionKernel } from '../selection/kernel.js'
 import type { SelectionKernel } from '../selection/kernel.js'
+import { Disposer, installSelectionLifecycle, rollback } from '../selection/lifecycle.js'
+import type { SelectionLifecycleCoordinator } from '../selection/lifecycle.js'
 import { SelectionAdapterRegistry } from '../selection/registry.js'
 import { ComposerTargetRegistrar } from '../ui/ComposerTargetRegistrar.js'
 import { SelectionAskOverlay } from '../ui/SelectionAskOverlay.js'
 import { installOverlayStyles } from '../ui/styles.js'
 import { createComposerTargetRegistry } from './composer-target-registry.js'
 import type { ComposerTargetRegistry } from './composer-target-registry.js'
-import type { ClientContext } from './contracts.js'
+import type {
+  ClientContext,
+  DocumentPreviewRegistry,
+  RendererRegistrationHost,
+} from './contracts.js'
+import type { SlotRegistry } from './contracts.js'
 
 /** The session-scoped list slot that publishes each session's composer target. */
 export const COMPOSER_TARGET_SLOT = 'conversation.input.overlay'
@@ -80,6 +111,11 @@ interface ComposerTargetInjectFace {
 
 /**
  * The objects one `applyClient` call owns.
+ *
+ * Everything here is local to the call that created it, and every one of them is
+ * released by {@link ClientRuntime.dispose}. The renderer internals are
+ * deliberately absent: a renderer's engine, session or WASM state is its own
+ * business, and exposing it here would invite a later task to reach into it.
  */
 export interface ClientRuntime {
   /** The adapter dispatch table. */
@@ -92,100 +128,181 @@ export interface ClientRuntime {
   readonly composerTargets: ComposerTargetRegistry
   /** The per-client XLSX semantic selection bridge. */
   readonly xlsxBridge: XlsxSelectionBridge
+  /**
+   * The one object that may clear the transient stores, and the only one that
+   * knows which resource a snapshot belongs to.
+   */
+  readonly selectionLifecycle: SelectionLifecycleCoordinator
+  /**
+   * Release every registration this runtime made. Idempotent: the second call is
+   * a no-op, and a failure inside one child does not skip its siblings.
+   */
+  dispose(): void
+}
+
+/**
+ * Read the document-preview registry, or refuse to register anything.
+ * @param ctx - the client root context.
+ * @returns the live registry.
+ * @throws Error when the service is absent, which is a composition failure.
+ */
+function requireDocumentPreviews(ctx: ClientContext): DocumentPreviewRegistry {
+  const previews = ctx.documentPreviews
+  if (previews === undefined) {
+    throw new Error(
+      'dsh-document-selection-ask: the DSH document preview registry is not available; ' +
+        'the plugin declares it in `inject` and cannot register its renderers without it',
+    )
+  }
+  return previews
+}
+
+/**
+ * Read the slot registry, or refuse to register anything.
+ * @param ctx - the client root context.
+ * @returns the live registry.
+ * @throws Error when the service is absent, which is a composition failure.
+ */
+function requireSlots(ctx: ClientContext): SlotRegistry {
+  const slots = ctx.slots
+  if (slots === undefined) {
+    throw new Error(
+      'dsh-document-selection-ask: the DSH slot registry is not available; ' +
+        'the plugin declares it in `inject` and cannot contribute its surfaces without it',
+    )
+  }
+  return slots
 }
 
 /**
  * Apply the plugin's browser contributions to the DSH client context.
  *
- * @param ctx - the client root context; its `effect` hook owns the teardown of
- * every registration made here.
+ * The caller owns the returned runtime and must call its `dispose` when the
+ * plugin unloads. `src/client/index.tsx` does exactly that from the plugin's one
+ * top-level effect.
+ *
+ * @param ctx - the client root context, read for its two required services.
  * @returns the runtime this call created.
+ * @throws Error when a required service is absent, or whatever a registration
+ * threw — after releasing everything registered before it.
  */
 export function applyClient(ctx: ClientContext): ClientRuntime {
-  const registry = new SelectionAdapterRegistry()
-  const kernel = createSelectionKernel(registry)
-  const feedback = createSelectionFeedback()
-  const composerTargets = createComposerTargetRegistry()
-  const xlsxBridge = createXlsxSelectionBridge()
+  const disposer = new Disposer()
 
-  // Priority 1: Semantic XLSX cell-range adapter
-  ctx.effect(
-    () => registry.register(createXlsxSelectionAdapter(xlsxBridge)),
-    'dsh-document-selection-ask: xlsx selection adapter',
-  )
+  try {
+    const previews = requireDocumentPreviews(ctx)
+    const slots = requireSlots(ctx)
+    const doc: Document | undefined = globalThis.document
 
-  // Priority 2: PDF selection adapter
-  ctx.effect(
-    () => registry.register(createPdfSelectionAdapter()),
-    'dsh-document-selection-ask: pdf selection adapter',
-  )
+    const registry = new SelectionAdapterRegistry()
+    const kernel = createSelectionKernel(registry)
+    const feedback = createSelectionFeedback()
+    const composerTargets = createComposerTargetRegistry()
+    const xlsxBridge = createXlsxSelectionBridge()
 
-  // Priority 3: DOCX selection adapter
-  ctx.effect(
-    () => registry.register(createDocxSelectionAdapter()),
-    'dsh-document-selection-ask: docx selection adapter',
-  )
+    // Priority 1: Semantic XLSX cell-range adapter
+    disposer.add(registry.register(createXlsxSelectionAdapter(xlsxBridge)))
+    // Priority 2: PDF selection adapter
+    disposer.add(registry.register(createPdfSelectionAdapter()))
+    // Priority 3: DOCX selection adapter
+    disposer.add(registry.register(createDocxSelectionAdapter()))
+    // Priority 4: PPTX selection adapter
+    disposer.add(registry.register(createPptxSelectionAdapter()))
+    // Priority 5: Builtin text selection adapter
+    disposer.add(registry.register(createDshTextAdapter()))
 
-  // Priority 4: PPTX selection adapter
-  ctx.effect(
-    () => registry.register(createPptxSelectionAdapter()),
-    'dsh-document-selection-ask: pptx selection adapter',
-  )
+    // The selection lifetime: browser events, the XLSX semantic subscription and
+    // the resource-scoped invalidation the renderers report through.
+    const lifecycle = installSelectionLifecycle({ kernel, feedback, document: doc })
+    disposer.add(() => {
+      lifecycle.dispose()
+    })
+    lifecycle.own(installXlsxSelectionLifecycle(xlsxBridge, kernel, feedback))
 
-  // Priority 5: Builtin text selection adapter
-  ctx.effect(
-    () => registry.register(createDshTextAdapter()),
-    'dsh-document-selection-ask: builtin text selection adapter',
-  )
+    if (doc !== undefined) {
+      disposer.add(installOverlayStyles(doc))
+      disposer.add(registerComposerTarget(slots, composerTargets))
+      disposer.add(registerAskSurface(slots, kernel, feedback, composerTargets))
+    }
 
-  // XLSX semantic selection lifecycle
-  ctx.effect(
-    () => installXlsxSelectionLifecycle(xlsxBridge, kernel, feedback),
-    'dsh-document-selection-ask: xlsx semantic selection lifecycle',
-  )
+    const host: RendererRegistrationHost = { previews, slots, document: doc }
 
-  let lifecycle: BrowserSelectionLifecycle | undefined
-  const doc: Document | undefined = globalThis.document
-  if (doc !== undefined) {
-    ctx.effect(() => installOverlayStyles(doc), 'dsh-document-selection-ask: overlay styles')
+    /**
+     * The callback every renderer body publishes its own resource lifetime
+     * through. One function per runtime, so a body's identity comparison of the
+     * injected face is stable across renders.
+     * @param resourceAddress - the address of the resource that ended.
+     */
+    const onResourceInvalidated = (resourceAddress: string): void => {
+      lifecycle.invalidateResource(resourceAddress)
+    }
 
-    lifecycle = installBrowserSelectionLifecycle(doc, kernel, feedback)
-    ctx.effect(
-      () => () => {
-        lifecycle?.dispose()
-      },
-      'dsh-document-selection-ask: browser selection lifecycle',
+    // Task 11: the selectable XLSX body.
+    disposer.add(registerXlsxRenderer(host, { bridge: xlsxBridge, onResourceInvalidated }))
+
+    // Task 7: the selectable PDF body. Text layer invalidation is a recapture —
+    // the reader's browser selection may still be live over the replacement — so
+    // it is routed to `refreshBrowser` rather than to the invalidation callback.
+    disposer.add(
+      registerPdfRenderer(host, {
+        onSelectableDomInvalidated: () => {
+          lifecycle.refreshBrowser()
+        },
+        onResourceInvalidated,
+      }),
     )
 
-    registerComposerTarget(ctx, composerTargets)
-    registerAskSurface(ctx, kernel, feedback, composerTargets)
+    // Task 9: the selectable DOCX body.
+    disposer.add(registerDocxRenderer(host, { onResourceInvalidated }))
+
+    // Task 10: the selectable PPTX body.
+    disposer.add(
+      registerPptxRenderer(host, {
+        onSelectableDomInvalidated: () => {
+          lifecycle.refreshBrowser()
+        },
+        onResourceInvalidated,
+      }),
+    )
+
+    let disposed = false
+
+    return {
+      registry,
+      kernel,
+      feedback,
+      composerTargets,
+      xlsxBridge,
+      selectionLifecycle: lifecycle,
+
+      dispose(): void {
+        if (disposed) return
+        disposed = true
+        // Clear first: a listener or bridge subscription released by the sweep
+        // below cannot then publish into a kernel whose owner is gone.
+        kernel.clear()
+        feedback.clear()
+        disposer.disposeAll()
+      },
+    }
+  } catch (error: unknown) {
+    rollback(disposer, error)
   }
-
-  // Task 11: the selectable XLSX body.
-  registerXlsxRenderer(ctx, xlsxBridge)
-
-  // Task 7: the selectable PDF body.
-  registerPdfRenderer(ctx, () => {
-    lifecycle?.refresh()
-  })
-
-  // Task 9: the selectable DOCX body.
-  registerDocxRenderer(ctx)
-
-  // Task 10: the selectable PPTX body.
-  registerPptxRenderer(ctx, () => {
-    lifecycle?.refresh()
-  })
-
-  return { registry, kernel, feedback, composerTargets, xlsxBridge }
 }
 
 /**
  * Contribute the session-scoped composer target registrar.
+ *
+ * @param slots - the resolved slot registry.
+ * @param composerTargets - the per-session target table the registrar publishes into.
+ * @returns the disposer releasing the contribution.
  */
-function registerComposerTarget(ctx: ClientContext, composerTargets: ComposerTargetRegistry): void {
-  ctx.slots.inject(COMPOSER_TARGET_SLOT, () =>
-    ctx.slots.register(
+function registerComposerTarget(
+  slots: SlotRegistry,
+  composerTargets: ComposerTargetRegistry,
+): () => void {
+  return slots.inject(COMPOSER_TARGET_SLOT, () =>
+    slots.register(
       {
         name: COMPOSER_TARGET_SLOT,
         id: COMPOSER_TARGET_ENTRY_ID,
@@ -198,15 +315,21 @@ function registerComposerTarget(ctx: ClientContext, composerTargets: ComposerTar
 
 /**
  * Contribute the visible Ask surface into the frame-wide overlay layer.
+ *
+ * @param slots - the resolved slot registry.
+ * @param kernel - the transient selection store the surface renders.
+ * @param feedback - the rejection feedback slot the surface renders.
+ * @param composerTargets - the per-session target table the surface writes through.
+ * @returns the disposer releasing the contribution.
  */
 function registerAskSurface(
-  ctx: ClientContext,
+  slots: SlotRegistry,
   kernel: SelectionKernel,
   feedback: SelectionFeedbackSource,
   composerTargets: ComposerTargetRegistry,
-): void {
-  ctx.slots.inject(ASK_SURFACE_SLOT, () =>
-    ctx.slots.register(
+): () => void {
+  return slots.inject(ASK_SURFACE_SLOT, () =>
+    slots.register(
       {
         name: ASK_SURFACE_SLOT,
         id: ASK_SURFACE_ENTRY_ID,

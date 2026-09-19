@@ -353,11 +353,19 @@ describe('XlsxBody security pipeline', () => {
    */
   function mountBody(hostBytes: Uint8Array<ArrayBuffer>): MountedTree {
     const bridge = createXlsxSelectionBridge()
+    // One signal per mounted body: the body's effects are keyed on the tab's
+    // lifetime, so a stub minting a fresh signal per call would re-run them on
+    // every render.
+    const signal = new AbortController().signal
     const props = {
       resourceAddress: 'dsh-resource://file/session/s1/smoke-fixtures/task11-simple.xlsx',
       content: { kind: 'bytes', data: hostBytes },
       wrap: false,
       scrollportRef: () => undefined,
+      // The tab reader is a published standard prop of every document body, and
+      // since Task 12 the body reads it to invalidate its resource-scoped
+      // selection when the tab is released.
+      useTabInfo: () => ({ tab: { signal } }),
       bridge,
     } as unknown as XlsxBodyProps
 
@@ -430,7 +438,7 @@ describe('XlsxBody security pipeline', () => {
     expect(pipeline.calls.wasmInit).toBe(0)
     expect(pipeline.calls.viewerFiles).toHaveLength(0)
     expect(tree.container.querySelector('[data-stub-viewer-provider]')).toBeNull()
-    expect(tree.container.textContent).toContain('无法显示电子表格')
+    expect(tree.container.textContent).toContain('无法显示文档')
     expect(unhandled.seen).toEqual([])
   })
 
@@ -537,7 +545,7 @@ describe('XlsxBody security pipeline', () => {
     expect(pipeline.calls.wasmInit).toBe(0)
     expect(pipeline.calls.viewerFiles).toHaveLength(0)
     expect(tree.container.querySelector('[data-stub-viewer-provider]')).toBeNull()
-    expect(tree.container.textContent).toContain('无法显示电子表格')
+    expect(tree.container.textContent).toContain('无法显示文档')
     expect(unhandled.seen).toEqual([])
   })
 
@@ -558,7 +566,7 @@ describe('XlsxBody security pipeline', () => {
     expect(pipeline.calls.viewerFiles).toHaveLength(0)
     expect(tree.container.querySelector('[data-stub-viewer-provider]')).toBeNull()
     expect(tree.container.textContent).toContain('无法加载')
-    expect(tree.container.textContent).not.toContain('无法显示电子表格')
+    expect(tree.container.textContent).not.toContain('无法显示文档')
     expect(unhandled.seen).toEqual([])
   })
 
@@ -580,7 +588,7 @@ describe('XlsxBody security pipeline', () => {
     expect(pipeline.calls.viewerFiles).toHaveLength(0)
     expect(tree.container.querySelector('[data-stub-viewer-provider]')).toBeNull()
     expect(tree.container.textContent).toContain('完整性校验失败')
-    expect(tree.container.textContent).not.toContain('无法显示电子表格')
+    expect(tree.container.textContent).not.toContain('无法显示文档')
     expect(unhandled.seen).toEqual([])
   })
 
@@ -710,11 +718,19 @@ describe('XLSX embedded image presentation configuration', () => {
    */
   function mountBody(): MountedTree {
     const bridge = createXlsxSelectionBridge()
+    // One signal per mounted body: the body's effects are keyed on the tab's
+    // lifetime, so a stub minting a fresh signal per call would re-run them on
+    // every render.
+    const signal = new AbortController().signal
     const props = {
       resourceAddress: 'dsh-resource://file/session/s1/smoke-fixtures/task11-simple.xlsx',
       content: { kind: 'bytes', data: new Uint8Array(SIMPLE_BYTES) },
       wrap: false,
       scrollportRef: () => undefined,
+      // The tab reader every document body receives as a standard prop; the body
+      // reads it to invalidate its resource-scoped selection when the tab is
+      // released.
+      useTabInfo: () => ({ tab: { signal } }),
       bridge,
     } as unknown as XlsxBodyProps
 

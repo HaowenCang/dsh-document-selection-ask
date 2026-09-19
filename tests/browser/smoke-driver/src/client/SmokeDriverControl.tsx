@@ -1,5 +1,6 @@
 /**
- * The smoke driver's control: three test-only buttons, one per fixture.
+ * The smoke driver's control: one test-only button per fixture, twenty-four of
+ * them, rendered as a bounded grid inside the chat column.
  *
  * **What this module is allowed to do.** Each button calls exactly one public
  * API — `ctx.sidebarRight.openResource(address)` — and nothing else. It does not
@@ -32,6 +33,23 @@
  * be on screen while a developer drives the same instance by hand, so it says
  * what it is. It renders no preview markup of any kind, which is the property
  * the unit suite asserts against this file's source.
+ *
+ * **Why the strip is bounded.** The strip is the *only* way any smoke case opens
+ * a fixture, and every case opens it with an ordinary actionability-checked
+ * `locator.click()` — no forced click, no DOM-dispatched event, no viewport
+ * widening, no `scrollIntoViewIfNeeded`. A control the browser will not accept
+ * as clickable is therefore a failing case, and the strip has to put all
+ * twenty-four controls where the browser will accept them.
+ *
+ * It did not. As one unbounded `flex` row the twenty-four labels measured
+ * 1,568 px against a 1,280 px viewport, and the five XLSX controls at the tail of
+ * `SMOKE_FIXTURES` lay 294 px past the right edge: Playwright reported "element
+ * is outside of the viewport" and the XLSX suite failed before the plugin under
+ * test was ever exercised. Spanning the window instead then lost controls to two
+ * overlays the strip does not own — the shell's resize handle, and the preview
+ * column, which wins the hit test over anything that reaches under it because of
+ * where the overlay slot sits in the stacking order. Both are measured in
+ * `CONTROL_STYLE` below, together with the bounds that avoid them.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -64,21 +82,86 @@ export type SmokeDriverProps = PropsRuntime<'conversation.input.overlay'> & {
   readonly ctx: Context
 }
 
-/** Style for the control strip: bottom-left, out of the preview's way. */
+/**
+ * Style for the control strip.
+ *
+ * ## Why it is bounded, and why these bounds
+ *
+ * The strip is anchored to the bottom of the **chat column** and bounded on both
+ * axes, at values measured in the live application at the 1,280 x 720 viewport
+ * the smoke runs at. Both naive placements lose controls to overlays the strip
+ * does not own:
+ *
+ * - Spanning the window (`left: 12px; right: 12px`) was the first attempt. The
+ *   composer's column establishes a stacking context around the overlay slot
+ *   this control is mounted in, so the preview column — painted later at the
+ *   root — wins the hit test over every control that reaches under it. That
+ *   column starts at `x = 704`, and a window-wide strip put the five XLSX
+ *   controls of its last row underneath it.
+ * - A window-wide strip narrower than the window but still starting at
+ *   `left: 12px` loses controls to the shell's right-sidebar **resize handle**,
+ *   an 8 px column at `x = 276` laid over the chat column. Measured with a
+ *   `left: 12px; width: 680px` strip: `pptx-external-media` landed on the handle
+ *   and no click reached it.
+ *
+ * `left: 292px` clears the handle's far edge, and `width: 408px` ends 12 px
+ * short of the preview column, so neither overlay can intercept a control. The
+ * third bound is vertical: the composer's published box ends at `y = 447` and
+ * the strip's bottom inset leaves it at `y = 708`, so the strip has to stay under
+ * 261 px tall to keep its top edge below the composer.
+ *
+ * `repeat(4, minmax(0, 1fr))` is the track that resolves every bound at once.
+ * Twenty-four controls at four per row make seven rows, and seven rows measured
+ * 218 px — inside the vertical bound, with the strip's top edge at `y = 490`
+ * against the composer's 447. The track is clipping rather than intrinsic for a
+ * measured reason: `minmax(0, max-content)` is as wide as the longest label in
+ * its column, and the twenty-four labels at this font measure 2,672 px in total
+ * against the 400 px the bounds leave available, so an intrinsic track either
+ * widens the grid past the preview column — where its controls were measured to
+ * become unreachable — or is clamped back to a share of the container anyway.
+ * A `1fr` track states that share explicitly and crops a long label instead of
+ * letting it escape, and `overflow: hidden` on the strip keeps the whole box
+ * inside its own bounds.
+ *
+ * ## Why a grid rather than a wrapping flex row
+ *
+ * A wrapping flex row picks its own break points from whichever controls share a
+ * line, so its height follows the label text and drifts when a label changes. A
+ * grid fixes the column count, so the strip's height is a function of the fixture
+ * count alone and its top edge cannot creep into the composer. Measured during
+ * Task 12R: the same twenty-four controls at the same width came out 218 px tall
+ * as one flex arrangement and 156 px as another, and a `max-content` track pushed
+ * a 388 px strip's grid to 719 px.
+ *
+ * The fixture key each control publishes stays the full, uncropped identity, and
+ * every control keeps its natural size: nothing here scales, transforms or zooms.
+ */
 const CONTROL_STYLE = {
   position: 'fixed',
-  left: '12px',
+  left: '292px',
   bottom: '12px',
+  width: '408px',
   zIndex: 2147483000,
-  display: 'flex',
+  display: 'grid',
+  gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+  justifyContent: 'start',
+  overflow: 'hidden',
+  alignItems: 'start',
   gap: '6px',
   padding: '4px',
+  boxSizing: 'border-box',
   background: 'rgba(17,17,17,0.86)',
   borderRadius: '6px',
   font: '12px/1.4 system-ui, sans-serif',
 } as const
 
-/** Style for one button. */
+/**
+ * Style for one button.
+ *
+ * `white-space: nowrap` keeps each label on one line, so a control's height is
+ * the strip's own and the row count is what decides the strip's height.
+ * `min-width: 0` with `overflow: hidden` keeps a label inside its column.
+ */
 const BUTTON_STYLE = {
   padding: '3px 8px',
   border: '1px solid rgba(255,255,255,0.35)',
@@ -87,6 +170,9 @@ const BUTTON_STYLE = {
   color: '#fff',
   cursor: 'pointer',
   font: 'inherit',
+  whiteSpace: 'nowrap',
+  minWidth: '0',
+  overflow: 'hidden',
 } as const
 
 /**
@@ -130,7 +216,7 @@ export function SmokeDriverControl(props: SmokeDriverProps): JSX.Element {
 
   return (
     <div data-dsa-smoke-driver="" style={CONTROL_STYLE}>
-      <span data-dsa-smoke-label="" style={{ color: '#bbb', alignSelf: 'center' }}>
+      <span data-dsa-smoke-label="" style={{ color: '#bbb', whiteSpace: 'nowrap' }}>
         dsa-smoke
       </span>
       {SMOKE_FIXTURES.map((fixture) => (

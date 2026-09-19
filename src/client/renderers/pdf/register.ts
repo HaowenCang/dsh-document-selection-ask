@@ -22,16 +22,17 @@
  *
  * ## Lifecycle
  *
- * Both registrations happen inside a `ctx.effect` body, so the Cordis fiber owns
- * their teardown: the disposer returned by `documentPreviews.register` and the
- * one `slots.inject` returns are both collected when the plugin unloads. The
- * `inject` wrapper is not decoration — a `register` call made before the slot's
- * declaration exists throws, while `inject` waits for it and re-runs its callback
- * whenever the declaration returns.
+ * The two registrations and the style sheet are aggregated here and released by
+ * one idempotent disposer. Since Task 12 the plugin's client runtime is the single
+ * top-level `ctx.effect` owner and this function takes the services it needs as an
+ * explicit host, so nothing here reaches for a context: a registration that
+ * cannot be made fails loudly at the runtime's own validation instead of
+ * returning `false` into a half-installed boot.
  */
 
-import type { DocumentPreviewDefinition } from '../../dsh/contracts.js'
-import type { ClientContext } from '../../dsh/contracts.js'
+import type { DocumentPreviewDefinition, RendererRegistrationHost } from '../../dsh/contracts.js'
+import { Disposer, rollback } from '../../selection/lifecycle.js'
+import type { Dispose } from '../../selection/lifecycle.js'
 import { PDF_RENDERER_ID } from './identity.js'
 import { SelectablePdfBody } from './SelectablePdfBody.js'
 import { installPdfStyles } from './styles.js'
@@ -43,6 +44,8 @@ export const DOCUMENT_BODY_SLOT = 'sidebar.right.tab.document'
 export interface PdfRendererInjectFace {
   /** Re-evaluate live selection when a populated text layer is invalidated. */
   readonly onSelectableDomInvalidated?: (() => void) | undefined
+  /** Called when a resource stops owning a selectable selection. */
+  readonly onResourceInvalidated?: ((resourceAddress: string) => void) | undefined
 }
 
 /**
@@ -56,8 +59,7 @@ export interface PdfRendererInjectFace {
  * rather than to a text-wrapping rule.
  *
  * `title` is a thunk because the registry reads it whenever the viewer lists its
- * alternatives. The full localization of that string is Task 12's; this task
- * deliberately does not introduce a locale namespace for one label.
+ * alternatives.
  *
  * @returns the definition to register.
  */
@@ -75,47 +77,44 @@ export function pdfRendererDefinition(): DocumentPreviewDefinition {
 /**
  * Contribute the PDF renderer: its metadata, its style sheet, and its body.
  *
- * @param ctx - the client root context.
- * @param onSelectableDomInvalidated - called when a populated text layer is invalidated,
- * to trigger selection lifecycle recapture.
- * @returns whether the renderer was registered. `false` means the client context
- * has no document-preview registry to register into, which is a wiring failure of
- * the host composition rather than something this plugin can recover from.
+ * @param host - the resolved DSH services the registration contributes through.
+ * @param inject - the callbacks the registered body is injected with.
+ * @returns an idempotent disposer releasing the definition, the body and the sheet.
  */
 export function registerPdfRenderer(
-  ctx: ClientContext,
-  onSelectableDomInvalidated?: () => void,
-): boolean {
-  const previews = ctx.documentPreviews
-  if (previews === undefined) {
-    console.error('[dsa-pdf] the DSH document preview registry is not available; the PDF renderer was not registered')
-    return false
+  host: RendererRegistrationHost,
+  inject: PdfRendererInjectFace = {},
+): Dispose {
+  const disposer = new Disposer()
+
+  try {
+    if (host.document !== undefined) {
+      disposer.add(installPdfStyles(host.document))
+    }
+
+    disposer.add(host.previews.register(pdfRendererDefinition()))
+
+    disposer.add(
+      host.slots.inject(DOCUMENT_BODY_SLOT, () =>
+        host.slots.register(
+          {
+            name: DOCUMENT_BODY_SLOT,
+            key: PDF_RENDERER_ID,
+            // Session-scoped with invalidation callbacks: the slot gives the body
+            // its session id, its content, its address and its tab, and this
+            // injector connects text layer invalidation to the selection
+            // lifecycle and resource teardown to the coordinator.
+            inject: (): PdfRendererInjectFace => ({ ...inject }),
+          },
+          SelectablePdfBody,
+        ),
+      ),
+    )
+  } catch (error: unknown) {
+    rollback(disposer, error)
   }
 
-  const doc: Document | undefined = globalThis.document
-  if (doc !== undefined) {
-    // Installed from the registration rather than from the component so it exists
-    // once per document for the plugin fiber's lifetime, and is removed with it.
-    ctx.effect(() => installPdfStyles(doc), 'dsh-document-selection-ask: pdf renderer styles')
+  return () => {
+    disposer.disposeAll()
   }
-
-  ctx.effect(() => previews.register(pdfRendererDefinition()), 'dsh-document-selection-ask: pdf renderer definition')
-
-  ctx.slots.inject(DOCUMENT_BODY_SLOT, () =>
-    ctx.slots.register(
-      {
-        name: DOCUMENT_BODY_SLOT,
-        key: PDF_RENDERER_ID,
-        // Session-scoped with invalidation callback: the slot gives the body its
-        // session id, its content, its address and its tab, and this injector
-        // connects text layer invalidation to the selection lifecycle.
-        inject: (): PdfRendererInjectFace => ({
-          onSelectableDomInvalidated,
-        }),
-      },
-      SelectablePdfBody,
-    ),
-  )
-
-  return true
 }

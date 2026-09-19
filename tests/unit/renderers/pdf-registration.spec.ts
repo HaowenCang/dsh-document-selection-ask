@@ -82,75 +82,71 @@ interface Recorded {
   readonly definitions: DocumentPreviewDefinition[]
   readonly slotInjections: { slot: string; disposer: unknown }[]
   readonly bodies: { options: Record<string, unknown>; component: unknown }[]
-  readonly effectLabels: string[]
   /**
-   * Contributions made from **inside** an effect body.
+   * Contributions released by the registration's own disposer, in order.
    *
-   * The distinction is the whole point of the assertion it supports: a
-   * registration made outside one would outlive the plugin's unload, and the
-   * fiber would have no disposer to run.
+   * Every contribution is tracked, so "the registration owns all three of them"
+   * is a count rather than an intention: a definition or a body that outlived the
+   * disposer would leave this list short.
    */
-  readonly contributedInsideEffect: string[]
+  readonly released: string[]
 }
 
 /**
- * A client context that records what the renderer contributes.
+ * A resolved host that records what the renderer contributes.
  *
- * The object is structurally a `ClientContext` for the members this registration
- * touches. The real type contract — that `ctx.documentPreviews.register` accepts
- * the definition this function builds, and that the keyed slot's `register`
- * accepts the options it passes — is stated in
- * `tests/compatibility/pdf-renderer.contracts.compile.ts`, which compiles against
- * the installed packages rather than against this stand-in.
+ * The object is structurally a `RendererRegistrationHost` for the members this
+ * registration touches. The real type contract — that the host's `previews`
+ * accepts the definition this function builds, and that the keyed slot's
+ * `register` accepts the options it passes — is stated in
+ * `tests/compatibility/contracts.compile.ts`, which compiles against the
+ * installed packages rather than against this stand-in.
  *
- * @param withRegistry - whether the context exposes `documentPreviews`.
- * @returns the recorded contributions and the context to pass.
+ * The host carries no context and no `effect`, which is the point: since Task 12
+ * the runtime resolves the services once and the renderer receives them, so a
+ * renderer cannot register an effect of its own. A host without a preview registry
+ * is refused by the runtime before this function is reached, which
+ * `tests/client/renderer-registration.client.spec.tsx` covers.
+ *
+ * @returns the recorded contributions and the host to pass.
  */
-function recordingContext(withRegistry = true): { recorded: Recorded; ctx: never } {
+function recordingHost(): { recorded: Recorded; host: never } {
   const recorded: Recorded = {
     definitions: [],
     slotInjections: [],
     bodies: [],
-    effectLabels: [],
-    contributedInsideEffect: [],
+    released: [],
   }
-  let insideEffect = false
 
-  const ctx = {
-    documentPreviews: withRegistry
-      ? {
-          register(definition: DocumentPreviewDefinition): () => void {
-            recorded.definitions.push(definition)
-            if (insideEffect) recorded.contributedInsideEffect.push(`definition:${definition.id}`)
-            return () => undefined
-          },
+  const host = {
+    previews: {
+      register(definition: DocumentPreviewDefinition): () => void {
+        recorded.definitions.push(definition)
+        return () => {
+          recorded.released.push(`definition:${definition.id}`)
         }
-      : undefined,
+      },
+    },
     slots: {
       inject(slot: string, callback: () => unknown): () => void {
         const disposer: unknown = callback()
         recorded.slotInjections.push({ slot, disposer })
-        return () => undefined
+        return () => {
+          recorded.released.push(`inject:${slot}`)
+          if (typeof disposer === 'function') (disposer as () => void)()
+        }
       },
       register(options: Record<string, unknown>, component: unknown): () => void {
         recorded.bodies.push({ options, component })
-        if (insideEffect) recorded.contributedInsideEffect.push(`body:${String(options['key'])}`)
-        return () => undefined
+        return () => {
+          recorded.released.push(`body:${String(options['key'])}`)
+        }
       },
     },
-    effect(body: () => unknown, label?: string): () => void {
-      recorded.effectLabels.push(label ?? '(unlabelled)')
-      insideEffect = true
-      try {
-        body()
-      } finally {
-        insideEffect = false
-      }
-      return () => undefined
-    },
+    document: undefined,
   }
 
-  return { recorded, ctx: ctx as never }
+  return { recorded, host: host as never }
 }
 
 describe('PDF renderer definition', () => {
@@ -200,10 +196,10 @@ describe('automatic selection for a .pdf path', () => {
 
 describe('registerPdfRenderer', () => {
   it('registers the definition and the keyed body under the same id', () => {
-    const { recorded, ctx } = recordingContext()
-    const registered = registerPdfRenderer(ctx)
+    const { recorded, host } = recordingHost()
+    const dispose = registerPdfRenderer(host)
 
-    expect(registered).toBe(true)
+    expect(typeof dispose).toBe('function')
     expect(recorded.definitions).toHaveLength(1)
     expect(recorded.definitions[0]?.id).toBe(PDF_RENDERER_ID)
 
@@ -219,28 +215,72 @@ describe('registerPdfRenderer', () => {
     expect(typeof recorded.bodies[0]?.component).toBe('function')
   })
 
-  it('owns every contribution through the fiber', () => {
-    const { recorded, ctx } = recordingContext()
-    registerPdfRenderer(ctx)
+  it('owns every contribution through one disposer', () => {
+    const { recorded, host } = recordingHost()
 
-    // The definition registration is an effect body. A registration made outside
-    // one would survive the plugin's unload and the fiber would have no disposer
-    // to run.
-    expect(recorded.effectLabels).toContain('dsh-document-selection-ask: pdf renderer definition')
-    expect(recorded.contributedInsideEffect).toContain(`definition:${PDF_RENDERER_ID}`)
+    const dispose = registerPdfRenderer(host)
+    expect(recorded.released).toEqual([])
 
-    // The style sheet is installed from an effect body too, whenever the client
-    // context has a document at all — which this context does not, because the
-    // unit environment is Node. The jsdom case below is where that installation
-    // is observed.
-    expect(recorded.effectLabels.length).toBeGreaterThanOrEqual(1)
+    dispose()
+
+    // The definition and the body are both released, and in registration order.
+    expect(recorded.released).toContain(`definition:${PDF_RENDERER_ID}`)
+    expect(recorded.released).toContain(`body:${PDF_RENDERER_ID}`)
+    // A style sheet is only installed when the host has a document; this host has
+    // none, because the unit environment is Node. The jsdom case below observes
+    // that installation.
+    expect(recorded.released).toHaveLength(3)
   })
 
-  it('reports a missing registry instead of throwing into the boot', () => {
-    const { recorded, ctx } = recordingContext(false)
+  it('releases twice without releasing anything twice', () => {
+    const { recorded, host } = recordingHost()
+    const dispose = registerPdfRenderer(host)
 
-    expect(registerPdfRenderer(ctx)).toBe(false)
-    expect(recorded.definitions).toHaveLength(0)
-    expect(recorded.bodies).toHaveLength(0)
+    dispose()
+    const afterFirst = [...recorded.released]
+    dispose()
+
+    expect(recorded.released).toEqual(afterFirst)
+  })
+
+  it('needs no context and therefore registers no effect of its own', () => {
+    // The gate the runtime's one-effect contract depends on: a registration that
+    // took a context would be free to call `ctx.effect`, and the plugin's
+    // top-level effect count would then grow with the number of renderers.
+    const { host } = recordingHost()
+
+    expect(() => {
+      registerPdfRenderer(host)
+    }).not.toThrow()
+  })
+
+  it('releases what it installed when a later step of its own throws', () => {
+    const recorded: Recorded = { definitions: [], slotInjections: [], bodies: [], released: [] }
+    const host = {
+      previews: {
+        register(definition: DocumentPreviewDefinition): () => void {
+          recorded.definitions.push(definition)
+          return () => {
+            recorded.released.push(`definition:${definition.id}`)
+          }
+        },
+      },
+      slots: {
+        inject(): () => void {
+          throw new Error('the document body slot is not declared')
+        },
+        register(): () => void {
+          return () => undefined
+        },
+      },
+      document: undefined,
+    }
+
+    expect(() => registerPdfRenderer(host as never)).toThrow('the document body slot is not declared')
+
+    // The definition was registered before the slot failed, and the registration's
+    // own rollback released it: no renderer definition outlives a body that was
+    // never contributed.
+    expect(recorded.released).toEqual([`definition:${PDF_RENDERER_ID}`])
   })
 })

@@ -22,6 +22,8 @@ import { verifyOoxmlExtraction } from '../../ooxml/verify-extraction.js'
 import { fileNameFromResourceAddress } from '../../provenance/file-name.js'
 import { parseCellRange } from '../../provenance/cell-range.js'
 import { MAX_XLSX_SELECTED_CELLS } from '../../quote/format-xlsx.js'
+import { documentSelectionStrings } from '../../ui/locales.js'
+import { useResourceInvalidation } from '../resource-invalidation.js'
 import {
   XLSX_DOCUMENT_KIND,
   XLSX_DOCUMENT_KIND_ATTRIBUTE,
@@ -38,8 +40,6 @@ import { XlsxSheetTabs } from './XlsxSheetTabs.js'
 /** Maximum supported XLSX file size (25 MiB limit). */
 export const MAX_XLSX_FILE_SIZE_BYTES = 25 * 1024 * 1024
 
-const LOADING_TEXT = '正在打开表格…'
-const FAILED_TEXT = '无法显示电子表格'
 const TOO_LARGE_TEXT = '文件超出支持的大小限制（最大 25 MB）'
 const NO_BYTES_TEXT = 'XLSX 预览需要完整文件内容。'
 const WASM_UNAVAILABLE_TEXT = '表格解析引擎在当前架构下无法加载，暂不支持显示。'
@@ -51,19 +51,24 @@ const WASM_INTEGRITY_TEXT = '表格解析引擎完整性校验失败，无法显
  * The two engine failures are named separately because they are different
  * findings: `unavailable` is the architecture having no source at all, and
  * `integrity` is the embedded payload not reproducing the reviewed binary. Both
- * fail closed, and neither is reported as a workbook that simply failed to open.
+ * fail closed, and neither is reported as a workbook that simply failed to open —
+ * collapsing either into a generic "could not be displayed" would drop the
+ * security meaning the message carries.
  *
  * @param error - whatever the pipeline threw.
+ * @param generic - the locale's generic renderer-failure copy.
  * @returns the message to show.
  */
-function failureMessage(error: unknown): string {
+function failureMessage(error: unknown, generic: string): string {
   if (error instanceof XlsxWasmSourceUnavailableError) return WASM_UNAVAILABLE_TEXT
   if (error instanceof XlsxWasmIntegrityError) return WASM_INTEGRITY_TEXT
-  return FAILED_TEXT
+  return generic
 }
 
 export interface XlsxBodyProps extends DocumentPreviewProps {
   readonly bridge: XlsxSelectionBridge
+  /** Called when this body's resource stops owning a selectable selection. */
+  readonly onResourceInvalidated?: ((resourceAddress: string) => void) | undefined
 }
 
 /**
@@ -210,10 +215,24 @@ function XlsxSelectionPublisher({
  * XLSX Workbook Viewer Body Component.
  */
 export function XlsxBody(props: XlsxBodyProps): JSX.Element {
-  const { content, resourceAddress, bridge } = props
+  const { content, resourceAddress, bridge, onResourceInvalidated } = props
   const rootRef = useRef<HTMLElement | null>(null)
   const [loadState, setLoadState] = useState<XlsxLoadState>({ kind: 'checking' })
   const [publishedSelection, setPublishedSelection] = useState<string | null>(null)
+
+  const { tab } = props.useTabInfo()
+  const tabSignal = tab.signal
+
+  // Resolved on every render so the copy follows the document's language.
+  const strings = documentSelectionStrings(globalThis.document)
+
+  // Two lifetimes meet on this body and both must be reported: the workbook's
+  // semantic range, which the bridge owner releases on unmount through the XLSX
+  // semantic lifecycle, and the selectable resource itself, which ends on unmount,
+  // on an address change or when the tab is released. Both notifications are
+  // idempotent in the coordinator, so a range that is cleared twice produces one
+  // state transition.
+  useResourceInvalidation(resourceAddress, tabSignal, onResourceInvalidated)
 
   const bytes = content?.kind === 'bytes' ? content.data : null
   const fileName = fileNameFromResourceAddress(resourceAddress) ?? 'workbook.xlsx'
@@ -286,7 +305,7 @@ export function XlsxBody(props: XlsxBodyProps): JSX.Element {
         }
       } catch (error: unknown) {
         if (!cancelled) {
-          setLoadState({ kind: 'failed', message: failureMessage(error) })
+          setLoadState({ kind: 'failed', message: failureMessage(error, strings.rendererFailed) })
         }
       }
     }
@@ -318,7 +337,7 @@ export function XlsxBody(props: XlsxBodyProps): JSX.Element {
         {...{ [XLSX_RESOURCE_ADDRESS_ATTRIBUTE]: resourceAddress }}
         className="dsa-xlsx-status"
       >
-        <p>{LOADING_TEXT}</p>
+        <p>{strings.loading}</p>
       </section>
     )
   }

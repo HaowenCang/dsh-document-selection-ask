@@ -257,13 +257,15 @@ export function SelectionAskOverlay(props: SelectionAskOverlayProps): JSX.Elemen
       : null
   const visible = snapshot !== null && target !== null
 
-  // The running document, captured when the button first attaches. Resolving the
-  // copy from the anchor during render would read `null` on the render that
-  // mounts the button, and the first paint would then show the wrong language
-  // until something else re-rendered — which, with a selection standing still, is
-  // never.
+  // The running document. The button's own owner document is preferred, because
+  // it is the document the surface actually painted into; the ambient document is
+  // the fallback for the one state where there is no button to read it from — a
+  // refusal, which has no selection and therefore renders the notice alone.
+  // Without that fallback an English document showed its refusal in Chinese,
+  // which is the same defect as rendering no notice at all for a reader who
+  // cannot read it.
   const [doc, setDoc] = useState<Document | null>(null)
-  const strings = documentSelectionStrings(doc ?? undefined)
+  const strings = documentSelectionStrings(doc ?? globalThis.document)
 
   const attachAnchor = useCallback((node: HTMLButtonElement | null) => {
     anchorRef.current = node

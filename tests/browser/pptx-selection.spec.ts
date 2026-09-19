@@ -453,10 +453,12 @@ test.describe('real DSH PPTX preview & selection smoke', () => {
     await openShell(page)
     await page.locator('[data-dsa-smoke-open="pptx-external-media"]').click()
 
-    // Renderer must display failure state
+    // Renderer must display failure state. The wording is the locale's generic
+    // renderer-failure copy since Task 12: a failure that the renderer cannot
+    // diagnose further shows that sentence rather than a per-format one.
     const root = page.locator(PPTX_ROOT).first()
     await expect(root).toBeVisible({ timeout: 30_000 })
-    await expect(root).toContainText('无法显示幻灯片', { timeout: 10_000 })
+    await expect(root).toContainText('无法显示文档', { timeout: 10_000 })
 
     // Zero external remote network requests
     const externalRequests = recordedRequests.filter(
@@ -521,7 +523,7 @@ test.describe('real DSH PPTX preview & selection smoke', () => {
     // Step 2: Observe that renderer root has appeared and is in initial loading state
     const root = page.locator(PPTX_ROOT).first()
     await expect(root).toBeVisible({ timeout: 15_000 })
-    await expect(root).toContainText('正在打开幻灯片…', { timeout: 10_000 })
+    await expect(root).toContainText('正在加载文档…', { timeout: 10_000 })
 
     // Step 3: Immediately switch preview to text-two-slides while 120-slide render is pending
     await page.evaluate(() => {

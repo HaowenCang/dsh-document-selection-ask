@@ -29,10 +29,11 @@
  * important case in this file.
  */
 
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createDshTextAdapter } from '../../src/client/adapters/dsh-text/adapter.js'
 import { applyClient } from '../../src/client/dsh/register.js'
+import { apply } from '../../src/client/index.js'
 import { normalizeSelectedText } from '../../src/client/selection/normalize.js'
 import { SelectionAdapterRegistry } from '../../src/client/selection/registry.js'
 import type { SelectionContext } from '../../src/client/selection/registry.js'
@@ -358,17 +359,23 @@ function adapterRegistry(): SelectionAdapterRegistry {
 }
 
 /**
- * A fake client context recording the effects `applyClient` registers.
+ * A fake client context recording what the runtime registers.
  *
  * `effect` runs its body immediately and returns a disposer that runs whatever
- * the body returned, which is the contract `Fiber.effect` publishes.
+ * the body returned, which is the contract `Fiber.effect` publishes. Since Task 12
+ * the plugin registers **one** effect, so this list holds the runtime's own
+ * disposer rather than one per contribution.
  *
  * `slots` is stubbed to invoke `inject`'s callback synchronously, which is what
  * the real registry does once the slot's parent entry has declared it: the
  * conversation shell declares `conversation.input.overlay` during boot, so a
- * plugin loaded afterwards contributes immediately. The callback's own disposer
- * is recorded alongside the other effects, because the registry owns it through
- * the same fiber.
+ * plugin loaded afterwards contributes immediately. Its disposer is owned by the
+ * runtime now, not by the fiber directly, and the runtime's own dispose is what
+ * releases it.
+ *
+ * `documentPreviews` is present because the runtime validates every service it
+ * injects through before it registers anything, and refuses to half-install the
+ * plugin without them.
  */
 function fakeClientContext(): { readonly ctx: ClientContext; readonly disposers: (() => void)[] } {
   const disposers: (() => void)[] = []
@@ -382,13 +389,10 @@ function fakeClientContext(): { readonly ctx: ClientContext; readonly disposers:
       return produced
     },
     slots: {
-      inject: (_key: string, callback: () => () => void): (() => void) => {
-        const produced = callback()
-        if (typeof produced === 'function') {
-          disposers.push(produced)
-        }
-        return produced
-      },
+      inject: (_key: string, callback: () => () => void): (() => void) => callback(),
+      register: (): (() => void) => () => undefined,
+    },
+    documentPreviews: {
       register: (): (() => void) => () => undefined,
     },
   } as unknown as ClientContext
@@ -1057,37 +1061,50 @@ describe('dsh text adapter: ownership', () => {
 describe('client registration', () => {
   it('registers the adapter on the client context and releases it on disposal', () => {
     const { ctx, disposers } = fakeClientContext()
+    const registerSpy = vi.spyOn(SelectionAdapterRegistry.prototype, 'register')
 
-    const { registry } = applyClient(ctx)
+    try {
+      apply(ctx)
 
-    const preview = mount(
-      previewShell('dsh-resource://file/session/s1/notes.txt', PLAIN_ID, plainBody([['1', 'alpha']])),
-    )
-    const row = preview.querySelector('[data-textpreview-line]')
-    if (row === null) {
-      throw new Error('fixture must render one source line')
+      // One plugin-owned effect, whose disposer is the runtime's own teardown:
+      // every adapter, listener, style sheet and slot contribution is released by
+      // that single call rather than by one effect per contribution.
+      expect(disposers).toHaveLength(1)
+
+      const registry = registerSpy.mock.instances[0] as SelectionAdapterRegistry | undefined
+      if (registry === undefined) throw new Error('the runtime must register its adapters')
+
+      const preview = mount(
+        previewShell('dsh-resource://file/session/s1/notes.txt', PLAIN_ID, plainBody([['1', 'alpha']])),
+      )
+      const row = preview.querySelector('[data-textpreview-line]')
+      if (row === null) {
+        throw new Error('fixture must render one source line')
+      }
+      selectText(row)
+      const context = contextFrom(row)
+
+      const captured = registry.capture(context)
+      expect(captured.snapshot?.adapterId).toBe(ADAPTER_ID)
+      expect(captured.snapshot?.fileName).toBe('notes.txt')
+
+      for (const dispose of disposers) {
+        expect(typeof dispose).toBe('function')
+        dispose()
+      }
+
+      expect(registry.capture(context)).toEqual({
+        snapshot: null,
+        rejectReason: 'outside-supported-preview',
+      })
+      // The id is free again, which is the same fact read from the registry's own
+      // duplicate rule rather than from a capture outcome that no adapter claimed.
+      expect(() => {
+        registry.register(createDshTextAdapter())
+      }).not.toThrow()
+    } finally {
+      registerSpy.mockRestore()
     }
-    selectText(row)
-    const context = contextFrom(row)
-
-    const captured = registry.capture(context)
-    expect(captured.snapshot?.adapterId).toBe(ADAPTER_ID)
-    expect(captured.snapshot?.fileName).toBe('notes.txt')
-
-    // Every contribution the fiber owns hands back a real disposer: the adapter
-    // registration, the overlay's style sheet, the browser selection lifecycle
-    // and the slot injection. Unloading the plugin fiber must release all of
-    // them rather than leaving one behind for the next hot reload.
-    expect(disposers.length).toBeGreaterThan(0)
-    for (const dispose of disposers) {
-      expect(typeof dispose).toBe('function')
-      dispose()
-    }
-
-    expect(registry.capture(context)).toEqual({
-      snapshot: null,
-      rejectReason: 'outside-supported-preview',
-    })
   })
 
   it('registers no replacement renderer for the builtin text classes', () => {

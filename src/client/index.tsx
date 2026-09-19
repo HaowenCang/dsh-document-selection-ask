@@ -33,8 +33,25 @@ export const inject: string[] = ['slots', 'documentPreviews']
 
 /**
  * Client plugin body invoked by the DSH web boot.
+ *
+ * This is the plugin's **only** top-level lifecycle owner, and the effect below
+ * is its only `ctx.effect` call. `applyClient` builds one runtime and returns it;
+ * the effect returns that runtime's `dispose`, so the Cordis fiber has exactly one
+ * thing to unwind — which is what makes "every registration released exactly
+ * once" a property of one object rather than of five independent effect bodies.
+ *
+ * A runtime that fails to build is not caught here. `applyClient` has already
+ * released everything it registered before the failure and rethrown, and a plugin
+ * whose required services are missing should fail its own apply rather than
+ * finish half-installed.
+ *
  * @param ctx - the client root context.
  */
 export function apply(ctx: ClientContext): void {
-  applyClient(ctx)
+  ctx.effect(() => {
+    const runtime = applyClient(ctx)
+    return () => {
+      runtime.dispose()
+    }
+  }, 'dsh-document-selection-ask: client runtime')
 }

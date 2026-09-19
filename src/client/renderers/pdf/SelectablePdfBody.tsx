@@ -49,6 +49,9 @@ import type { CSSProperties, JSX } from 'react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 
 import type { DocumentPreviewProps } from '../../dsh/contracts.js'
+import { documentSelectionStrings } from '../../ui/locales.js'
+import type { SelectionStrings } from '../../ui/locales.js'
+import { useResourceInvalidation } from '../resource-invalidation.js'
 import { PdfWorkerFailure } from './errors.js'
 import {
   PDF_DOCUMENT_KIND,
@@ -81,12 +84,6 @@ export type SelectablePdfBodyProps = DocumentPreviewProps & Partial<PdfRendererI
  */
 const LAZY_ROOT_MARGIN = '1200px 0px'
 
-/** Copy shown while a document opens. */
-const LOADING_TEXT = '正在打开 PDF…'
-
-/** Copy shown when the file could not be opened. */
-const FAILED_TEXT = '无法显示 PDF'
-
 /** Copy shown when the worker that renders PDFs could not be used. */
 const WORKER_FAILED_TEXT = 'PDF 渲染进程无法继续，请重试。'
 
@@ -106,7 +103,7 @@ type PdfLoadState =
  * @returns the renderer root.
  */
 export function SelectablePdfBody(props: SelectablePdfBodyProps): JSX.Element {
-  const { content, resourceAddress, scrollportRef } = props
+  const { content, resourceAddress, scrollportRef, onResourceInvalidated } = props
   const data = content.kind === 'bytes' ? content.data : undefined
 
   // The tab's own lifetime, read through the framework's bound hook rather than
@@ -114,6 +111,13 @@ export function SelectablePdfBody(props: SelectablePdfBodyProps): JSX.Element {
   // contract with the shell the published one.
   const { tab } = props.useTabInfo()
   const tabSignal = tab.signal
+
+  // Resolved on every render so the copy follows the document's language.
+  const strings = documentSelectionStrings(globalThis.document)
+
+  // A page re-rendering invalidates its *geometry*, which is a recapture; this
+  // body's resource going away invalidates the *selection*, which is a clear.
+  useResourceInvalidation(resourceAddress, tabSignal, onResourceInvalidated)
 
   const [attempt, setAttempt] = useState(0)
   const [state, setState] = useState<PdfLoadState>({ kind: 'loading' })
@@ -152,7 +156,7 @@ export function SelectablePdfBody(props: SelectablePdfBodyProps): JSX.Element {
       bytes: data,
       signal,
       onFailure: (error: unknown) => {
-        if (!signal.aborted) setLoadFailure(describeFailure(error))
+        if (!signal.aborted) setLoadFailure(describeFailure(error, strings))
       },
     })
 
@@ -161,7 +165,7 @@ export function SelectablePdfBody(props: SelectablePdfBodyProps): JSX.Element {
         if (!signal.aborted) setState({ kind: 'ready', data: document })
       },
       (error: unknown) => {
-        if (!signal.aborted) setState({ kind: 'failed', message: describeFailure(error) })
+        if (!signal.aborted) setState({ kind: 'failed', message: describeFailure(error, strings) })
       },
     )
 
@@ -169,7 +173,7 @@ export function SelectablePdfBody(props: SelectablePdfBodyProps): JSX.Element {
       lifetime.abort()
       void session.dispose()
     }
-  }, [data, tabSignal, attempt])
+  }, [data, tabSignal, attempt, strings])
 
   useLayoutEffect(() => {
     const element = scrollport.current
@@ -227,7 +231,7 @@ export function SelectablePdfBody(props: SelectablePdfBodyProps): JSX.Element {
           </p>
         )}
         {data !== undefined && failure === undefined && document === undefined && (
-          <p data-dsa-pdf-notice="">{LOADING_TEXT}</p>
+          <p data-dsa-pdf-notice="">{strings.loading}</p>
         )}
         {document !== undefined &&
           document.sizes.map((size, index) => (
@@ -252,18 +256,22 @@ export function SelectablePdfBody(props: SelectablePdfBodyProps): JSX.Element {
 /**
  * The copy for one failure.
  *
- * A worker failure is reported as itself rather than as "the PDF could not be
- * displayed": the two have different causes and different remedies, and this
+ * A worker failure is reported as itself rather than as "the document could not
+ * be displayed": the two have different causes and different remedies, and this
  * project's requirement is that a worker problem is visible rather than absorbed
- * into a quieter parse.
+ * into a quieter parse. Every other failure keeps the underlying message, because
+ * the sentence a reader needs is the one that names what PDF.js actually
+ * rejected — the generic copy is its locale-resolved prefix, not a replacement
+ * for the diagnosis.
  *
  * @param error - the failure.
+ * @param strings - the copy resolved for the running document's language.
  * @returns the copy to show.
  */
-function describeFailure(error: unknown): string {
+function describeFailure(error: unknown, strings: SelectionStrings): string {
   if (error instanceof PdfWorkerFailure) return WORKER_FAILED_TEXT
   const detail = error instanceof Error ? error.message : String(error)
-  return `${FAILED_TEXT}：${detail}`
+  return `${strings.rendererFailed}：${detail}`
 }
 
 /**
@@ -345,6 +353,10 @@ function PdfPage(props: PdfPageProps): JSX.Element {
   const [painted, setPainted] = useState(false)
   const [failure, setFailure] = useState<string | undefined>(undefined)
 
+  // Resolved per render, like the body's own copy: a page failure is worded with
+  // the same locale-resolved prefix.
+  const strings = documentSelectionStrings(globalThis.document)
+
   const width = fitWidth
   const height = (fitWidth / unitWidth) * unitHeight
 
@@ -372,11 +384,11 @@ function PdfPage(props: PdfPageProps): JSX.Element {
       },
       (error: unknown) => {
         if (render.current !== operation || signal.aborted) return
-        setFailure(describeFailure(error))
+        setFailure(describeFailure(error, strings))
       },
     )
     return operation
-  }, [document, pageNumber, width, devicePixelRatio, signal, onSelectableDomInvalidated])
+  }, [document, pageNumber, width, devicePixelRatio, signal, onSelectableDomInvalidated, strings])
 
   useEffect(() => {
     if (requested) return
@@ -454,7 +466,7 @@ function PdfPage(props: PdfPageProps): JSX.Element {
     >
       <canvas ref={canvas} data-dsa-pdf-canvas="" />
       <div ref={textLayer} className="textLayer" {...{ [PDF_TEXT_LAYER_ATTRIBUTE]: '' }} />
-      {!painted && failure === undefined && <div data-dsa-pdf-placeholder="">{LOADING_TEXT}</div>}
+      {!painted && failure === undefined && <div data-dsa-pdf-placeholder="">{strings.loading}</div>}
       {failure !== undefined && (
         <div data-dsa-pdf-placeholder="" role="alert">
           {failure}

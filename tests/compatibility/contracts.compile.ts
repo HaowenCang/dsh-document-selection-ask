@@ -168,7 +168,14 @@ export function probeDshContracts(): readonly unknown[] {
   // 8. The plugin's own registrar keeps the context type the DSH web boot
   //    hands it, so later registration calls type-check against the real
   //    client context rather than against a locally invented shape.
+  //
+  //    Since Task 12 it returns the one runtime the plugin's single top-level
+  //    effect owns. The return type is read through an explicit annotation for
+  //    the same reason the overlay parameter above is annotated: a runtime whose
+  //    members silently degraded to `any` would still compile as a value here,
+  //    while `dispose` — the whole teardown contract — would be unchecked.
   const registerClient: (target: ClientContext) => void = applyClient
+  const clientRuntime: { dispose: () => void } = applyClient(clientCtx)
 
   return [
     documentPreviews,
@@ -191,6 +198,7 @@ export function probeDshContracts(): readonly unknown[] {
     askSurfaceTakeShellProps,
     askSurfaceDraftAtClick,
     registerClient,
+    clientRuntime,
     clientCtx,
   ]
 }

@@ -1156,7 +1156,212 @@ Next:
 Task 11C is PASS and Task 11 is a **PASS candidate**. PR #4 stays a draft and
 Task 12 must not start; whether Task 11 merges is an external review decision.
 
+- Task 12 — `1283d928b099306c6ea193d13024f91757429a5b`
+
+Unified registration, locale, cleanup and renderer-fallback behaviour. Task 11
+merged as `c799ad8a72ba257c0813b9c140ccd5f118bbba5c`, which is the baseline this
+round was cut from and the only baseline it used.
+
+**One top-level registration owner.** `src/client/index.tsx` now makes the
+plugin's single `ctx.effect` call, and its body is `applyClient(ctx)`: the call
+returns one local runtime and the effect returns that runtime's `dispose`.
+`applyClient` itself calls `ctx.effect` nowhere, so the plugin's top-level effect
+count is 1 and no longer grows with the number of contributions. A source gate in
+`tests/client/renderer-registration.client.spec.tsx` asserts that `src/client`
+contains `ctx.effect(` in exactly one file, and the behaviour suite asserts the
+label and the count against a DSH-shaped fake context.
+
+**The Ask slot contributions are owned now.** Both were made with the disposer
+`slots.inject` returned thrown away, so a plugin unload left
+`shell.overlay#dsh-document-selection-ask:surface` and
+`conversation.input.overlay#dsh-document-selection-ask:composer-target` live.
+Task 12 registers every contribution with the runtime's `Disposer`, and the new
+suite observes the leak it closes: cycle 1 leaves 5 preview definitions, 6 slot
+entries and 5 style nodes, dispose removes all of them, cycle 2 installs exactly
+one set again with no duplicate id, key or style tag.
+
+**Failure is all-or-nothing.** The two services the client half injects through
+are validated before anything is registered, and a registration that throws
+part-way releases everything registered before it. The original failure stays
+primary: a cleanup that also fails is reported as an `AggregateError` whose
+`errors[0]` and `cause` are the registration failure, so a renderer that failed
+to install cannot be reported as a cleanup problem.
+
+**One selection lifetime.** `installSelectionLifecycle` composes the browser
+lifecycle, the XLSX semantic subscription and resource-scoped invalidation into
+one coordinator that owns the kernel and the feedback slot.
+`invalidateResource(address)` clears a snapshot only when the snapshot's own
+`resourceAddress` matches, which is what keeps a renderer for file A — unmounted
+after the reader has already selected in file B — from taking B's snapshot with
+it. The renderers publish only "this resource's selectable lifetime ended"
+through an injected callback; none of them knows the kernel. `refreshBrowser()`
+remains the separate answer to invalidated *geometry* (a re-rendered PDF page, a
+recycled PPTX slide), where the live browser selection may still be valid and a
+clear would be wrong.
+
+**Locale.** `SelectionStrings` carries the six contract keys in both languages,
+still written as `\u` escapes: `ask`, `selectionTooLarge`, `tooManyCells`,
+`rendererFailed`, `noSelectableText`, `loading`. `too-many-cells` is now a
+reported refusal with its own wording rather than a silent one, so a 201-cell
+range no longer reads as a dead button — and it does not borrow the character
+limit's sentence. Generic renderer loading and failure copy now comes from the
+table; worker, WASM-integrity, engine-unavailable, file-too-large and
+missing-bytes wording keeps its specific diagnosis, because collapsing any of
+them into "could not be displayed" would drop the security meaning. The Ask
+notice resolves its copy from the button's document with the ambient document as
+the fallback, which fixed a real defect the new locale case found: a refusal in
+an English document rendered its notice in Chinese whenever no button was
+visible.
+
+**Renderer registration.** `registerPdfRenderer`, `registerDocxRenderer`,
+`registerPptxRenderer` and `registerXlsxRenderer` take a resolved
+`RendererRegistrationHost` and return one idempotent disposer aggregating the
+definition, the keyed body and the style sheet. None of them reads a context or
+registers an effect, so a missing service now fails the runtime's own validation
+instead of logging `console.error` and returning `false` into a half-installed
+plugin. The four definitions are unchanged: ids
+`dsh-document-selection-ask/{xlsx,pdf,docx,pptx}`, `priority: 'extension'`,
+`loading: 'bytes-complete'`, `wrap: false`, extensions `xlsx`, `pdf`, `docx`,
+`pptx`. No replacement renderer exists for a builtin text class, and no automatic
+fallback to the builtin renderer was added: a parse failure, an OOXML refusal or
+a WASM integrity failure still fails closed.
+
 ## Current gate
+
+- Task 12R browser gate — **CLOSED** on real DSH `0.1.5-rc.1` and `0.1.5-rc.2`:
+  the smoke driver keeps all twenty-four fixture controls inside the viewport
+  (strip `292, 490, 408 x 218` at 1280 x 720), every one of them is opened by an
+  ordinary actionability-checked `locator.click()`, and each suite is XLSX
+  **13 / 0 / 0**, PPTX **10 / 0 / 0**, DOCX **6 / 0 / 0**, PDF **10 / 0 / 0**,
+  TextPreview **8 / 0 / 0**. The earlier rc.1 result of XLSX 7 / 6 is retained
+  below as history: it demonstrated non-regression against the pre-Task-12
+  baseline and did not meet the frozen acceptance gate
+- Task 12 registration ownership: PASS — one top-level `ctx.effect` per apply,
+  `applyClient` effect-free, exactly four extension renderer definitions with
+  `priority: 'extension'` / `loading: 'bytes-complete'` / `wrap: false`, zero
+  replacement renderers for the builtin text classes, the five adapters in the
+  frozen order XLSX → PDF → DOCX → PPTX → builtin text, every registration
+  disposed exactly once with a second dispose a no-op, every contribution
+  released on unload (including the two previously leaked Ask slot entries), a
+  builtin PDF definition seeded before the plugin still live and still the same
+  object after the plugin is disposed, and a serial apply/dispose/apply cycle
+  leaking no definition, slot entry, listener or style node
+- Task 12 registration failure: PASS — a definition that throws releases the four
+  adapter registrations, the two Ask slot contributions, the overlay style sheet
+  and the definitions registered before it, and rethrows the original error; a
+  throwing child disposer does not end the sweep; a missing required service
+  fails the apply before a single definition is registered
+- Task 12 selection lifecycle: PASS (40 cases) — resource-scoped invalidation
+  (A's late cleanup leaves B's snapshot object-identical), XLSX semantic capture
+  and owner-token isolation, Escape clearing a DOM snapshot and a semantic
+  snapshot and the notice and a pending frame while leaving the reader's own
+  browser selection untouched, scroll and resize recapturing the same text,
+  resource and provenance with updated geometry, a disconnected selection
+  clearing, a pending frame cancelled on dispose, a post-dispose bridge publish
+  and resource callback inert, and all four renderer bodies notifying the
+  coordinator on unmount, on an address change and on tab abort
+- Task 12 locale: PASS — six keys in both tables, Chinese default for a missing
+  or unknown language, `zh`/`zh-CN`/`zh-TW` → Chinese and `en`/`en-US`/`fr` →
+  English, both refusal notices worded per language and per limit, every Chinese
+  key pinned to its exact code points in `tests/unit/quote/integrity.spec.ts`,
+  and the generic DOCX loading and failure states rendering the resolved
+  language while an explicit diagnosis keeps its own message
+- Task 12 static gates: PASS — `pnpm test` 1,051 passed / 0 failed over 58 files
+  (Task 11 baseline: 958 over 55), `pnpm typecheck`, `pnpm build`,
+  `npm pack --dry-run` (89 files, no fixture, no smoke workspace, no report, no
+  side WASM or worker asset), `git diff --check`
+- Task 12 real DSH, five existing browser suites with the Task 12 build, DSH
+  `0.1.5-rc.2` (the only release installed on this machine; see the runtime note
+  below for the rc.1 runs): XLSX **13 / 0 / 0**, PPTX **10 / 0 / 0**, DOCX
+  **6 / 0 / 0**, PDF **10 / 0 / 0**, TextPreview **8 / 0 / 0** — 47 passed, 0
+  failed, 0 skipped
+- Task 12 real DSH, runtime `0.1.5-rc.1`: the machine's DSH installation is rc.2
+  and its `dsa-smoke` profile tree is shared with the user's own `web` profile,
+  so rc.1 was stood up as an isolated install
+  (`@deepseek-ai/dsh@0.1.5-rc.1` plus a fresh profile created with
+  `--from-default-profile web`) and driven by the repository's own
+  `scripts/dsh-smoke-profile.mjs`. On that instance: PPTX **10 / 0 / 0**, DOCX
+  **6 / 0 / 0**, PDF **10 / 0 / 0**, TextPreview **8 / 0 / 0**, and XLSX
+  **7 passed / 6 failed / 0 skipped**. The six XLSX failures are environmental
+  and are **not** attributable to Task 12: the pre-Task-12 baseline
+  (`c799ad8`) run on the same instance fails the identical six cases with the
+  identical error (`locator.click` — the smoke driver's last fixture buttons
+  resolve outside the clickable viewport in that minimal home). On the rc.2
+  instance, which carries the user's full profile, the same Task 12 build passes
+  all thirteen
+- Task 12 production defect found by the new locale case: the rejection notice
+  resolved its copy only from the Ask button's owner document, so a refusal in an
+  English document was worded in Chinese whenever no button was on screen. Fixed
+  in `SelectionAskOverlay` by falling back to the ambient document — the one
+  change Task 12 permits in that file, and it is a copy-resolution change only
+
+### Task 12R — closing the rc.1 browser gate
+
+The Task 12 record above reports the rc.1 XLSX suite as 7 passed / 6 failed and
+explains those failures as environmental, evidenced by the pre-Task-12 baseline
+failing the identical six cases on the same instance. That evidence establishes
+non-regression and nothing more: a frozen acceptance gate that requires 13 passed
+/ 0 failed / 0 skipped is not met by showing that the baseline failed the same
+way. Task 12R therefore treats the rc.1 gate as open and closes it without
+weakening what the gate measures.
+
+Root cause, measured rather than inferred. The smoke driver renders one control
+per fixture in a single `position: fixed` flex row with `left: 12px`, no `right`,
+no wrap and no width bound. At the 1,280 x 720 viewport the smoke runs at, the
+twenty-four controls measured 1,568.6 px wide against a 1,280 px window, and the
+five XLSX controls — the tail of `SMOKE_FIXTURES` — sat 294 px past the right
+edge. Playwright reported `locator.click` with "element is outside of the
+viewport", which is a statement about the control's geometry, not about the XLSX
+renderer: every failing case failed at the click that opens the fixture, before
+the plugin under test was exercised. RED was reproduced on a real DSH
+`0.1.5-rc.1` instance before any source was touched, with the failing control's
+bounding box and the viewport recorded.
+
+Remediation is test infrastructure only. `SmokeDriverControl.tsx` now renders the
+controls as a grid anchored at `left: 292px` with `width: 408px`, four 1fr columns
+per row, `white-space: nowrap` on the labels and `overflow: hidden` on the strip.
+Each bound answers a measured occluder: the window-wide row reached under the
+preview column (which begins at `x = 704` and wins the hit test over the strip,
+because the overlay slot's composer column establishes the stacking context), and
+a second attempt bounded only by `width: 680px` lost `pptx-external-media` to the
+shell's right-sidebar resize handle at `x = 276`. `x = 292` clears the handle and
+`x = 700` ends before the preview column, and seven rows of four fit in 218 px,
+whose top edge stays below the composer's published `y = 447`. No forced click,
+no DOM-dispatched event, no viewport widening, no `scrollIntoViewIfNeeded`, and no
+scaling or zoom: every case still opens its fixture with an ordinary
+actionability-checked `locator.click()`. `xlsx-selection.spec.ts` adds
+`expectControlReachable`, which asserts the four bounds of each control against
+the viewport before clicking it, so a layout regression names the control, its
+box and the viewport instead of surfacing as a bare retry timeout. No product
+assertion was removed or weakened.
+
+- Task 12R real DSH `0.1.5-rc.1`, isolated install at
+  `E:\Projects\DSHarness\.dsa-rc1` (`@deepseek-ai/dsh@0.1.5-rc.1` with a fresh
+  profile driven by `scripts/dsh-smoke-profile.mjs`): XLSX **13 / 0 / 0**, PPTX
+  **10 / 0 / 0**, DOCX **6 / 0 / 0**, PDF **10 / 0 / 0**, TextPreview **8 / 0 / 0**
+  — 47 passed, 0 failed, 0 skipped. The previous round's rc.1 XLSX result of
+  7 / 6 stands as history and established non-regression only; it did not meet the
+  frozen acceptance gate
+- Task 12R geometry evidence, rc.1 at 1280 x 720 with a workbook open: strip box
+  `292, 490, 408 x 218`; all twenty-four controls inside the viewport and receiving
+  a click; the six XLSX controls at `xlsx-simple` 600.5, 617.6, 95.5 x 24.8;
+  `xlsx-formula-values` 296.0, 648.4; `xlsx-multi-sheet` 397.5, 648.4;
+  `xlsx-merged-frozen` 499.0, 648.4; `xlsx-chart-image` 600.5, 648.4; `xlsx-large`
+  296.0, 679.2 — every right edge at or below 696 and every bottom edge at or below
+  704
+- Task 12R rc.2 regression, real DSH `0.1.5-rc.2`, all five suites re-run because
+  the harness layout changed: XLSX **13 / 0 / 0**, PPTX **10 / 0 / 0**, DOCX
+  **6 / 0 / 0**, PDF **10 / 0 / 0**, TextPreview **8 / 0 / 0** — the wrapped
+  controls interfere with no existing interaction
+- Task 12R static gates: `pnpm test` **1,052 passed / 0 failed over 58 files**,
+  `pnpm typecheck`, `pnpm build`, `npm pack --dry-run` (89 files, no fixture, no
+  smoke driver, no Playwright artefact, no local path), `git diff --check`
+- Task 12R production identity: `git diff fc5ea8f -- src/client` is empty;
+  `lib/client.js` is byte-identical to the Task 12 build at
+  `735F8B77EC0B899F9740A8C0591AB7FE0A294C9D5F185A69A9B4A8F7134A183D` and
+  `lib/index.mjs` at
+  `FAC72B86168E002CB6DD2939C1775CAD0D149AFB24C4C2264B1110B079A60F39`;
+  `package.json`, `pnpm-lock.yaml` and the Task 11 runtime assets are unchanged
 
 - Task 11C fixture integrity unit suite: PASS (13 cases) — the committed
   `xl/media/image1.png` read out of the workbook, its signature and exact chunk
@@ -1364,6 +1569,34 @@ Task 12 must not start; whether Task 11 merges is an external review decision.
 - production defect: Ask overlay occluded by the expanded right column — FIXED in
   Task 5C, with the inverted assertion kept as the regression guard
 
+## Runtime note (Task 12 round)
+
+This machine's DSH installation was `0.1.5-rc.2` when Task 12 ran, so the frozen
+rc.1 baseline could not be served from the user's own profile tree: that tree is
+a junction onto the installed release, and the smoke tooling deliberately never
+reinstalls it. The rc.1 gate recorded above was therefore executed against an
+isolated rc.1 install in a scratch directory outside this repository, with the
+plugin under test linked from this worktree and the profile built by the
+repository's own `scripts/dsh-smoke-profile.mjs`.
+
+`DSH_SMOKE_URL` was non-empty for every browser run, so no case skipped. The
+bearer token was passed through the environment only and appears in no commit,
+document or test file. The user's own profile tree, credentials and workspace
+store were not modified: the scratch home holds its own settings file and a copy
+of the workspace store, and the isolated profile points at this worktree.
+
+Task 12R re-ran both runtimes on the same terms. The isolated rc.1 home needed one
+environmental repair before the gate could be measured at all: a fresh rc.1 home
+has no model provider, and the client's first-run onboarding step is a *blocking*
+modal — it sets `inert` on the application root and lays a full-viewport mask over
+it, so no control in the shell, including the smoke driver's, receives a click.
+The modal's primary action cannot be satisfied without a credential, so the home
+was given a declared `llm-pi-ai` provider row plus a placeholder credential
+reference: enough for the provider join to report the route usable, which is the
+condition that ends the step. This is scratch-home configuration, written outside
+this repository, and no credential value in it is real. The rc.2 run used the
+user's own `dsa-smoke` profile tree, whose links already point at this worktree.
+
 ## Open source
 
 - Task 3A — PASS
@@ -1406,6 +1639,18 @@ Task 12 must not start; whether Task 11 merges is an external review decision.
 - Repository visibility — public
 - License — MIT
 - Repository: `dsh-document-selection-ask`
+- Task 12 — PASS (`1283d928b099306c6ea193d13024f91757429a5b`; one top-level
+  registration owner with `applyClient` effect-free, the two previously leaked Ask
+  slot contributions now owned, resource-scoped selection invalidation with a late
+  old renderer unable to clear a newer snapshot, six bilingual locale keys with
+  `too-many-cells` reported as its own refusal, builtin definitions surviving
+  plugin disposal with no automatic fallback, and the five existing browser suites
+  green on the Task 12 build; see the Current gate and the runtime note above)
+- Task 12R — PASS (smoke-driver viewport remediation; the rc.1 XLSX gate is
+  closed at 13 / 0 / 0 and rc.2 stays green at 47 / 0 / 0, production delta zero,
+  `lib/client.js` unchanged at
+  `735F8B77EC0B899F9740A8C0591AB7FE0A294C9D5F185A69A9B4A8F7134A183D`; see the
+  Task 12R record above)
 
 `LICENSE` is the standard MIT text with the copyright holder taken from the
 authenticated GitHub account. `package.json` declares `"license": "MIT"`.
@@ -1419,6 +1664,33 @@ installed package metadata, as are `pdf-lib` (1.17.1) and `@pdf-lib/fontkit`
 (1.1.1), which are the fixture generator's own dependencies.
 
 ## Next
+
+**Task 13 — Cross-format Playwright acceptance and resource cleanup.**
+
+Task 12 converged the registrations, the selection lifetime, the locale and the
+renderer fallback semantics into one owner; it deliberately did not add
+cross-format acceptance coverage. Task 13 is where
+`tests/browser/universal-selection.spec.ts` and
+`tests/browser/resource-cleanup.spec.ts` belong, together with the
+`playwright.config.ts` and `scripts/verify.mjs` changes that wire them into the
+gate. What Task 12 hands Task 13:
+
+- `ClientRuntime.dispose()` is the one teardown, so a browser case can assert
+  that switching documents, closing a tab or disabling the plugin leaves no Ask
+  surface, no style node and no stale snapshot across formats without reaching
+  into a renderer;
+- resource-scoped invalidation is already the contract, so a cross-format case
+  can capture in one document, move to another and assert that the first
+  document's late cleanup is inert — the property is implemented and unit-tested
+  and lacks only its browser acceptance evidence;
+- the six locale keys are complete and code-point pinned, so a cross-format case
+  can assert each refusal's wording without inventing copy;
+- the five existing browser suites are unchanged by this round except for the
+  copy assertions the locale migration required; Task 13 adds suites rather than
+  extending them.
+
+The text below is the Task 7 → Task 8 handover, retained as history. Tasks 8–11
+completed the work it describes; it is not an open item.
 
 **Task 8 — PDF selection provenance and Ask integration.**
 
