@@ -1,5 +1,5 @@
 /**
- * The smoke driver's control: one test-only button per fixture, twenty-four of
+ * The smoke driver's control: one test-only button per fixture, twenty-five of
  * them, rendered as a bounded grid inside the chat column.
  *
  * **What this module is allowed to do.** Each button calls exactly one public
@@ -39,7 +39,7 @@
  * `locator.click()` — no forced click, no DOM-dispatched event, no viewport
  * widening, no `scrollIntoViewIfNeeded`. A control the browser will not accept
  * as clickable is therefore a failing case, and the strip has to put all
- * twenty-four controls where the browser will accept them.
+ * twenty-five controls where the browser will accept them.
  *
  * It did not. As one unbounded `flex` row the twenty-four labels measured
  * 1,568 px against a 1,280 px viewport, and the five XLSX controls at the tail of
@@ -111,7 +111,7 @@ export type SmokeDriverProps = PropsRuntime<'conversation.input.overlay'> & {
  * 261 px tall to keep its top edge below the composer.
  *
  * `repeat(4, minmax(0, 1fr))` is the track that resolves every bound at once.
- * Twenty-four controls at four per row make seven rows, and seven rows measured
+ * Twenty-four controls at four per row made seven rows, and seven rows measured
  * 218 px — inside the vertical bound, with the strip's top edge at `y = 490`
  * against the composer's 447. The track is clipping rather than intrinsic for a
  * measured reason: `minmax(0, max-content)` is as wide as the longest label in
@@ -123,13 +123,23 @@ export type SmokeDriverProps = PropsRuntime<'conversation.input.overlay'> & {
  * letting it escape, and `overflow: hidden` on the strip keeps the whole box
  * inside its own bounds.
  *
+ * Task 13 added the twenty-fifth fixture, the CSV file the universal acceptance
+ * suite needed, and the row count is what that costs: twenty-five controls plus
+ * the strip's own label are twenty-six grid items, and `ceil(26 / 4)` is still
+ * seven rows, so the bounds above hold unchanged. Re-measured after the addition
+ * on the real `dsa-smoke` instance at 1,280 x 720: the strip box is
+ * `292, 490.4, 408 x 217.6` and all twenty-five controls remain inside the
+ * viewport and clickable by an ordinary actionability-checked `locator.click()`.
+ * The fixture count is therefore a measured quantity here rather than an
+ * assumption, and the next fixture added will have to re-measure it too.
+ *
  * ## Why a grid rather than a wrapping flex row
  *
  * A wrapping flex row picks its own break points from whichever controls share a
  * line, so its height follows the label text and drifts when a label changes. A
  * grid fixes the column count, so the strip's height is a function of the fixture
  * count alone and its top edge cannot creep into the composer. Measured during
- * Task 12R: the same twenty-four controls at the same width came out 218 px tall
+ * Task 12R with the then twenty-four controls at the same width: 218 px tall
  * as one flex arrangement and 156 px as another, and a `max-content` track pushed
  * a 388 px strip's grid to 719 px.
  *

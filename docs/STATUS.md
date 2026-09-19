@@ -2,10 +2,51 @@
 
 ## Baseline
 
-- Primary verified runtime: DSH `0.1.5-rc.1`
-- Forward compile-contract target: DSH `0.1.5-rc.2`
+- Primary blocking runtime: DSH `0.1.5-rc.2`
+- Optional backward-compatibility runtime: DSH `0.1.5-rc.1` (non-blocking)
+- Forward compile-contract target: to be re-established by Task 14; the earlier
+  "required baseline rc.1 / forward target rc.2" pairing is a **stale roadmap
+  assumption** and no longer describes the acceptance policy
+
+The runtime policy changed during Task 13, on the human's explicit revision: this
+machine's installed DSH is `0.1.5-rc.2`, so rc.2 became the current official local
+runtime and the primary blocking acceptance runtime, while rc.1 was demoted to
+optional backward-compatibility evidence. `package.json` still pins the client
+packages and `pdfjs-dist` at the rc.1 release family as the compile contract, and
+Task 13 did not change that: a dependency or compile-contract migration is not a
+test-coverage task. Task 14 owns the compatibility matrix and must restate its own
+baseline from the versions actually installed at that time.
 
 ## Completed
+
+- Task 13
+  - commits: `9064bfdfc5c14c7e7e48df393e1cee7255830e92` (the round's work),
+    `08d93f910b71c8db01f0bd8839c1e480d5779cc5` (the round's record),
+    `9f8b5c7adc7dba3e7a4a31345b75d6b71bf737e9` and
+    `f916ed8f5278071265bc728b9d69dbf7dd7d2831` (two successive corrections to
+    `scripts/verify.mjs`, described under "Current gate"), plus a closing docs
+    correction. The corrections are separate commits rather than amendments because
+    the branch was already published and this round does not force-push
+  - `tests/browser/universal-selection.spec.ts` (new, 10 cases): one case per
+    supported class — TXT, Markdown, code, CSV, PDF, DOCX, PPTX, XLSX — plus a real
+    cross-root refusal and a recovery after it. Each class keeps its own real
+    mechanism: builtin plain/Shiki DOM rows for TXT/CSV/code, a rendered-paragraph
+    drag for Markdown, the PDF text layer, the rendered DOCX DOM, PPTX HTML/SVG
+    text, and the XLSX semantic cell-range gesture. No case merges two classes and
+    no format is covered by a "text" case
+  - `tests/browser/resource-cleanup.spec.ts` (new, 6 cases): a rapid
+    switch-while-rendering case for each byte renderer (PDF, DOCX, PPTX, XLSX), the
+    cross-format "a late old resource's cleanup cannot clear the live selection that
+    replaced it" case, and a cross-format network/local-asset audit
+  - `scripts/verify.mjs` (new, 12 heuristic rules) wired as `pnpm verify`; the one
+    new `package.json` row, with no new dependency
+  - one new smoke fixture — `smoke-fixtures/task13-smoke.csv` — because CSV is one
+    of the eight supported classes and Tasks 5–11 shipped no CSV fixture at all;
+    the writer table and the driver table were both extended and every pre-existing
+    fixture's bytes were verified unchanged
+  - production diff from the baseline is empty: `git diff 56c74b3 -- src` produces
+    no output
+  - full detail in the Task 13 record under "Current gate"
 
 - Task 1
   - commit: `663a134cdfab7b15760fd0e6e8b9981656f851a9`
@@ -1228,6 +1269,112 @@ a WASM integrity failure still fails closed.
 
 ## Current gate
 
+- Task 13 browser gate — **CLOSED** on the primary runtime, real DSH `0.1.5-rc.2`,
+  profile `dsa-smoke`, `DSH_SMOKE_URL` non-empty: universal selection **10 / 0 / 0**,
+  resource cleanup **6 / 0 / 0**, XLSX **13 / 0 / 0**, PPTX **10 / 0 / 0**, DOCX
+  **6 / 0 / 0**, PDF **10 / 0 / 0**, TextPreview **8 / 0 / 0** — **63 passed, 0
+  failed, 0 skipped**, `--workers=1`, in 15.6 minutes. The same five existing
+  suites were re-measured on the same instance with the Task 13 build before the
+  new suites were added and were already 47 / 0 / 0, so the round's additions
+  regress none of them
+- Task 13 static gates — `pnpm test` **1,052 passed / 0 failed over 58 files**
+  (identical to the Task 12R count, so no test was deleted or skipped),
+  `pnpm typecheck`, `pnpm build`, `pnpm verify` **12/12**, `npm pack --dry-run`
+  (89 files, 6.3 MB, no test tree, no fixture, no smoke workspace, no Playwright
+  report, no local path), `git diff --check`
+- Task 13 production identity — `git diff 56c74b36a45951ac4c27a1363e26189c4b0730fc
+  -- src` is empty; `package.json` gained exactly one row
+  (`"verify": "node scripts/verify.mjs"`), `pnpm-lock.yaml` is unchanged and no
+  dependency was added; `playwright.config.ts` is unchanged, because `testDir:
+  'tests/browser'` already collects both new specs and changing its timeouts,
+  retries, engine or viewport was neither needed nor permitted
+- Task 13 sub-agent topology — one integrator plus four sub-agents with disjoint
+  file ownership: Agent A (`tests/browser/universal-selection.spec.ts`), Agent B
+  (`tests/browser/resource-cleanup.spec.ts`), Agent C (`scripts/verify.mjs`) and
+  Agent D (read-only adversarial review, zero files modified). All live browser
+  runs were serial and integrator-only; no sub-agent pushed, merged, committed or
+  created a branch. The integrator reviewed every sub-agent diff and rejected three
+  rounds of work across Agents A and B and one round for Agent C; those rejections
+  and their measured causes are recorded below
+- Task 13 acceptance findings, none of which is a production defect — the round
+  added coverage and found no product bug, but it did produce four measurements
+  worth keeping:
+  - the preview column is a fixed 576 px wide at 1280x720, 1600x1000 and
+    2560x1300, and a rendered DOCX page is centred on it and overflows 13 px to the
+    left, so a paragraph's first glyph run begins outside the column; a press at
+    `column.left + 1` lands on the shell's resize handle (`DIV.pI_x6G_handle`) and
+    the first point inside `[data-dsa-docx-content]` is `column.left + 5`, which is
+    already two characters into a 96 px first run. A forward drag therefore cannot
+    select the whole paragraph at any viewport, and the DOCX case selects it with a
+    real triple click (`mouse.move` plus three real `down`/`up` pairs carrying
+    `clickCount` 1, 2, 3) — a real user-level block gesture, not a synthetic range,
+    and still asserted by exact equality. The measurement and the ruling are also
+    recorded in the case's own comment and in `SmokeDriverControl.tsx`
+  - `two-page.pdf` is a six-page document, and at `scrollTop: 0` only page 1
+    rasterises while pages 2–6 keep their placeholder and the browser's default
+    300x150 canvas. A document-wide `[data-dsa-pdf-placeholder]` count of zero is a
+    state this renderer never produces, so the cleanup suite's PDF readiness gate is
+    page-scoped, in the shape `pdf-renderer.spec.ts` already uses
+  - `new URL('ws://…').origin` is a `ws:` origin and can never equal the page's
+    `http:` origin, so the cleanup suite normalises `ws:`→`http:` and `wss:`→`https:`
+    before comparing the DSH API channel against `appOrigin`. A socket on another
+    host or port, or a plaintext socket on an `https:` page, still fails
+  - the smoke driver's own commentary claimed twenty-four controls. Task 13's CSV
+    fixture makes it twenty-five, and twenty-six grid items still ceil to seven
+    rows, so the recorded strip box `292, 490.4, 408 x 217.6` is unchanged; the
+    commentary now states the count as a measured quantity rather than an
+    assumption
+- Task 13 gate-script corrections after review — the notices rule needed **two**
+  successive corrections, and the first was not sufficient. Both are committed
+  (`9f8b5c7`, then `f916ed8`) because the branch was already published and this
+  round does not force-push.
+  - `9f8b5c7`: the block-record lookup searched `package: <name>` followed by up to
+    240 arbitrary characters before `license:`, and on a 400-line notices file that
+    gap runs straight through the markdown table into a **later** library's block
+    record. A field lookup keyed on a package name must not be able to answer with
+    another package's value, so the lookup is anchored to the `package:` line and
+    bounded to the four lines that follow it.
+  - `f916ed8`: anchoring alone did not close Agent D's finding. A row whose license
+    *cell* exists but is blank still fell through to the block record, so blanking
+    `pdfjs-dist`'s license cell found a license in that package's own fenced block
+    and the rule reported nothing. A row that carries a version cell and an empty
+    license cell is a notice claiming the identity and omitting the license, so it
+    is now reported on the empty cell itself, and only a row with no license cell
+    at all consults the block form.
+  - The integrator verified the second correction by A/B, not by reading it: on a
+    throwaway copy of the tree with `pdfjs-dist`'s license cell blanked, the
+    previously committed script reports `PASS R8` and 12/12 — the false negative —
+    while the corrected script reports `FAIL R8` with exactly one finding,
+    `notices carry no license for this shipped library … THIRD_PARTY_NOTICES.md:28
+    -> pdfjs-dist`. The unmodified copy is 12/12 under both, so the rule still
+    passes a correct notices file.
+- Task 13 adversarial review — Agent D's read-only review of the integrated tree
+  raised three blocking findings and the integrator fixed all three before the
+  final matrix: the cleanup case that names "a late old resource cannot clear the
+  newer resource's selection" was consuming B's Ask surface *before* the cleanup
+  window, so no live snapshot existed during it (reworked to keep an un-clicked Ask
+  surface, that is a live snapshot, across the window and to assert it survives and
+  still appends B's own exact block); `scripts/verify.mjs`'s composer-write rule
+  matched only quoted selector literals and so could not fire on this repository's
+  own constant-based style (widened, then corrected again after the widening
+  produced six false positives on the clean tree, by resolving a name's *nearest
+  preceding* binding); and the notices rule skipped the license comparison whenever
+  the recorded license cell was empty (now reported like an empty version). Agent D
+  also confirmed the review's own required checks: no test weakening, no fixed sleep
+  standing in for evidence, no force click or event dispatch, no kernel/adapter/
+  bridge access, no loose selectors, exact provenance matching
+  `src/client/provenance/format.ts`, a network gate that is origin-exact rather than
+  allow-list-shaped, no Task 14 scope, and version-neutral assertions
+- Task 13 optional rc.1 backward-compatibility evidence — **DIFFERENCE: NONE**,
+  and non-blocking by policy. On the isolated rc.1 install in an out-of-tree
+  scratch home (`E:\Projects\DSHarness\.dsa-rc1`, `@deepseek-ai/dsh@0.1.5-rc.1`
+  with a fresh profile driven by `scripts/dsh-smoke-profile.mjs`), the same seven
+  suites were re-run serially with the Task 13 build: universal selection
+  **10 / 0 / 0**, resource cleanup **6 / 0 / 0**, XLSX **13 / 0 / 0**, PPTX
+  **10 / 0 / 0**, DOCX **6 / 0 / 0**, PDF **10 / 0 / 0**, TextPreview **8 / 0 / 0**
+  — **63 passed, 0 failed, 0 skipped, 29.8 minutes**, identical to the rc.2
+  result on every suite. No production change was made for rc.1's sake, and rc.1
+  does not decide this round either way
 - Task 12R browser gate — **CLOSED** on real DSH `0.1.5-rc.1` and `0.1.5-rc.2`:
   the smoke driver keeps all twenty-four fixture controls inside the viewport
   (strip `292, 490, 408 x 218` at 1280 x 720), every one of them is opened by an
@@ -1294,6 +1441,125 @@ a WASM integrity failure still fails closed.
   English document was worded in Chinese whenever no button was on screen. Fixed
   in `SelectionAskOverlay` by falling back to the ambient document — the one
   change Task 12 permits in that file, and it is a copy-resolution change only
+
+### Task 13S — closing the shipped-library discovery hole
+
+Task 13's gate script was green while a shipped library had no notice. The external
+final audit of `ada7224` is what observed it: `scripts/xlsx-runtime-assets.ts`
+resolves `fflate/package.json` out of the installed `@extend-ai/react-xlsx`, reads
+`fflate/esm/browser.js`, and inlines it into the synthesized XLSX worker source, which
+is embedded in `lib/client.js` and delivered to the browser. `fflate@0.8.3` was
+therefore shipped code with no record in `THIRD_PARTY_NOTICES.md`, and `verify.mjs` R8
+could not see it, because the set that rule iterated was nine package names written
+inside the gate script and `fflate` was not one of them.
+
+The record above states `pnpm verify` **12/12** as a Task 13 result. That measurement
+was correct and its reading was wrong: it was a false PASS, not a passed gate.
+
+**RED, taken before any file was modified.** On a throwaway copy of `ada7224` with a
+real `node_modules` junction, `lib/client.js` carries one
+`var __dsa_fflate__ = (function ()` declaration and the three rewritten worker
+imports — four occurrences of the identifier; `THIRD_PARTY_NOTICES.md` contains no
+occurrence of `fflate`; `verify.mjs` contains none either; and the unmodified gate
+still reports `PASS R8` and 12/12. The junction is what makes that a statement about
+the rule rather than about a missing dependency tree, and it is why every proof copy
+below carries one.
+
+**The defect is the discovery, not the missing name.** Repairing only the data would
+have left the same false negative for the next explicitly inlined package, because
+the maintainer would still have had to remember to edit the build script *and* a
+second list inside the gate. R8 now derives the shipped set from three project-owned
+authorities:
+
+- the declared production dependencies, read from the lockfile's root importer;
+- the packages the project-owned build pipeline explicitly resolves installed bytes
+  out of, found by scanning `scripts/xlsx-runtime-assets.ts` and `tsdown.config.ts`
+  for module-resolution calls and `node_modules` path joins. This is the channel that
+  makes `fflate` impossible to ship unnoticed;
+- the packages the project's own bundler records as inlined into `lib/client.js`,
+  read from the `//#region node_modules/<path>` comment rolldown emits per module.
+
+There is no hand-maintained shipped-library list left in `verify.mjs`, so the class-B
+members the old list named are covered by the derivation rather than by a restatement:
+`jszip` and `@dukelib/sheets-wasm` through the build's own resolve calls, `echarts` and
+`zrender` through the bundler's region comments. A derivation that reads nothing is a
+failure and not a pass — an unreadable pipeline file, a bundle with no region comment,
+and an empty union are each reported — and the discovery is deliberately not a scan for
+npm-shaped strings, which would have reported `alwaysBundle`'s wildcard patterns, the
+bundler's aliases and every dependency of a dependency.
+
+**What the corrected rule found.** Against the tree at `ada7224` it reports 16 findings,
+not one. `fflate` is the reported blocker; the other fifteen are packages the bundler
+region comments prove were already shipping with no notice — `@tanstack/react-virtual`
+3.14.13, `@tanstack/virtual-core` 3.17.11, `d3-array` 3.2.4, `d3-color` 3.1.0,
+`d3-format` 3.1.2, `d3-geo` 3.1.1, `d3-hierarchy` 3.1.2, `d3-interpolate` 3.0.1,
+`d3-path` 3.1.0, `d3-scale` 4.0.2, `d3-shape` 3.2.0, `internmap` 2.0.3, `regl` 2.1.1,
+`topojson-client` 3.1.0 and `tslib` 2.3.0. All fifteen arrive through
+`@extend-ai/react-xlsx`'s chart, map and viewport support; each was recorded with the
+version the lockfile resolves and the license its own installed manifest declares, and
+R8 re-checks both. The shipped set is now 25 packages, all of them in the notices table.
+
+**Notices.** `fflate` is recorded as 0.8.3, MIT — read from
+`node_modules/.pnpm/fflate@0.8.3/node_modules/fflate/package.json` and its `LICENSE`,
+not from this prompt — with the purpose stated as what it is: a transitive runtime
+dependency of `@extend-ai/react-xlsx` whose browser ESM implementation the
+project-owned XLSX runtime-asset builder inlines into the self-contained XLSX worker,
+with a second copy embedded because a worker has its own global scope. The stale Duke
+delivery text is corrected in place rather than deleted: the passage recording *why*
+the `/dsa-assets/...` host routes were removed and why the compressed-inline
+architecture was adopted is kept, and the "no binary of it is currently delivered to
+the browser" blocker statement is replaced by the architecture that shipped — exact
+installed WASM, identity gate, deterministic gzip, base64 payload in `lib/client.js`,
+local inflate, runtime SHA-256 verification, `setWasmSource(BufferSource)`; worker
+self-contained and started from a `Blob`; zero HTTP requests for either.
+`tests/browser/xlsx-selection.spec.ts` case 0 is cited by its current title, because it
+asserts the delivered engine now and no longer records a blocked state.
+
+**Proof matrix**, all on throwaway copies with `node_modules` junctions:
+
+| Proof | Injected change | Observed |
+| --- | --- | --- |
+| P1 clean | none | `PASS R8`, 12/12, 0 findings |
+| P2 remove fflate | fflate notice row deleted | `FAIL R8`, 1 finding naming `fflate` |
+| P3 blank fflate license | license cell emptied, identity intact | `FAIL R8`, `notices carry no license … -> fflate` |
+| P4 wrong fflate version | row records 0.8.2 | `FAIL R8`, `record version "0.8.2" but the lockfile resolves 0.8.3` |
+| P5 wrong fflate license | row records Apache-2.0 | `FAIL R8`, `record license "Apache-2.0" but the installed manifest declares "MIT"` |
+| P6 synthetic inliner | a new explicit inliner for `us-atlas` added to `scripts/xlsx-runtime-assets.ts`, no notice | `FAIL R8`, 1 finding naming `us-atlas` |
+| P7 class-B coverage | `echarts`, `zrender`, `jszip` and `@dukelib/sheets-wasm` rows deleted | `FAIL R8`, 4 findings, one per package |
+| P8 blank-cell rule | `pdfjs-dist` license cell blanked while its own fenced block still carries Apache-2.0 | `FAIL R8`, `notices carry no license … -> pdfjs-dist` |
+| P9 bounded block record | shipped table rebuilt with no license column, plus a `package: fflate` block inside the bound | `fflate` has **0** findings; the block form still answers |
+| P10 the bound holds | same, with `license:` five lines below `package:` | `FAIL R8`, `notices carry no license … -> fflate` |
+
+P6 is the acceptance proof that the discovery is not `fflate`-shaped: it names a package
+that is installed and lockfile-resolved but appears in no region comment, no dependency
+list and no existing table row, and the rule reports it because the build's own pipeline
+says it is being embedded. P9 and P10 re-establish the two corrections Task 13 made to
+this rule — a blank license cell is authoritative and the block-record lookup stays
+anchored to its own package and bounded to four following lines — which the discovery
+change deliberately does not touch.
+
+**Orchestration and freeze.** The round ran with no write-capable sub-agent and no
+read-only reviewer: `active write-capable sub-agents: 0` and `active read-only
+sub-agents: 0` were recorded before the first edit, and `active sub-agents before
+freeze = 0` before the final gates. This is also the round that records the earlier
+orchestration failure, which the commits make visible: the first completion record
+(`08d93f9`) was written while `scripts/verify.mjs`'s owner was still working, so the
+integrator's first final report was invalidated and the record was superseded twice
+(`477f221`, then `ada7224`) before the external audit reopened the round again. The
+Task 13 chain is therefore: initial integration → a gate-file owner working past the
+first freeze → the first final report invalidated → two R8 parser corrections → the
+external audit's missing `fflate` finding → Task 13S → the final freeze with zero
+active sub-agents. The errors are kept because the sequence is the audit trail.
+
+**Static gates on the frozen tree** — `pnpm test` **1,052 passed / 0 failed over 58
+files** (unchanged, so no test was deleted or weakened), `pnpm typecheck`, `pnpm build`,
+`pnpm verify` **12/12**, `npm pack --dry-run` (89 files, no test tree, no fixture, no
+proof copy, no local path), `git diff --check`. Production identity is unchanged:
+`git diff ada7224 -- src` is empty, `pnpm-lock.yaml` is unchanged, no dependency was
+added — `fflate` stays a transitive dependency and was not promoted to make the gate
+easier — and `package.json` was not touched. No browser or production file changed in
+this round, so the frozen rc.2 matrix (63 / 0 / 0) and the optional rc.1 matrix
+(63 / 0 / 0) are retained rather than re-run.
 
 ### Task 12R — closing the rc.1 browser gate
 
@@ -1651,43 +1917,72 @@ user's own `dsa-smoke` profile tree, whose links already point at this worktree.
   `lib/client.js` unchanged at
   `735F8B77EC0B899F9740A8C0591AB7FE0A294C9D5F185A69A9B4A8F7134A183D`; see the
   Task 12R record above)
+- Task 13 — PASS (`9064bfdfc5c14c7e7e48df393e1cee7255830e92`, with the gate-script
+  corrections at `9f8b5c7adc7dba3e7a4a31345b75d6b71bf737e9` and
+  `f916ed8f5278071265bc728b9d69dbf7dd7d2831`, and the status records at
+  `08d93f910b71c8db01f0bd8839c1e480d5779cc5`; one universal
+  acceptance case per supported class plus a real cross-root refusal and a recovery
+  after it, per-format resource cleanup with a late old resource proved unable to
+  clear the live selection that replaced it, a cross-format network gate that is
+  origin-exact, twelve heuristic static gates wired as `pnpm verify`, zero
+  production delta and one new smoke fixture; the primary gate is real DSH
+  `0.1.5-rc.2` at 63 passed / 0 failed / 0 skipped, with rc.1 recorded separately
+  as optional backward-compatibility evidence; see the Task 13 record above)
+- Task 13S — PASS (`03e62cc729952b76c9e04de9e54fb2ee53900675`, with the status
+  record in the Task 13S section above). The round's own `pnpm verify` 12/12 from
+  `ada7224` was a false PASS: `fflate` was shipping inside the embedded XLSX worker
+  with no notice, because R8 iterated a hand-written list of nine names. R8 now
+  derives the shipped set from the declared dependencies, the packages the
+  project-owned build pipeline explicitly resolves installed bytes out of, and the
+  packages the bundler records as inlined into `lib/client.js`; against `ada7224`
+  that derivation reports 16 packages with no notice, and all sixteen are now
+  recorded. The two earlier R8 corrections are preserved, ten injection proofs
+  (P1–P10) on throwaway copies with real `node_modules` junctions confirm the rule
+  fires, production delta stays zero, no browser file changed so the frozen rc.2
+  and rc.1 matrices are retained, and the final tree was frozen with zero active
+  sub-agents
 
 `LICENSE` is the standard MIT text with the copyright holder taken from the
 authenticated GitHub account. `package.json` declares `"license": "MIT"`.
 `THIRD_PARTY_NOTICES.md` records each dependency's own license separately, and it
-is now part of the published package. `pdfjs-dist` (6.3.289, Apache-2.0) and
-`@zip.js/zip.js` (2.15.0, BSD-3-Clause) are the two shipped runtime dependencies;
-the first is bundled with its worker and its three asset families, each of which
-carries its own license file in the package and its own row in the notices.
-`jsdom` (30.0.1) is recorded as MIT, development/test-only, verified against the
-installed package metadata, as are `pdf-lib` (1.17.1) and `@pdf-lib/fontkit`
-(1.1.1), which are the fixture generator's own dependencies.
+is now part of the published package. Its shipped table is the complete shipped set —
+25 packages, of which the direct runtime dependencies are `pdfjs-dist` (6.3.289,
+Apache-2.0), `@zip.js/zip.js` (2.15.0, BSD-3-Clause), `docx-preview` (0.4.0,
+Apache-2.0), `@aiden0z/pptx-renderer` (1.2.4, Apache-2.0) and `@extend-ai/react-xlsx`
+(0.16.4, MIT) — and `scripts/verify.mjs` R8 derives that set from the build instead of
+restating it, as the Task 13S record above describes. `pdfjs-dist` is bundled with its
+worker and its three asset families, each of which carries its own license file in the
+package and its own row in the notices. `jsdom` (30.0.1) is recorded as MIT,
+development/test-only, verified against the installed package metadata, as are
+`pdf-lib` (1.17.1) and `@pdf-lib/fontkit` (1.1.1), which are the fixture generator's
+own dependencies.
 
 ## Next
 
-**Task 13 — Cross-format Playwright acceptance and resource cleanup.**
+**Task 14 — Compatibility matrix and DSH real-app smoke procedure.**
 
-Task 12 converged the registrations, the selection lifetime, the locale and the
-renderer fallback semantics into one owner; it deliberately did not add
-cross-format acceptance coverage. Task 13 is where
-`tests/browser/universal-selection.spec.ts` and
-`tests/browser/resource-cleanup.spec.ts` belong, together with the
-`playwright.config.ts` and `scripts/verify.mjs` changes that wire them into the
-gate. What Task 12 hands Task 13:
+Task 13 closed the cross-format acceptance gate; what it deliberately did not do
+is describe the runtime support surface. Task 14 owns that: the compatibility
+matrix, the real-application smoke procedure a human follows, and the manual
+acceptance steps Task 13 left alone — disabling the plugin, restoring the builtin
+preview, and the plugin-management smoke.
 
-- `ClientRuntime.dispose()` is the one teardown, so a browser case can assert
-  that switching documents, closing a tab or disabling the plugin leaves no Ask
-  surface, no style node and no stale snapshot across formats without reaching
-  into a renderer;
-- resource-scoped invalidation is already the contract, so a cross-format case
-  can capture in one document, move to another and assert that the first
-  document's late cleanup is inert — the property is implemented and unit-tested
-  and lacks only its browser acceptance evidence;
-- the six locale keys are complete and code-point pinned, so a cross-format case
-  can assert each refusal's wording without inventing copy;
-- the five existing browser suites are unchanged by this round except for the
-  copy assertions the locale migration required; Task 13 adds suites rather than
-  extending them.
+Two constraints Task 14 inherits rather than chooses. Its baseline must be
+restated from the versions actually installed when it runs: the primary blocking
+runtime is DSH `0.1.5-rc.2` and the earlier "required baseline rc.1 / forward
+target rc.2" pairing is stale. And it must not be served by changing production:
+Task 13 ends with zero production delta, and the four sub-agent rework rounds this
+round required were all test- or gate-side, so a Task 14 that needs a renderer,
+lifecycle, worker/WASM or DSH-integration change is a different kind of round and
+has to say so before it starts.
+
+The Task 12 → Task 13 handover is retained as history: Task 12 converged the
+registrations, the selection lifetime, the locale and the renderer fallback
+semantics into one owner and deliberately did not add cross-format acceptance
+coverage, handing Task 13 four properties to evidence. All four are delivered and
+recorded above — the one-teardown assertion, resource-scoped invalidation, the
+code-point-pinned locale keys, and five unchanged existing suites — so the items
+that followed are history rather than open work.
 
 The text below is the Task 7 → Task 8 handover, retained as history. Tasks 8–11
 completed the work it describes; it is not an open item.
