@@ -1270,6 +1270,32 @@ function findInstalledManifest(name, versions) {
  *
  * @param findings - this rule's finding list.
  */
+/**
+ * Find a field in the notices file's block record form for one package.
+ *
+ * The file's other record form is a fenced block: `package:  <name>`,
+ * `version:  <v>`, `license:  <l>`. The search is anchored to the `package:` line and
+ * bounded to a handful of following lines, and that anchoring is a correction rather
+ * than a refinement. The first version allowed up to 240 arbitrary characters between
+ * the name and the field, which on a 400-line notices file runs straight through the
+ * markdown table: blanking `pdfjs-dist`'s license cell still matched, because the gap
+ * reached the licence of a *later* library's block record, and the rule then reported
+ * nothing. A field lookup keyed on a package name must not be able to answer with
+ * another package's value.
+ *
+ * @param notices - the whole notices file text.
+ * @param name - the package name to find.
+ * @param field - `version` or `license`.
+ * @returns the recorded value, or `null` when no block record names it.
+ */
+function findPackageRecordValue(notices, name, field) {
+  const escaped = name.replace(/[/.@]/g, (character) => `\\${character}`)
+  const pattern = new RegExp(`^package:\\s+${escaped}\\s*$((?:\\n[^\\n]*){0,4}?)^${field}:\\s*(\\S[^\\n]*)$`, 'm')
+  const match = pattern.exec(notices)
+  if (match === null) return null
+  return (match[2] ?? '').trim().replace(/^['"]|['"]$/g, '')
+}
+
 function ruleThirdPartyNotices(findings) {
   const notices = readText(join(ROOT, 'THIRD_PARTY_NOTICES.md'))
   if (notices === null) return // R1 already named the missing file.
@@ -1339,12 +1365,11 @@ function ruleThirdPartyNotices(findings) {
 
     if (row.version === undefined || row.version.trim() === '') {
       // The file's other record form is a fenced `package:/version:/license:` block.
-      const block = new RegExp(`package:\\s+${library.replace(/[/.@]/g, (character) => `\\${character}`)}[\\s\\S]{0,240}?version:\\s*([^\\s]+)`)
-      const match = block.exec(notices)
-      if (match === null) {
+      const recordedVersion = findPackageRecordValue(notices, library, 'version')
+      if (recordedVersion === null) {
         report(findings, `notices carry no version for this shipped library; the lockfile resolves ${resolvedList}`, at, undefined, undefined, library)
-      } else if (!recordsVersion((match[1] ?? '').replace(/['"]/g, ''), resolved)) {
-        report(findings, `notices record version "${match[1]}" but the lockfile resolves ${resolvedList}`, at, undefined, undefined, library)
+      } else if (!recordsVersion(recordedVersion, resolved)) {
+        report(findings, `notices record version "${recordedVersion}" but the lockfile resolves ${resolvedList}`, at, undefined, undefined, library)
       }
     } else if (!recordsVersion(row.version, resolved)) {
       report(findings, `notices record version "${row.version}" but the lockfile resolves ${resolvedList}`, at, undefined, undefined, library)
@@ -1370,9 +1395,8 @@ function ruleThirdPartyNotices(findings) {
       // non-empty, which meant blanking one cell produced a silent PASS — a notice
       // that records no license passed a rule whose whole purpose is to require one.
       // The file's other record form is a fenced `package:/version:/license:` block.
-      const block = new RegExp(`package:\\s+${library.replace(/[/.@]/g, (character) => `\\${character}`)}[\\s\\S]{0,240}?license:\\s*([^\\n]+)`)
-      const match = block.exec(notices)
-      if (match === null) {
+      const recordedLicense = findPackageRecordValue(notices, library, 'license')
+      if (recordedLicense === null) {
         report(findings, 'notices carry no license for this shipped library, so its license is unrecorded', at, undefined, undefined, library)
       }
     } else if (typeof declared === 'string' && declared !== '') {
