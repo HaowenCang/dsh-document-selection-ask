@@ -2,10 +2,45 @@
 
 ## Baseline
 
-- Primary verified runtime: DSH `0.1.5-rc.1`
-- Forward compile-contract target: DSH `0.1.5-rc.2`
+- Primary blocking runtime: DSH `0.1.5-rc.2`
+- Optional backward-compatibility runtime: DSH `0.1.5-rc.1` (non-blocking)
+- Forward compile-contract target: to be re-established by Task 14; the earlier
+  "required baseline rc.1 / forward target rc.2" pairing is a **stale roadmap
+  assumption** and no longer describes the acceptance policy
+
+The runtime policy changed during Task 13, on the human's explicit revision: this
+machine's installed DSH is `0.1.5-rc.2`, so rc.2 became the current official local
+runtime and the primary blocking acceptance runtime, while rc.1 was demoted to
+optional backward-compatibility evidence. `package.json` still pins the client
+packages and `pdfjs-dist` at the rc.1 release family as the compile contract, and
+Task 13 did not change that: a dependency or compile-contract migration is not a
+test-coverage task. Task 14 owns the compatibility matrix and must restate its own
+baseline from the versions actually installed at that time.
 
 ## Completed
+
+- Task 13
+  - commit: `9064bfdfc5c14c7e7e48df393e1cee7255830e92`
+  - `tests/browser/universal-selection.spec.ts` (new, 10 cases): one case per
+    supported class — TXT, Markdown, code, CSV, PDF, DOCX, PPTX, XLSX — plus a real
+    cross-root refusal and a recovery after it. Each class keeps its own real
+    mechanism: builtin plain/Shiki DOM rows for TXT/CSV/code, a rendered-paragraph
+    drag for Markdown, the PDF text layer, the rendered DOCX DOM, PPTX HTML/SVG
+    text, and the XLSX semantic cell-range gesture. No case merges two classes and
+    no format is covered by a "text" case
+  - `tests/browser/resource-cleanup.spec.ts` (new, 6 cases): a rapid
+    switch-while-rendering case for each byte renderer (PDF, DOCX, PPTX, XLSX), the
+    cross-format "a late old resource's cleanup cannot clear the live selection that
+    replaced it" case, and a cross-format network/local-asset audit
+  - `scripts/verify.mjs` (new, 12 heuristic rules) wired as `pnpm verify`; the one
+    new `package.json` row, with no new dependency
+  - one new smoke fixture — `smoke-fixtures/task13-smoke.csv` — because CSV is one
+    of the eight supported classes and Tasks 5–11 shipped no CSV fixture at all;
+    the writer table and the driver table were both extended and every pre-existing
+    fixture's bytes were verified unchanged
+  - production diff from the baseline is empty: `git diff 56c74b3 -- src` produces
+    no output
+  - full detail in the Task 13 record under "Current gate"
 
 - Task 1
   - commit: `663a134cdfab7b15760fd0e6e8b9981656f851a9`
@@ -1228,6 +1263,88 @@ a WASM integrity failure still fails closed.
 
 ## Current gate
 
+- Task 13 browser gate — **CLOSED** on the primary runtime, real DSH `0.1.5-rc.2`,
+  profile `dsa-smoke`, `DSH_SMOKE_URL` non-empty: universal selection **10 / 0 / 0**,
+  resource cleanup **6 / 0 / 0**, XLSX **13 / 0 / 0**, PPTX **10 / 0 / 0**, DOCX
+  **6 / 0 / 0**, PDF **10 / 0 / 0**, TextPreview **8 / 0 / 0** — **63 passed, 0
+  failed, 0 skipped**, `--workers=1`, in 15.6 minutes. The same five existing
+  suites were re-measured on the same instance with the Task 13 build before the
+  new suites were added and were already 47 / 0 / 0, so the round's additions
+  regress none of them
+- Task 13 static gates — `pnpm test` **1,052 passed / 0 failed over 58 files**
+  (identical to the Task 12R count, so no test was deleted or skipped),
+  `pnpm typecheck`, `pnpm build`, `pnpm verify` **12/12**, `npm pack --dry-run`
+  (89 files, 6.3 MB, no test tree, no fixture, no smoke workspace, no Playwright
+  report, no local path), `git diff --check`
+- Task 13 production identity — `git diff 56c74b36a45951ac4c27a1363e26189c4b0730fc
+  -- src` is empty; `package.json` gained exactly one row
+  (`"verify": "node scripts/verify.mjs"`), `pnpm-lock.yaml` is unchanged and no
+  dependency was added; `playwright.config.ts` is unchanged, because `testDir:
+  'tests/browser'` already collects both new specs and changing its timeouts,
+  retries, engine or viewport was neither needed nor permitted
+- Task 13 sub-agent topology — one integrator plus four sub-agents with disjoint
+  file ownership: Agent A (`tests/browser/universal-selection.spec.ts`), Agent B
+  (`tests/browser/resource-cleanup.spec.ts`), Agent C (`scripts/verify.mjs`) and
+  Agent D (read-only adversarial review, zero files modified). All live browser
+  runs were serial and integrator-only; no sub-agent pushed, merged, committed or
+  created a branch. The integrator reviewed every sub-agent diff and rejected three
+  rounds of work across Agents A and B and one round for Agent C; those rejections
+  and their measured causes are recorded below
+- Task 13 acceptance findings, none of which is a production defect — the round
+  added coverage and found no product bug, but it did produce four measurements
+  worth keeping:
+  - the preview column is a fixed 576 px wide at 1280x720, 1600x1000 and
+    2560x1300, and a rendered DOCX page is centred on it and overflows 13 px to the
+    left, so a paragraph's first glyph run begins outside the column; a press at
+    `column.left + 1` lands on the shell's resize handle (`DIV.pI_x6G_handle`) and
+    the first point inside `[data-dsa-docx-content]` is `column.left + 5`, which is
+    already two characters into a 96 px first run. A forward drag therefore cannot
+    select the whole paragraph at any viewport, and the DOCX case selects it with a
+    real triple click (`mouse.move` plus three real `down`/`up` pairs carrying
+    `clickCount` 1, 2, 3) — a real user-level block gesture, not a synthetic range,
+    and still asserted by exact equality. The measurement and the ruling are also
+    recorded in the case's own comment and in `SmokeDriverControl.tsx`
+  - `two-page.pdf` is a six-page document, and at `scrollTop: 0` only page 1
+    rasterises while pages 2–6 keep their placeholder and the browser's default
+    300x150 canvas. A document-wide `[data-dsa-pdf-placeholder]` count of zero is a
+    state this renderer never produces, so the cleanup suite's PDF readiness gate is
+    page-scoped, in the shape `pdf-renderer.spec.ts` already uses
+  - `new URL('ws://…').origin` is a `ws:` origin and can never equal the page's
+    `http:` origin, so the cleanup suite normalises `ws:`→`http:` and `wss:`→`https:`
+    before comparing the DSH API channel against `appOrigin`. A socket on another
+    host or port, or a plaintext socket on an `https:` page, still fails
+  - the smoke driver's own commentary claimed twenty-four controls. Task 13's CSV
+    fixture makes it twenty-five, and twenty-six grid items still ceil to seven
+    rows, so the recorded strip box `292, 490.4, 408 x 217.6` is unchanged; the
+    commentary now states the count as a measured quantity rather than an
+    assumption
+- Task 13 adversarial review — Agent D's read-only review of the integrated tree
+  raised three blocking findings and the integrator fixed all three before the
+  final matrix: the cleanup case that names "a late old resource cannot clear the
+  newer resource's selection" was consuming B's Ask surface *before* the cleanup
+  window, so no live snapshot existed during it (reworked to keep an un-clicked Ask
+  surface, that is a live snapshot, across the window and to assert it survives and
+  still appends B's own exact block); `scripts/verify.mjs`'s composer-write rule
+  matched only quoted selector literals and so could not fire on this repository's
+  own constant-based style (widened, then corrected again after the widening
+  produced six false positives on the clean tree, by resolving a name's *nearest
+  preceding* binding); and the notices rule skipped the license comparison whenever
+  the recorded license cell was empty (now reported like an empty version). Agent D
+  also confirmed the review's own required checks: no test weakening, no fixed sleep
+  standing in for evidence, no force click or event dispatch, no kernel/adapter/
+  bridge access, no loose selectors, exact provenance matching
+  `src/client/provenance/format.ts`, a network gate that is origin-exact rather than
+  allow-list-shaped, no Task 14 scope, and version-neutral assertions
+- Task 13 optional rc.1 backward-compatibility evidence — **DIFFERENCE: NONE**,
+  and non-blocking by policy. On the isolated rc.1 install in an out-of-tree
+  scratch home (`E:\Projects\DSHarness\.dsa-rc1`, `@deepseek-ai/dsh@0.1.5-rc.1`
+  with a fresh profile driven by `scripts/dsh-smoke-profile.mjs`), the same seven
+  suites were re-run serially with the Task 13 build: universal selection
+  **10 / 0 / 0**, resource cleanup **6 / 0 / 0**, XLSX **13 / 0 / 0**, PPTX
+  **10 / 0 / 0**, DOCX **6 / 0 / 0**, PDF **10 / 0 / 0**, TextPreview **8 / 0 / 0**
+  — **63 passed, 0 failed, 0 skipped, 29.8 minutes**, identical to the rc.2
+  result on every suite. No production change was made for rc.1's sake, and rc.1
+  does not decide this round either way
 - Task 12R browser gate — **CLOSED** on real DSH `0.1.5-rc.1` and `0.1.5-rc.2`:
   the smoke driver keeps all twenty-four fixture controls inside the viewport
   (strip `292, 490, 408 x 218` at 1280 x 720), every one of them is opened by an
@@ -1651,6 +1768,14 @@ user's own `dsa-smoke` profile tree, whose links already point at this worktree.
   `lib/client.js` unchanged at
   `735F8B77EC0B899F9740A8C0591AB7FE0A294C9D5F185A69A9B4A8F7134A183D`; see the
   Task 12R record above)
+- Task 13 — PASS (`9064bfdfc5c14c7e7e48df393e1cee7255830e92`; one universal
+  acceptance case per supported class plus a real cross-root refusal and a recovery
+  after it, per-format resource cleanup with a late old resource proved unable to
+  clear the live selection that replaced it, a cross-format network gate that is
+  origin-exact, twelve heuristic static gates wired as `pnpm verify`, zero
+  production delta and one new smoke fixture; the primary gate is real DSH
+  `0.1.5-rc.2` at 63 passed / 0 failed / 0 skipped, with rc.1 recorded separately
+  as optional backward-compatibility evidence; see the Task 13 record above)
 
 `LICENSE` is the standard MIT text with the copyright holder taken from the
 authenticated GitHub account. `package.json` declares `"license": "MIT"`.
@@ -1665,29 +1790,30 @@ installed package metadata, as are `pdf-lib` (1.17.1) and `@pdf-lib/fontkit`
 
 ## Next
 
-**Task 13 — Cross-format Playwright acceptance and resource cleanup.**
+**Task 14 — Compatibility matrix and DSH real-app smoke procedure.**
 
-Task 12 converged the registrations, the selection lifetime, the locale and the
-renderer fallback semantics into one owner; it deliberately did not add
-cross-format acceptance coverage. Task 13 is where
-`tests/browser/universal-selection.spec.ts` and
-`tests/browser/resource-cleanup.spec.ts` belong, together with the
-`playwright.config.ts` and `scripts/verify.mjs` changes that wire them into the
-gate. What Task 12 hands Task 13:
+Task 13 closed the cross-format acceptance gate; what it deliberately did not do
+is describe the runtime support surface. Task 14 owns that: the compatibility
+matrix, the real-application smoke procedure a human follows, and the manual
+acceptance steps Task 13 left alone — disabling the plugin, restoring the builtin
+preview, and the plugin-management smoke.
 
-- `ClientRuntime.dispose()` is the one teardown, so a browser case can assert
-  that switching documents, closing a tab or disabling the plugin leaves no Ask
-  surface, no style node and no stale snapshot across formats without reaching
-  into a renderer;
-- resource-scoped invalidation is already the contract, so a cross-format case
-  can capture in one document, move to another and assert that the first
-  document's late cleanup is inert — the property is implemented and unit-tested
-  and lacks only its browser acceptance evidence;
-- the six locale keys are complete and code-point pinned, so a cross-format case
-  can assert each refusal's wording without inventing copy;
-- the five existing browser suites are unchanged by this round except for the
-  copy assertions the locale migration required; Task 13 adds suites rather than
-  extending them.
+Two constraints Task 14 inherits rather than chooses. Its baseline must be
+restated from the versions actually installed when it runs: the primary blocking
+runtime is DSH `0.1.5-rc.2` and the earlier "required baseline rc.1 / forward
+target rc.2" pairing is stale. And it must not be served by changing production:
+Task 13 ends with zero production delta, and the four sub-agent rework rounds this
+round required were all test- or gate-side, so a Task 14 that needs a renderer,
+lifecycle, worker/WASM or DSH-integration change is a different kind of round and
+has to say so before it starts.
+
+The Task 12 → Task 13 handover is retained as history: Task 12 converged the
+registrations, the selection lifetime, the locale and the renderer fallback
+semantics into one owner and deliberately did not add cross-format acceptance
+coverage, handing Task 13 four properties to evidence. All four are delivered and
+recorded above — the one-teardown assertion, resource-scoped invalidation, the
+code-point-pinned locale keys, and five unchanged existing suites — so the items
+that followed are history rather than open work.
 
 The text below is the Task 7 → Task 8 handover, retained as history. Tasks 8–11
 completed the work it describes; it is not an open item.
