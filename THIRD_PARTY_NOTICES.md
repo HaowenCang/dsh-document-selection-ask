@@ -454,7 +454,7 @@ only the glyphs the fixture uses. What is committed is the 44 KB PDF.
 
 | Field | Value |
 | --- | --- |
-| Source file | `C:/Windows/Fonts/Noto Sans SC (TrueType).otf` |
+| Source file | A Windows-installed Noto Sans SC (TrueType), resolved locally by the fixture generator at generation time. The generator takes the font from the host it runs on, so the absolute path it happened to resolve is a property of that machine and is deliberately not recorded here or in the package: the committed artifact is the 44 KB PDF, and the provenance that matters to a redistributor — family, license, copyright and embedding permission — is in the rows below. |
 | Family | Noto Sans SC |
 | License | SIL Open Font License, Version 1.1 |
 | License URL | `http://scripts.sil.org/OFL` |

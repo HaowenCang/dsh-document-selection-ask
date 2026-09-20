@@ -19,20 +19,33 @@
  *   tarball it inspects must already exist; producing one is the caller's step.
  * - **Offline.** No registry, no network, no clock, no environment variable decides
  *   a verdict. The only inputs are the tarball's own bytes.
- * - **Bounded and self-cleaning.** The tarball is extracted into a directory this
- *   script creates under the operating system's temporary directory and removes
- *   before exiting, including on failure.
+ * - **Nothing is handed to an extractor before this script's own safety gate has
+ *   passed.** The archive is parsed in-process first, and the platform `tar` is
+ *   invoked only when the tar index parses, every member names a regular file or a
+ *   directory, and every member path is a `package/`-relative POSIX path with no
+ *   traversal, no absolute form and no Windows path shape. An archive that fails
+ *   any of those three is rejected here, by this script, without asking `tar`
+ *   whether it happens to agree — "the platform tool would probably refuse it" is
+ *   not an implementation of this contract. The extractor invocation count is
+ *   printed so a caller can see whether it ran.
+ * - **Bounded and self-cleaning.** Extraction happens only after that gate passes,
+ *   into a directory this script creates under the operating system's temporary
+ *   directory and removes before exiting, including on failure. When the gate fails
+ *   no temporary directory is created at all.
  * - **Total.** Every check prints a line, and a check that cannot run is a failure
- *   rather than a skip. The listing is read from the tarball's own tar index, so a
- *   missing entry is named as such rather than inferred from an extraction that
- *   quietly produced less.
+ *   rather than a skip. A check that needs an extraction prints its own
+ *   `extraction was not attempted because archive preflight failed` verdict instead
+ *   of disappearing from the report. The listing is read from the tarball's own tar
+ *   index, so a missing entry is named as such rather than inferred from an
+ *   extraction that quietly produced less.
  * - **Bounded scope.** It checks the packaging contract this project states in
  *   `package.json` and in `README.md`: the required files are present, the entries
  *   that must not ship are absent, every declared entry point exists inside the
- *   package, and the shipped README's relative links resolve within the tarball.
- *   It does not evaluate the browser bundle, does not run the plugin, and cannot
- *   say whether DSH will load the package — that is what the real-application
- *   acceptance pass is for.
+ *   package, the packaged prose carries no machine-local absolute path, and the
+ *   shipped README's relative links resolve within the tarball. It does not
+ *   evaluate the browser bundle, does not run the plugin, and cannot say whether
+ *   DSH will load the package — that is what the real-application acceptance pass
+ *   is for.
  *
  * ## Usage
  *
@@ -115,8 +128,84 @@ const FORBIDDEN_SHAPES = [
   { label: 'absolute or drive-rooted path', pattern: /(^|\/)[A-Za-z]:\// },
 ]
 
+/**
+ * Path shapes a packaged prose file must not carry.
+ *
+ * The release contract says the packaged documents describe the package, not the
+ * machine the package was built on, so a drive-rooted path or a user's home
+ * directory is a defect in the document even when the path it names is harmless.
+ * Both patterns are deliberately narrow: the negative lookbehind keeps a URL
+ * scheme (`https://`, whose `s:/` would otherwise look like a drive) and a
+ * URL path segment out of the match, and neither pattern fires on package-relative
+ * paths, on `<placeholder>` forms or on ordinary prose. A test fixture's
+ * provenance is not exempt — how a fixture was produced is a fact worth recording,
+ * but the absolute path it happened to live at on one machine is not.
+ */
+const MACHINE_PATH_SHAPES = [
+  { label: 'drive-rooted path', pattern: /(?<![A-Za-z0-9])[A-Za-z]:[\\/]/ },
+  { label: 'POSIX home directory path', pattern: /(?<![A-Za-z0-9])\/(?:home|Users)\/[A-Za-z0-9._-]+\// },
+]
+
+/**
+ * The packaged prose this script audits for machine-local paths.
+ *
+ * The list is the package's own user-facing text rather than every shipped file:
+ * `package.json` legitimately carries a `file:` specifier, and the JavaScript
+ * artifacts are build output, not documents.
+ *
+ * @param relative - the package-relative paths the archive carries.
+ * @returns the paths to audit, in archive order.
+ */
+function textAuditTargets(relative) {
+  const selected = relative.filter(
+    (path) => path === 'README.md' || path === 'THIRD_PARTY_NOTICES.md' || /^docs\/[^/]+\.md$/.test(path),
+  )
+  return [...new Set(selected)].sort()
+}
+
+/**
+ * The checks that read only the tar index.
+ *
+ * They are listed by name so that a run which cannot reach them still reports each
+ * one, because a check that silently disappears from the report is
+ * indistinguishable from a check that passed.
+ */
+const INDEX_CHECKS = [
+  'archive layout',
+  'entry types',
+  'entry path safety',
+  'required files',
+  'type declarations',
+  'forbidden entries',
+  'packaged text paths',
+]
+
+/**
+ * The checks that need an extracted tree, and therefore need the archive preflight
+ * to have passed first.
+ */
+const EXTRACTION_CHECKS = [
+  'shipped manifest',
+  'package identity',
+  'declared entry points',
+  'documented files allowlist',
+  'shipped README links',
+]
+
+/** The three checks whose conjunction authorizes an extraction. */
+const PREFLIGHT_CHECKS = ['archive layout', 'entry types', 'entry path safety']
+
 /** Findings, as flat one-line strings; the report prints them under their check. */
 const findings = []
+
+/**
+ * How many times the platform extractor was invoked in this run.
+ *
+ * Printed as a report line rather than kept private, because "this script rejected
+ * the archive itself" and "this script asked `tar` and `tar` refused" are different
+ * claims and the report should not leave a reader guessing which one it is making.
+ */
+let extractorInvocations = 0
 
 /**
  * Record one finding.
@@ -138,18 +227,50 @@ function verdict(check, passed, detail) {
 }
 
 /**
- * Read the tarball's own tar index.
+ * Print a FAIL verdict and record it, for a check that could not run.
+ * @param check - the check's short name.
+ * @param reason - why the check could not run.
+ */
+function unreachable(check, reason) {
+  verdict(check, false, reason)
+  fail(check, reason)
+}
+
+/**
+ * Read one NUL-terminated tar header field.
+ *
+ * The returned `embeddedNul` flag reports whether non-zero bytes follow the
+ * terminator inside the fixed-width field. A name with an embedded NUL is a name
+ * whose true end differs between readers, which is exactly the ambiguity a path
+ * check must not silently accept, so it is surfaced rather than truncated away.
+ *
+ * @param header - the 512-byte header block.
+ * @param start - the field's offset.
+ * @param length - the field's width.
+ * @returns `{ text, embeddedNul }`.
+ */
+function readField(header, start, length) {
+  const field = header.subarray(start, start + length)
+  const end = field.indexOf(0)
+  const text = field.subarray(0, end === -1 ? field.length : end).toString('utf8')
+  const tail = end === -1 ? field.subarray(field.length) : field.subarray(end + 1)
+  return { text, embeddedNul: tail.some((byte) => byte !== 0) }
+}
+
+/**
+ * Read the tarball's own tar index, with each member's payload range.
  *
  * The listing is parsed from the archive rather than from the extracted tree, so a
  * file that failed to extract is still reported as present or absent by the
- * archive's own record. Only the two entry types npm emits are handled — a regular
- * file and a directory — and an entry type this parser does not recognize is
- * reported rather than ignored, because a silently skipped entry is how a forbidden
- * file would travel unnoticed. The ustar/PAX `prefix` field is honoured, which is
- * how npm writes a path longer than 100 bytes.
+ * archive's own record, and so the path safety gate below can run before anything
+ * is handed to an extractor. Only the two entry types npm emits are classified as
+ * shippable — a regular file and a directory — and every other type flag is kept
+ * with its own name so the report can say which one it was. The ustar/PAX `prefix`
+ * field is honoured, which is how npm writes a path longer than 100 bytes.
  *
  * @param bytes - the whole tarball.
- * @returns `{ entries, unrecognized }`, both arrays of POSIX paths.
+ * @returns `{ archive, members, terminated, indexProblem }`, where `archive` is the
+ *   decompressed byte range the member payloads index into.
  */
 function readTarIndex(bytes) {
   // npm writes a gzipped tar. The index has to be read from the decompressed
@@ -157,31 +278,88 @@ function readTarIndex(bytes) {
   // which is a failure mode worth stating because it looks like a broken archive
   // rather than a broken reader.
   const archive = gunzipSync(bytes)
-  const entries = []
-  const unrecognized = []
+  const members = []
   let offset = 0
+  let terminated = false
+  let indexProblem = null
   while (offset + 512 <= archive.length) {
     const header = archive.subarray(offset, offset + 512)
     // A tar block with no name is the end-of-archive marker: two zero blocks.
-    if (header.every((byte) => byte === 0)) break
-    const readString = (start, length) => {
-      const field = header.subarray(start, start + length)
-      const end = field.indexOf(0)
-      return field.subarray(0, end === -1 ? field.length : end).toString('utf8')
+    if (header.every((byte) => byte === 0)) {
+      terminated = true
+      break
     }
-    const name = readString(0, 100)
-    const prefix = readString(345, 155)
-    const sizeField = readString(124, 12).trim()
+    const nameField = readField(header, 0, 100)
+    const prefixField = readField(header, 345, 155)
+    const sizeField = header.subarray(124, 136).toString('utf8').replace(/\0.*$/s, '').trim()
     const size = sizeField === '' ? 0 : Number.parseInt(sizeField, 8)
     const typeFlag = String.fromCharCode(header[156])
-    const path = prefix === '' ? name : `${prefix}/${name}`
-    if (typeFlag === '0' || typeFlag === '\u0000') entries.push(path)
-    else if (typeFlag === '5') entries.push(`${path.replace(/\/$/, '')}/`)
-    else unrecognized.push(`${path} (type ${JSON.stringify(typeFlag)})`)
-    if (!Number.isFinite(size) || size < 0) break
-    offset += 512 + Math.ceil(size / 512) * 512
+    const path = prefixField.text === '' ? nameField.text : `${prefixField.text}/${nameField.text}`
+    if (!Number.isFinite(size) || size < 0) {
+      indexProblem = `the size field of ${JSON.stringify(path)} is not an octal number: ${JSON.stringify(sizeField)}`
+      break
+    }
+    const dataStart = offset + 512
+    members.push({
+      path,
+      typeFlag,
+      type: typeFlag === '0' || typeFlag === '\u0000' ? 'file' : typeFlag === '5' ? 'directory' : 'other',
+      embeddedNul: nameField.embeddedNul || prefixField.embeddedNul,
+      dataStart,
+      dataEnd: dataStart + size,
+      size,
+    })
+    offset = dataStart + Math.ceil(size / 512) * 512
   }
-  return { entries, unrecognized }
+  return { archive, members, terminated, indexProblem }
+}
+
+/**
+ * Decide whether one archive member's path is safe to hand to an extractor.
+ *
+ * The rules are the archive-member contract for a npm tarball and they are checked
+ * on the raw recorded path, before and independently of any normalisation, because
+ * `package/../../outside` satisfies a raw `package/` prefix test while resolving
+ * outside the package. Normalisation is then applied as a second, independent
+ * condition rather than as the only one.
+ *
+ * @param member - one member from the tar index.
+ * @returns the violations, each a short noun phrase; empty when the path is safe.
+ */
+function pathSafetyProblems(member) {
+  const raw = member.path
+  if (raw === '') return ['an empty member name']
+  const problems = []
+  if (member.embeddedNul) problems.push('a NUL byte inside the name field')
+  if (raw.includes('\\')) problems.push('a backslash, which is not a path separator in a npm tarball')
+  if (raw.startsWith('/')) problems.push('an absolute POSIX path')
+  if (/^[A-Za-z]:/.test(raw)) problems.push('a drive-rooted path')
+  const components = raw.replace(/\/+$/, '').split('/')
+  if (components.includes('..')) problems.push('a ".." component')
+  if (components.includes('.')) problems.push('a "." component')
+  if (components.some((component) => component === '')) problems.push('an empty path component')
+  // The normalisation rule is applied only to a member that claims to be inside
+  // the package. A member that never claims that is a layout defect, reported as
+  // one by the `archive layout` check, and repeating it here would report one
+  // defect twice under two names.
+  if (raw.startsWith(PACKAGE_PREFIX)) {
+    const normalized = posix.normalize(raw)
+    if (!normalized.startsWith(PACKAGE_PREFIX)) {
+      problems.push(`a normalised form ${JSON.stringify(normalized)} that leaves ${PACKAGE_PREFIX}`)
+    }
+  }
+  return problems
+}
+
+/**
+ * Return the payload bytes one member records.
+ * @param archive - the decompressed archive.
+ * @param member - one member from the tar index.
+ * @returns the bytes as UTF-8 text, or `null` when the range lies outside the archive.
+ */
+function memberText(archive, member) {
+  if (member.dataEnd > archive.length || member.dataStart > member.dataEnd) return null
+  return archive.subarray(member.dataStart, member.dataEnd).toString('utf8')
 }
 
 /**
@@ -192,13 +370,13 @@ function readTarIndex(bytes) {
  * point this package declares is a file, and accepting a directory would let a
  * manifest point at a path the loader cannot read.
  *
- * @param entries - the archive's paths, with the `package/` prefix.
+ * @param files - the archive's package-relative file paths.
  * @param target - the target as written in `package.json`, `./` and all.
  * @returns true when the archive carries that file.
  */
-function targetIsShipped(entries, target) {
+function targetIsShipped(files, target) {
   const relative = target.replace(/^\.\//, '')
-  return entries.includes(`${PACKAGE_PREFIX}${relative}`)
+  return files.has(relative)
 }
 
 /**
@@ -280,29 +458,87 @@ function inspect(tarball) {
   console.log(`verify-package: tarball = ${tarball}`)
   console.log(`verify-package: bytes = ${stat.size}`)
 
-  const { entries, unrecognized } = readTarIndex(readFileSync(tarball))
+  let index = null
+  try {
+    index = readTarIndex(readFileSync(tarball))
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    unreachable('archive layout', `the archive could not be read as a gzipped tar: ${detail}`)
+    for (const check of INDEX_CHECKS.slice(1)) unreachable(check, 'the tar index could not be read, so this check could not run')
+  }
 
-  const outsidePackage = entries.filter((entry) => !entry.startsWith(PACKAGE_PREFIX))
-  verdict(
-    'archive layout',
-    entries.length > 0 && outsidePackage.length === 0,
-    entries.length === 0
-      ? 'the tar index is empty, so this script could not read the archive'
-      : outsidePackage.length === 0
-        ? `all ${entries.length} entries are under ${PACKAGE_PREFIX}`
-        : `entries outside ${PACKAGE_PREFIX}: ${outsidePackage.join(', ')}`,
-  )
-  if (entries.length === 0) fail('archive layout', 'no entry could be read from the tar index')
+  if (index === null) {
+    for (const check of EXTRACTION_CHECKS) unreachable(check, 'extraction was not attempted because archive preflight failed')
+    console.log(`verify-package: extractor invocations = ${extractorInvocations}`)
+    return
+  }
 
+  const { archive, members, terminated, indexProblem } = index
+
+  const outsidePackage = members.filter((member) => !member.path.startsWith(PACKAGE_PREFIX))
+  if (members.length === 0) {
+    unreachable('archive layout', 'the tar index is empty, so this script could not read the archive')
+  } else if (indexProblem !== null) {
+    unreachable('archive layout', `the tar index could not be read past one member: ${indexProblem}`)
+  } else if (!terminated) {
+    unreachable('archive layout', `the archive carries ${members.length} member(s) but no end-of-archive marker, so it is truncated`)
+  } else if (outsidePackage.length > 0) {
+    unreachable(
+      'archive layout',
+      `entries outside ${PACKAGE_PREFIX}: ${outsidePackage.map((member) => JSON.stringify(member.path)).join(', ')}`,
+    )
+  } else {
+    verdict('archive layout', true, `the tar index parses to ${members.length} member(s), all under ${PACKAGE_PREFIX}`)
+  }
+
+  const typed = members.filter((member) => member.type !== 'other')
+  const otherTypes = members.filter((member) => member.type === 'other')
   verdict(
     'entry types',
-    unrecognized.length === 0,
-    unrecognized.length === 0 ? 'every entry is a regular file or a directory' : `unrecognized entries: ${unrecognized.join(', ')}`,
+    otherTypes.length === 0,
+    otherTypes.length === 0
+      ? `every entry is a regular file or a directory (${typed.length} entries)`
+      : `entries this package contract does not allow: ${otherTypes
+          .map((member) => `${JSON.stringify(member.path)} (type ${JSON.stringify(member.typeFlag)})`)
+          .join(', ')}`,
   )
-  for (const entry of unrecognized) fail('entry types', `unrecognized tar entry ${entry}`)
+  for (const member of otherTypes) {
+    const named =
+      member.typeFlag === '2'
+        ? 'a symbolic link'
+        : member.typeFlag === '1'
+          ? 'a hard link'
+          : member.typeFlag === '3' || member.typeFlag === '4'
+            ? 'a device node'
+            : member.typeFlag === '6'
+              ? 'a FIFO'
+              : `the type flag ${JSON.stringify(member.typeFlag)}`
+    fail('entry types', `${member.path} is ${named}; this package ships regular files and directories only`)
+  }
 
-  const relative = entries.map((entry) => entry.slice(PACKAGE_PREFIX.length)).filter((entry) => entry !== '')
-  const files = new Set(relative.filter((entry) => !entry.endsWith('/')))
+  const unsafe = members
+    .map((member) => ({ member, problems: pathSafetyProblems(member) }))
+    .filter(({ problems }) => problems.length > 0)
+  verdict(
+    'entry path safety',
+    unsafe.length === 0,
+    unsafe.length === 0
+      ? `every member is a ${PACKAGE_PREFIX}-relative POSIX path with no traversal, absolute or Windows form`
+      : `unsafe member path(s): ${unsafe.map(({ member, problems }) => `${JSON.stringify(member.path)} — ${problems.join('; ')}`).join(' | ')}`,
+  )
+  for (const { member, problems } of unsafe) {
+    fail('entry path safety', `the archive member ${JSON.stringify(member.path)} carries ${problems.join('; ')}`)
+  }
+
+  // The gate. Every check below this point either reads the index (safe regardless)
+  // or needs an extraction (permitted only when all three preflight checks passed).
+  const safeToExtract = PREFLIGHT_CHECKS.every((check) => !findings.some((finding) => finding.check === check))
+
+  const safeMembers = members.filter((member) => member.path.startsWith(PACKAGE_PREFIX) && pathSafetyProblems(member).length === 0)
+  const relative = safeMembers
+    .map((member) => ({ ...member, relative: member.path.slice(PACKAGE_PREFIX.length) }))
+    .filter((member) => member.relative !== '')
+  const files = new Set(relative.filter((member) => member.type === 'file').map((member) => member.relative))
 
   const missing = REQUIRED_FILES.filter((required) => !files.has(required))
   verdict(
@@ -312,7 +548,7 @@ function inspect(tarball) {
   )
   for (const name of missing) fail('required files', `the tarball does not carry ${name}`)
 
-  const typeDeclarations = relative.filter((entry) => entry.startsWith('lib/types/') && entry.endsWith('.d.ts'))
+  const typeDeclarations = [...files].filter((entry) => entry.startsWith('lib/types/') && entry.endsWith('.d.ts'))
   verdict(
     'type declarations',
     typeDeclarations.length > 0,
@@ -321,13 +557,50 @@ function inspect(tarball) {
   if (typeDeclarations.length === 0) fail('type declarations', 'the tarball carries no lib/types/**/*.d.ts file')
 
   const forbidden = []
-  for (const entry of relative) {
+  for (const entry of files) {
     for (const { label, pattern } of FORBIDDEN_SHAPES) {
       if (pattern.test(entry)) forbidden.push(`${entry} (${label})`)
     }
   }
   verdict('forbidden entries', forbidden.length === 0, forbidden.length === 0 ? 'none of the forbidden shapes are present' : forbidden.join('; '))
   for (const entry of forbidden) fail('forbidden entries', `the tarball carries ${entry}`)
+
+  // The packaged-text audit reads member payloads straight out of the decompressed
+  // archive, so it does not depend on an extraction and still runs for an archive
+  // whose preflight failed.
+  const audited = textAuditTargets([...files])
+  const pathFindings = []
+  for (const target of audited) {
+    const member = relative.find((entry) => entry.relative === target)
+    if (member === undefined) continue
+    const text = memberText(archive, member)
+    if (text === null) {
+      pathFindings.push(`${target} (the recorded payload range lies outside the archive)`)
+      continue
+    }
+    const lines = text.split(/\r?\n/)
+    for (const [number, line] of lines.entries()) {
+      for (const { label, pattern } of MACHINE_PATH_SHAPES) {
+        const match = pattern.exec(line)
+        if (match === null) continue
+        pathFindings.push(`${target}:${number + 1} carries ${label} ${JSON.stringify(match[0])}`)
+      }
+    }
+  }
+  verdict(
+    'packaged text paths',
+    pathFindings.length === 0,
+    pathFindings.length === 0
+      ? `${audited.length} packaged document(s) carry no drive-rooted or home-directory path`
+      : pathFindings.join('; '),
+  )
+  for (const finding of pathFindings) fail('packaged text paths', `packaged document ${finding}`)
+
+  if (!safeToExtract) {
+    for (const check of EXTRACTION_CHECKS) unreachable(check, 'extraction was not attempted because archive preflight failed')
+    console.log(`verify-package: extractor invocations = ${extractorInvocations}`)
+    return
+  }
 
   const extracted = mkdtempSync(join(tmpdir(), 'dsa-verify-package-'))
   try {
@@ -346,10 +619,10 @@ function inspect(tarball) {
       // would make the report shorter exactly when it matters most, so each one
       // states its own verdict instead of being skipped by an enclosing branch.
       for (const check of ['package identity', 'declared entry points', 'documented files allowlist']) {
-        verdict(check, false, 'package/package.json is not readable JSON, so this check could not run')
-        fail(check, 'the shipped package.json could not be parsed, so this check could not run')
+        unreachable(check, 'package/package.json is not readable JSON, so this check could not run')
       }
     } else {
+      verdict('shipped manifest', true, 'package/package.json parses as JSON')
       const identity = manifest.name === PACKAGE_NAME
       verdict(
         'package identity',
@@ -359,7 +632,7 @@ function inspect(tarball) {
       if (!identity) fail('package identity', `the shipped package is named ${JSON.stringify(manifest.name)}`)
 
       const targets = declaredTargets(manifest)
-      const absent = targets.filter(({ value }) => !targetIsShipped(entries, value))
+      const absent = targets.filter(({ value }) => !targetIsShipped(files, value))
       verdict(
         'declared entry points',
         targets.length > 0 && absent.length === 0,
@@ -384,8 +657,7 @@ function inspect(tarball) {
     const readmePath = join(extracted, PACKAGE_PREFIX, 'README.md')
     const readme = existsSync(readmePath) ? readFileSync(readmePath, 'utf8') : null
     if (readme === null) {
-      verdict('shipped README links', false, 'package/README.md is absent, so its links cannot be checked')
-      fail('shipped README links', 'package/README.md is absent')
+      unreachable('shipped README links', 'package/README.md is absent, so its links cannot be checked')
     } else {
       const broken = []
       for (const target of relativeLinkTargets(readme)) {
@@ -404,15 +676,21 @@ function inspect(tarball) {
       for (const entry of broken) fail('shipped README links', `package/README.md links to ${entry}`)
     }
 
-    const advisory = relative.filter((entry) => entry.endsWith('.d.ts'))
+    const advisory = [...files].filter((entry) => entry.endsWith('.d.ts'))
     console.log(`verify-package: ${files.size} file(s), ${advisory.length} of them TypeScript declarations`)
   } finally {
     rmSync(extracted, { recursive: true, force: true })
   }
+  console.log(`verify-package: extractor invocations = ${extractorInvocations}`)
 }
 
 /**
  * Extract a tarball with the platform's own `tar`.
+ *
+ * This function runs only after the preflight gate above has accepted the archive.
+ * It is deliberately not a security boundary: the safety decision was made in
+ * `pathSafetyProblems` from the tar index, before this call, so no part of this
+ * script relies on `tar`'s own traversal handling for its verdict.
  *
  * A hand-written extractor would be a second, less reviewed implementation of the
  * one format this script reads; the platform already ships one, and gzip plus tar
@@ -425,6 +703,7 @@ function inspect(tarball) {
  * @param destination - the empty directory to extract into.
  */
 function extract(tarball, destination) {
+  extractorInvocations += 1
   const result = spawnSync('tar', ['-xzf', tarball, '-C', destination], { stdio: ['ignore', 'pipe', 'pipe'] })
   if (result.error !== undefined) {
     throw new Error(`tar could not be executed: ${result.error.message}`)

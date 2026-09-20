@@ -74,11 +74,24 @@ dsh --profile dsa-dev --port 50120 --no-open
 因此不需要手工编辑 profile 清单。profile 不存在时该命令会先初始化；`--from-default-profile web`
 用于显式地从随发行版本提供的 web 模板创建新 profile。
 
-安装前需要明确一点：profile 必须是可丢弃的自有 profile。插件会成为该 profile 的一个层，把它装进
-日常使用的 profile 会改变那个 profile 的启动内容。卸载使用
-`dsh plugin --profile dsa-dev remove dsh-document-selection-ask`，依赖移除后该包名会同时从
-`dsh.profile.bundles` 中移除。`pnpm pack` 与 `private: true` 并不冲突，`private` 只阻止发布到
-registry。
+安装前需要明确一点：profile 必须是**可丢弃的自有 profile**，而不是日常使用的 profile。插件会成为
+该 profile 的一个层，把它装进日常 profile 会改变那个 profile 的启动内容。
+
+本 release candidate 经过验证的是「在可丢弃 profile 中安装并运行」，**卸载流程不在已验证范围内**。
+在本次验证环境（DSH `0.1.5-rc.2`，Windows）中，`dsh plugin --profile <name> remove <package>` 未能
+可靠完成 `dsh.profile.bundles` 的同步：6 次实测中 5 次在 1 秒内正常结束，并把包名同时从
+`dependencies` 与 `dsh.profile.bundles` 中移除；另有 1 次在 `dependencies` 已更新之后一直没有返回，
+需要超时终止，该 profile 的 `dsh.profile.bundles` 因此仍保留该包名，随后启动会以
+`cannot resolve profile bundle` 失败，而重复执行同一条 `remove` 只会得到
+`ERR_PNPM_CANNOT_REMOVE_MISSING_DEPS`，无法修复。`dsh --help` 在 `0.1.5-rc.2` 中只提供 `web` 与
+`plugin` 两个命令，没有其它公开的 profile 生命周期命令。
+
+因此本项目目前不把 `remove` 作为经过验证的卸载方法，也不建议依赖它。释放 release candidate 测试
+请使用一次性 profile：验证结束后删除该 profile 目录即可，它完全位于 `$DSH_HOME/profiles/<name>`
+之下，不需要改动 DSH 的内部清单。这是本次验证环境中的观测结果；本文不对 DSH 其它版本或其它平台的
+行为作断言。
+
+`pnpm pack` 与 `private: true` 并不冲突，`private` 只阻止发布到 registry。
 
 ### 源码检出（开发路径）
 
