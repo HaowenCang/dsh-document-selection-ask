@@ -28,7 +28,10 @@
     "cordis.patch.yml",
     "README.md",
     "LICENSE",
-    "THIRD_PARTY_NOTICES.md"
+    "THIRD_PARTY_NOTICES.md",
+    "docs/renderer-support.md",
+    "docs/security.md",
+    "docs/compatibility.md"
   ],
   "dsh": {
     "bundle": {
@@ -51,6 +54,7 @@
     "test": "vitest run",
     "test:browser": "playwright test",
     "verify": "node scripts/verify.mjs",
+    "verify:package": "node scripts/verify-package.mjs",
     "build": "tsdown && tsc -p tsconfig.build.json",
     "smoke:driver": "tsdown --config tsdown.smoke-driver.config.ts",
     "smoke:profile": "node scripts/dsh-smoke-profile.mjs"

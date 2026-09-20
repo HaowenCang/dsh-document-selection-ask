@@ -1,6 +1,12 @@
 # Build output: `pnpm build` regenerates it from `src/`.
 lib/
 
+# Packed artifact: `pnpm pack` writes it into this directory, and it is a build
+# product of the tree that produced it, not a source file. It is ignored so that
+# a release check cannot leave the working tree dirty, and so that a stale
+# tarball is never mistaken for the current candidate.
+dsh-document-selection-ask-*.tgz
+
 # Dependencies, installed from the registry into this directory only.
 node_modules/
 
