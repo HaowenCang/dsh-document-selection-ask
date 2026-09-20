@@ -1,5 +1,5 @@
 /**
- * The smoke driver's control: one test-only button per fixture, twenty-five of
+ * The smoke driver's control: one test-only button per fixture, twenty-six of
  * them, rendered as a bounded grid inside the chat column.
  *
  * **What this module is allowed to do.** Each button calls exactly one public
@@ -132,6 +132,16 @@ export type SmokeDriverProps = PropsRuntime<'conversation.input.overlay'> & {
  * viewport and clickable by an ordinary actionability-checked `locator.click()`.
  * The fixture count is therefore a measured quantity here rather than an
  * assumption, and the next fixture added will have to re-measure it too.
+ *
+ * The twenty-sixth fixture did, and that is the whole of what it cost.
+ * `xlsx-corrupt` — the deliberately truncated workbook Task 15UR added so the
+ * renderer's refusal path has a real surface to measure — makes it twenty-six
+ * controls and twenty-seven grid items, and `ceil(27 / 4)` is still seven rows.
+ * Re-measured on the release-verification profile at 1,280 x 720: the strip box
+ * is `292, 490.4, 408 x 217.6` — the same y and the same height, to the fraction,
+ * as the measurement above — with all twenty-six controls inside the viewport,
+ * none hidden, and the composer's card still ending 43.4 px above the strip's top
+ * edge at `y = 447`.
  *
  * ## Why a grid rather than a wrapping flex row
  *

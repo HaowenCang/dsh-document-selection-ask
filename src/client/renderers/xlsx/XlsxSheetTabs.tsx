@@ -1,6 +1,8 @@
 import * as React from 'react'
 import { useXlsxViewer } from '@extend-ai/react-xlsx'
 
+import { documentRendererStrings } from '../../ui/locales.js'
+
 export function XlsxSheetTabs(): React.JSX.Element | null {
   const controller = useXlsxViewer()
   const tabs = controller.tabs
@@ -9,6 +11,10 @@ export function XlsxSheetTabs(): React.JSX.Element | null {
   if (!tabs || tabs.length <= 1) {
     return null
   }
+
+  // Resolved per render, like every other renderer surface: the tab list's
+  // accessible name follows the document's language rather than a literal.
+  const strings = documentRendererStrings(globalThis.document)
 
   return (
     <div
@@ -23,7 +29,7 @@ export function XlsxSheetTabs(): React.JSX.Element | null {
         flexShrink: 0,
       }}
       role="tablist"
-      aria-label="Workbook sheets"
+      aria-label={strings.sheetTabs}
     >
       {tabs.map((tab, idx) => {
         const isSelected = idx === activeTabIndex

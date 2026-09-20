@@ -22,7 +22,8 @@ import { verifyOoxmlExtraction } from '../../ooxml/verify-extraction.js'
 import { fileNameFromResourceAddress } from '../../provenance/file-name.js'
 import { parseCellRange } from '../../provenance/cell-range.js'
 import { MAX_XLSX_SELECTED_CELLS } from '../../quote/format-xlsx.js'
-import { documentSelectionStrings } from '../../ui/locales.js'
+import { documentRendererStrings } from '../../ui/locales.js'
+import type { RendererStrings } from '../../ui/locales.js'
 import { useResourceInvalidation } from '../resource-invalidation.js'
 import {
   XLSX_DOCUMENT_KIND,
@@ -40,11 +41,6 @@ import { XlsxSheetTabs } from './XlsxSheetTabs.js'
 /** Maximum supported XLSX file size (25 MiB limit). */
 export const MAX_XLSX_FILE_SIZE_BYTES = 25 * 1024 * 1024
 
-const TOO_LARGE_TEXT = '文件超出支持的大小限制（最大 25 MB）'
-const NO_BYTES_TEXT = 'XLSX 预览需要完整文件内容。'
-const WASM_UNAVAILABLE_TEXT = '表格解析引擎在当前架构下无法加载，暂不支持显示。'
-const WASM_INTEGRITY_TEXT = '表格解析引擎完整性校验失败，无法显示。'
-
 /**
  * The copy one pipeline failure is reported with.
  *
@@ -56,13 +52,13 @@ const WASM_INTEGRITY_TEXT = '表格解析引擎完整性校验失败，无法显
  * security meaning the message carries.
  *
  * @param error - whatever the pipeline threw.
- * @param generic - the locale's generic renderer-failure copy.
+ * @param strings - the renderer copy resolved for the running document.
  * @returns the message to show.
  */
-function failureMessage(error: unknown, generic: string): string {
-  if (error instanceof XlsxWasmSourceUnavailableError) return WASM_UNAVAILABLE_TEXT
-  if (error instanceof XlsxWasmIntegrityError) return WASM_INTEGRITY_TEXT
-  return generic
+function failureMessage(error: unknown, strings: RendererStrings): string {
+  if (error instanceof XlsxWasmSourceUnavailableError) return strings.xlsxEngineUnavailable
+  if (error instanceof XlsxWasmIntegrityError) return strings.xlsxEngineIntegrityFailed
+  return strings.rendererFailed
 }
 
 export interface XlsxBodyProps extends DocumentPreviewProps {
@@ -224,7 +220,7 @@ export function XlsxBody(props: XlsxBodyProps): JSX.Element {
   const tabSignal = tab.signal
 
   // Resolved on every render so the copy follows the document's language.
-  const strings = documentSelectionStrings(globalThis.document)
+  const strings = documentRendererStrings(globalThis.document)
 
   // Two lifetimes meet on this body and both must be reported: the workbook's
   // semantic range, which the bridge owner releases on unmount through the XLSX
@@ -247,7 +243,7 @@ export function XlsxBody(props: XlsxBodyProps): JSX.Element {
 
   useEffect(() => {
     if (!bytes) {
-      setLoadState({ kind: 'failed', message: NO_BYTES_TEXT })
+      setLoadState({ kind: 'failed', message: strings.xlsxNeedsBytes })
       return
     }
 
@@ -305,7 +301,7 @@ export function XlsxBody(props: XlsxBodyProps): JSX.Element {
         }
       } catch (error: unknown) {
         if (!cancelled) {
-          setLoadState({ kind: 'failed', message: failureMessage(error, strings.rendererFailed) })
+          setLoadState({ kind: 'failed', message: failureMessage(error, strings) })
         }
       }
     }
@@ -325,7 +321,7 @@ export function XlsxBody(props: XlsxBodyProps): JSX.Element {
         {...{ [XLSX_RESOURCE_ADDRESS_ATTRIBUTE]: resourceAddress }}
         className="dsa-xlsx-status"
       >
-        <p>{NO_BYTES_TEXT}</p>
+        <p>{strings.xlsxNeedsBytes}</p>
       </section>
     )
   }
@@ -349,7 +345,7 @@ export function XlsxBody(props: XlsxBodyProps): JSX.Element {
         {...{ [XLSX_RESOURCE_ADDRESS_ATTRIBUTE]: resourceAddress }}
         className="dsa-xlsx-status dsa-xlsx-error"
       >
-        <p>{TOO_LARGE_TEXT}</p>
+        <p>{strings.xlsxTooLarge}</p>
       </section>
     )
   }

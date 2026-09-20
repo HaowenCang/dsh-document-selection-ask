@@ -130,6 +130,21 @@ const SMOKE_FIXTURES = [
     path: 'smoke-fixtures/task13-smoke.csv',
     text: 'region,units,note\nnorth,41,alpha\nsouth,57,beta\neast,63,gamma\n',
   },
+  {
+    // Task 15UR added this fixture: the renderer's *refusal* path is a surface the
+    // release audit has to measure — it is the only place `.dsa-xlsx-error` is
+    // painted — and until now no fixture reached it, so the failure copy's
+    // contrast could only be inferred from the style sheet. The bytes open with a
+    // ZIP local-file header and then stop, which is what a workbook truncated in
+    // transfer actually looks like; the OOXML preflight finds no end-of-central
+    // -directory record and refuses the archive. It is written from this table
+    // rather than committed as a binary for the same reason the text fixtures
+    // are: the failure has to be stated, not stored, so a later reader can see
+    // exactly which bytes are being refused.
+    key: 'xlsx-corrupt',
+    path: 'smoke-fixtures/task11-corrupt.xlsx',
+    text: 'PK\u0003\u0004task11-corrupt.xlsx: deliberately truncated archive, no central directory\n',
+  },
 ]
 
 /**

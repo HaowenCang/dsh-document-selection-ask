@@ -29,6 +29,16 @@ export const DOCX_SELECTABLE_ATTRIBUTE = 'data-dsa-docx-content'
 /** Attribute marking the scoped style host element for document CSS. */
 export const DOCX_STYLE_HOST_ATTRIBUTE = 'data-dsa-docx-style-host'
 
+/**
+ * Attribute carrying the renderer's own status state, `loading` or `failed`.
+ *
+ * The status block sits in the preview's normal flow after the rendered pages, so
+ * it inherits the renderer root's grey desk. Its copy is therefore painted on a
+ * surface this attribute styles rather than on the desk itself, which is what
+ * keeps it readable instead of grey-on-grey.
+ */
+export const DOCX_STATUS_ATTRIBUTE = 'data-dsa-docx-status'
+
 /** Attribute marking an anchor whose hyperlink target was stripped by scheme policy. */
 export const DOCX_BLOCKED_LINK_ATTRIBUTE = 'data-dsa-docx-blocked-link'
 

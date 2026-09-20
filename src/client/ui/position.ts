@@ -8,18 +8,19 @@
  * result.
  *
  * The fallback matters as much as the main path. A snapshot can carry no
- * rectangles at all — the XLSX adapter is expected to publish exactly that when
- * its viewer exposes no selection bounding box — and a component that assumed
- * geometry would then render at 0,0, half off the left edge of the window. The
- * fallback instead places the overlay at the composer's own top-right corner,
- * which is where the draft it will be appended to lives, so the button appears
- * next to the thing it affects.
+ * rectangles at all — the XLSX adapter publishes exactly that on every semantic
+ * selection, because its viewer exposes no selection bounding box — and a
+ * component that assumed geometry would then render at 0,0, half off the left
+ * edge of the window. The fallback instead places the overlay just above the
+ * composer card's own top-right corner, which is where the draft it will be
+ * appended to lives, so the button appears next to the thing it affects without
+ * covering the editable surface itself.
  */
 
 import { COMPOSER_CARD_SELECTOR } from '../dsh/focus-composer.js'
 import { sessionIdFromResourceAddress } from '../provenance/file-name.js'
 import type { SelectionSnapshot } from '../selection/types.js'
-import { anchorRect, clampEdge, placeOverlay } from '../selection/viewport.js'
+import { anchorRect, clampEdge, placeOverlay, VIEWPORT_MARGIN } from '../selection/viewport.js'
 
 /** Gap between the fallback position and the composer card's own box. */
 const FALLBACK_INSET = 12
@@ -84,14 +85,32 @@ export function overlayPosition(
   // the viewport's own bottom-right margin instead.
   const hasCard = box !== undefined && box.width > 0 && box.height > 0
 
+  // The fallback clears the card rather than landing inside it. Task 15U
+  // measured the earlier placement — flush with the card's top-right *inner*
+  // corner — against the live composer: the button covered the right 98 px of the
+  // editable surface's own box, so a press aimed at the end of the first line hit
+  // Ask instead of placing the caret, and a long first line ran underneath it.
+  // Every XLSX selection took that path, because the spreadsheet adapter
+  // publishes no rectangles. The button therefore sits one inset clear of the
+  // card, above it by preference and below it only when the card is pinned so
+  // close to the top edge that there is no room above; either way the editable
+  // surface and its controls stay uncovered.
+  const above = hasCard && box !== undefined ? box.top - size.height - FALLBACK_INSET : null
+  const fallbackTop =
+    above === null || box === undefined
+      ? clampEdge(viewport.height - size.height - FALLBACK_INSET, size.height, viewport.height)
+      : above >= VIEWPORT_MARGIN
+        ? clampEdge(above, size.height, viewport.height)
+        // Read the lower edge from `top + height` rather than from `bottom`: the
+        // degenerate-box check above already trusts the size fields, and a box
+        // whose derived edges disagree must not decide where the button goes.
+        : clampEdge(box.top + box.height + FALLBACK_INSET, size.height, viewport.height)
+
   return {
     left:
       hasCard && box !== undefined
         ? clampEdge(box.right - size.width, size.width, viewport.width)
         : clampEdge(viewport.width - size.width - FALLBACK_INSET, size.width, viewport.width),
-    top:
-      hasCard && box !== undefined
-        ? clampEdge(box.top + FALLBACK_INSET, size.height, viewport.height)
-        : clampEdge(viewport.height - size.height - FALLBACK_INSET, size.height, viewport.height),
+    top: fallbackTop,
   }
 }

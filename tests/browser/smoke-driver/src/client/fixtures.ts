@@ -60,6 +60,7 @@ export interface SmokeFixture {
     | 'xlsx-merged-frozen'
     | 'xlsx-chart-image'
     | 'xlsx-large'
+    | 'xlsx-corrupt'
   /** Control label, ASCII so the smoke locates it independently of the UI locale. */
   readonly label: string
   /** Path relative to the repository root, which is the Session's workspace. */
@@ -272,6 +273,19 @@ export const SMOKE_FIXTURES: readonly SmokeFixture[] = [
     key: 'xlsx-large',
     label: 'Open XLSX large',
     path: 'smoke-fixtures/task11-large.xlsx',
+    tabKind: 'text',
+  },
+  {
+    // Task 15UR. The one fixture whose *success* is a failure: a file named
+    // `.xlsx` whose bytes begin with a ZIP local-file header and then stop. Its
+    // purpose is the renderer's own refusal path, which is the only surface that
+    // paints `.dsa-xlsx-error`, so the release audit can measure the failure copy
+    // as the product really shows it instead of inserting a look-alike element.
+    // Nothing else in the table reaches that branch: every other workbook passes
+    // the preflight.
+    key: 'xlsx-corrupt',
+    label: 'Open XLSX corrupt',
+    path: 'smoke-fixtures/task11-corrupt.xlsx',
     tabKind: 'text',
   },
 ]

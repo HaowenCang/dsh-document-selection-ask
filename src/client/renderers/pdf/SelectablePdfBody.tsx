@@ -49,8 +49,8 @@ import type { CSSProperties, JSX } from 'react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 
 import type { DocumentPreviewProps } from '../../dsh/contracts.js'
-import { documentSelectionStrings } from '../../ui/locales.js'
-import type { SelectionStrings } from '../../ui/locales.js'
+import { documentRendererStrings } from '../../ui/locales.js'
+import type { RendererStrings } from '../../ui/locales.js'
 import { useResourceInvalidation } from '../resource-invalidation.js'
 import { PdfWorkerFailure } from './errors.js'
 import {
@@ -84,12 +84,6 @@ export type SelectablePdfBodyProps = DocumentPreviewProps & Partial<PdfRendererI
  */
 const LAZY_ROOT_MARGIN = '1200px 0px'
 
-/** Copy shown when the worker that renders PDFs could not be used. */
-const WORKER_FAILED_TEXT = 'PDF 渲染进程无法继续，请重试。'
-
-/** Copy shown when the preview has no complete bytes to render. */
-const NO_BYTES_TEXT = 'PDF 预览需要完整文件内容。'
-
 /** The failure notice's shape. */
 type PdfLoadState =
   | { readonly kind: 'loading' }
@@ -113,7 +107,7 @@ export function SelectablePdfBody(props: SelectablePdfBodyProps): JSX.Element {
   const tabSignal = tab.signal
 
   // Resolved on every render so the copy follows the document's language.
-  const strings = documentSelectionStrings(globalThis.document)
+  const strings = documentRendererStrings(globalThis.document)
 
   // A page re-rendering invalidates its *geometry*, which is a recapture; this
   // body's resource going away invalidates the *selection*, which is a clear.
@@ -215,7 +209,7 @@ export function SelectablePdfBody(props: SelectablePdfBodyProps): JSX.Element {
       {...{ [PDF_RESOURCE_ADDRESS_ATTRIBUTE]: resourceAddress }}
     >
       <div data-dsa-pdf-stack="">
-        {data === undefined && <p data-dsa-pdf-notice="">{NO_BYTES_TEXT}</p>}
+        {data === undefined && <p data-dsa-pdf-notice="">{strings.pdfNeedsBytes}</p>}
         {data !== undefined && failure !== undefined && (
           <p data-dsa-pdf-notice="" role="alert">
             <span>{failure}</span>
@@ -226,7 +220,7 @@ export function SelectablePdfBody(props: SelectablePdfBodyProps): JSX.Element {
                 setAttempt((value) => value + 1)
               }}
             >
-              重试
+              {strings.retry}
             </button>
           </p>
         )}
@@ -268,8 +262,8 @@ export function SelectablePdfBody(props: SelectablePdfBodyProps): JSX.Element {
  * @param strings - the copy resolved for the running document's language.
  * @returns the copy to show.
  */
-function describeFailure(error: unknown, strings: SelectionStrings): string {
-  if (error instanceof PdfWorkerFailure) return WORKER_FAILED_TEXT
+function describeFailure(error: unknown, strings: RendererStrings): string {
+  if (error instanceof PdfWorkerFailure) return strings.pdfWorkerFailed
   const detail = error instanceof Error ? error.message : String(error)
   return `${strings.rendererFailed}：${detail}`
 }
@@ -355,7 +349,7 @@ function PdfPage(props: PdfPageProps): JSX.Element {
 
   // Resolved per render, like the body's own copy: a page failure is worded with
   // the same locale-resolved prefix.
-  const strings = documentSelectionStrings(globalThis.document)
+  const strings = documentRendererStrings(globalThis.document)
 
   const width = fitWidth
   const height = (fitWidth / unitWidth) * unitHeight

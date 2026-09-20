@@ -10,6 +10,15 @@
  * The copy is passed in rather than resolved here so the component stays free of
  * a document lookup, and so the integrity spec can assert the exact code points
  * of what is rendered.
+ *
+ * **Why the live region is always mounted.** A `role="status"` region that is
+ * inserted already populated is not reliably announced: assistive technology
+ * observes mutations *inside* a region it already knows about, so a node that
+ * appears with its message in the same commit can be silent — and this notice is
+ * the only channel a refused capture has. The region is therefore rendered on
+ * every mount and only its child is conditional, so the message always arrives as
+ * a mutation of a region that already existed. The region carries no size, no
+ * pointer target and no accessible name of its own, so an empty one is inert.
  */
 
 import type { JSX } from 'react'
@@ -37,17 +46,17 @@ export interface SelectionErrorToastProps {
  * Render the rejection notice.
  *
  * @param props - the feedback and the resolved copy.
- * @returns the notice, or `null` when there is nothing to report.
+ * @returns the always-present live region, with the notice inside it when there
+ * is something to report.
  */
-export function SelectionErrorToast(props: SelectionErrorToastProps): JSX.Element | null {
+export function SelectionErrorToast(props: SelectionErrorToastProps): JSX.Element {
   const feedback = props.feedback
-  if (feedback === null) {
-    return null
-  }
 
   return (
-    <div role="status" aria-live="polite" data-dsa-selection-error={feedback.kind}>
-      {MESSAGE[feedback.kind](props.strings)}
+    <div role="status" aria-live="polite" data-dsa-selection-error-region="">
+      {feedback === null ? null : (
+        <div data-dsa-selection-error={feedback.kind}>{MESSAGE[feedback.kind](props.strings)}</div>
+      )}
     </div>
   )
 }

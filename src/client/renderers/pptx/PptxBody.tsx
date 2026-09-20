@@ -19,7 +19,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { JSX } from 'react'
 
 import type { DocumentPreviewProps } from '../../dsh/contracts.js'
-import { documentSelectionStrings } from '../../ui/locales.js'
+import { documentRendererStrings } from '../../ui/locales.js'
 import { useResourceInvalidation } from '../resource-invalidation.js'
 import { renderPptx } from './engine.js'
 import type { PptxEngineSession } from './engine.js'
@@ -28,6 +28,7 @@ import {
   PPTX_DOCUMENT_KIND_ATTRIBUTE,
   PPTX_RESOURCE_ADDRESS_ATTRIBUTE,
   PPTX_SELECTABLE_ATTRIBUTE,
+  PPTX_STATUS_ATTRIBUTE,
 } from './identity.js'
 
 /** Injected callbacks the PPTX renderer body receives from the plugin runtime. */
@@ -39,9 +40,6 @@ export interface PptxRendererInjectFace {
 }
 
 export type PptxBodyProps = DocumentPreviewProps & Partial<PptxRendererInjectFace>
-
-/** Copy shown when the preview has no complete bytes to render. */
-const NO_BYTES_TEXT = 'PPTX 预览需要完整文件内容。'
 
 type PptxLoadState =
   | { readonly kind: 'loading' }
@@ -62,7 +60,7 @@ export function PptxBody(props: PptxBodyProps): JSX.Element {
   const tabSignal = tab.signal
 
   // Resolved on every render so the copy follows the document's language.
-  const strings = documentSelectionStrings(globalThis.document)
+  const strings = documentRendererStrings(globalThis.document)
 
   // The windowed renderer's selectable DOM is recycled as slides scroll, which is
   // why slide invalidation is a recapture rather than a clear; a resource that
@@ -92,7 +90,7 @@ export function PptxBody(props: PptxBodyProps): JSX.Element {
 
   useEffect(() => {
     if (content.kind !== 'bytes') {
-      setState({ kind: 'failed', message: NO_BYTES_TEXT })
+      setState({ kind: 'failed', message: strings.pptxNeedsBytes })
       return
     }
 
@@ -192,14 +190,10 @@ export function PptxBody(props: PptxBodyProps): JSX.Element {
     >
       <div ref={contentHostRef} {...{ [PPTX_SELECTABLE_ATTRIBUTE]: '' }} />
       {state.kind === 'loading' && (
-        <div style={{ padding: '32px', textAlign: 'center', color: '#666' }}>
-          {strings.loading}
-        </div>
+        <div {...{ [PPTX_STATUS_ATTRIBUTE]: 'loading' }}>{strings.loading}</div>
       )}
       {state.kind === 'failed' && (
-        <div style={{ padding: '32px', textAlign: 'center', color: '#dc2626' }}>
-          {state.message}
-        </div>
+        <div {...{ [PPTX_STATUS_ATTRIBUTE]: 'failed' }}>{state.message}</div>
       )}
     </section>
   )

@@ -26,6 +26,16 @@ export const PPTX_RESOURCE_ADDRESS_ATTRIBUTE = 'data-dsa-resource-address'
 export const PPTX_SELECTABLE_ATTRIBUTE = 'data-dsa-pptx-content'
 
 /**
+ * Attribute carrying the renderer's own status state, `loading` or `failed`.
+ *
+ * The status block sits in the preview's normal flow after the slide content, so
+ * it inherits the renderer root's grey desk. Its copy is therefore painted on a
+ * surface this attribute styles rather than on the desk itself, which is what
+ * keeps it readable instead of grey-on-grey.
+ */
+export const PPTX_STATUS_ATTRIBUTE = 'data-dsa-pptx-status'
+
+/**
  * Attribute marking an individual rendered slide element.
  * Value is a 1-based canonical integer string (e.g. "1", "2").
  */

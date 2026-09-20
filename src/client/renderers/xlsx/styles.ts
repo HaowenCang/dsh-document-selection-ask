@@ -47,8 +47,16 @@ export const XLSX_RENDERER_CSS = `
   text-align: center;
 }
 
+/*
+ * The failure copy is 13 px body text, so it needs a 4.5:1 ratio against the
+ * sheet's own canvas rather than the lighter danger accent the design system uses
+ * for state dots and borders: #e5484d on white measures 3.9:1 and would leave
+ * the one message that explains a failed workbook below the text threshold. The
+ * token is kept first so a themed danger colour still wins where it has been
+ * darkened for text; the fallback is the value that measures 6.6:1 on white.
+ */
 .dsa-xlsx-error {
-  color: var(--dsw-alias-state-danger-primary, #e5484d);
+  color: var(--dsw-alias-state-danger-primary, #b42318);
 }
 `
 

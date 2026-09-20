@@ -83,20 +83,25 @@
 
 **`docs/manual-acceptance.md` 是真实应用上的最终发布证据，由人在真实 rc.2 Web UI 中执行。** 它不是命令，也不产生机器可判定的退出码；它验证的是交互契约（八种格式的可选中性、草稿保全、无自动提交、无远端请求、渲染器切换、插件禁用与恢复），结果按行记入该轮的状态记录。任何一项 `FAIL` 阻塞发布。
 
+该人工清单与**代理执行的脚本化真实应用验收**是两件事，状态记录中必须分开陈述，不得互相替代。Task 15U 与 Task 15UR 的八种格式核心验收属于后者：由代理在真实 rc.2 实例上以脚本驱动完成（真实拖选、浮层按钮自身中心的非强制命中测试、捕获阶段 `submit` 观察器），其结论只覆盖脚本实际断言的性质，**不构成**人工清单已执行，也不得记为人工验收通过。在当前审查结论下，脚本化真实应用验收、浏览器三套件 **87 / 0 / 0**、UI 几何与可访问性测量以及 tarball 安装这四项合起来足以闭合本次代码与 UI 变更；人工目视与手工 sanity check 属于**发布前的建议步骤**，不是本轮合并的阻塞条件，其是否执行由该轮状态记录如实记载。
+
 ## 4. 本地 tarball 安装与发布验证路径
 
 发布验证要安装的是**将要发布的那个 tarball**，而不是源码工作树。命令序列如下，`<disposable-profile>`、`<port>`、`<path-to-tgz>`、`<token>` 都是占位符。
 
 ```bash
 pnpm build
-pnpm pack
+npm pack
+pnpm verify:package <path-to-tgz>
 dsh --profile <disposable-profile> --from-default-profile web
 dsh plugin --profile <disposable-profile> add <path-to-tgz>
 dsh --profile <disposable-profile> --port <port> --no-open
 DSH_SMOKE_URL='http://127.0.0.1:<port>/?token=<token>' pnpm test:browser
 ```
 
-`pnpm build` 必须先于 `pnpm pack`：`files` 允许列表指向 `lib/`，未构建时打出的 tarball 里没有客户端 bundle。`pnpm pack` 产出的文件名由 `package.json` 的 `name` 与 `version` 决定，即 `dsh-document-selection-ask-0.1.0.tgz`，写在仓库根目录。该文件是这棵树自己的构建产物而不是源文件：它不在 `files` 允许列表内，并且被 `.gitignore` 的 `dsh-document-selection-ask-*.tgz` 一行忽略，因此既不要提交它，也不要让上一次的 tarball 被误当成当前候选。打包之后紧接着运行 `pnpm verify:package`（第 1 节）检查这个 tarball 的实际内容：它会检查必需文件、禁止形状、声明入口与随包 `README.md` 的相对链接，早于把它装进 profile，这样打包缺陷在花时间准备实例之前就被发现。
+`pnpm build` 必须先于 `npm pack`：`files` 允许列表指向 `lib/`，未构建时打出的 tarball 里没有客户端 bundle。`npm pack` 是**规范 release artifact 打包命令**，`docs/STATUS.md` 记录的一切 candidate SHA-256 都由它复现；它产出的文件名由 `package.json` 的 `name` 与 `version` 决定，即 `dsh-document-selection-ask-0.1.0.tgz`，写在仓库根目录。该文件是这棵树自己的构建产物而不是源文件：它不在 `files` 允许列表内，并且被 `.gitignore` 的 `dsh-document-selection-ask-*.tgz` 一行忽略，因此既不要提交它，也不要让上一次的 tarball 被误当成当前候选。打包之后紧接着运行 `pnpm verify:package`（第 1 节）检查这个 tarball 的实际内容：它会检查必需文件、禁止形状、声明入口与随包 `README.md` 的相对链接，早于把它装进 profile，这样打包缺陷在花时间准备实例之前就被发现。
+
+`pnpm pack` 是**当前已知的语义等价替代品，但与规范产物不逐字节相同**，因此不能用来复现本轮记录的 candidate SHA。以 Task 15UR-D 的验证环境（pnpm 11.7.0）对同一棵树的实测为例：两个 tarball 各有 92 个条目，其中 91 个逐字节相同，唯一差异是随包的 `package.json`——`pnpm pack` 把 `scripts` 移到对象末尾并去掉结尾换行符，键集合与取值完全一致（顺序无关的深比较相等）。该 tarball 同样通过 `pnpm verify:package` 的全部检查，所以本文不对它作为安装来源的可用性作否定判断，只把 `npm pack` 定为本文所有 SHA 的复现命令。
 
 `dsh --profile <disposable-profile> --from-default-profile web` 从随附的 web 模板**创建**一个自定义 profile，随后继续引导它（已安装 DSH 的启动器帮助文本写为 “create rescue from the shipped web template, then boot it”）。因此初始化完成后需要先结束该进程，再执行下一步；对一个已经存在的 profile 重复使用 `--from-default-profile` 会被拒绝（`omit --from-default-profile to use it`），随附模板名也不能作为自定义 profile 名。启动器自身的标志必须排在应用标志之前。
 
@@ -135,7 +140,9 @@ cmd /c mklink /J "%USERPROFILE%\.dsh\profiles\<profile>\node_modules\@dsh-smoke\
 
 ## 5. 当前浏览器基线
 
-下表的数字是 **Task 14 在真实 DSH `0.1.5-rc.2` 上的历史实测基线**（profile `dsa-smoke`，`DSH_SMOKE_URL` 非空，`--workers=1`），逐套件来源为 `docs/STATUS.md` 的 “Task 14 primary rc.2 browser matrix” 条目；`docs/07-testing-strategy.md` 第 9 节记录了同一组数字的 63 / 0 / 0。**Task 15 会针对 tarball 安装的插件复测这组数字**；本文固定的是必需形状与历史基线，本轮复测的逐套件数值由实际执行者写入 `docs/STATUS.md`，本文不预填。
+下表的数字是 **Task 14 在真实 DSH `0.1.5-rc.2` 上的历史实测基线**（profile `dsa-smoke`，`DSH_SMOKE_URL` 非空，`--workers=1`），逐套件来源为 `docs/STATUS.md` 的 “Task 14 primary rc.2 browser matrix” 条目；`docs/07-testing-strategy.md` 第 9 节记录了同一组数字的 63 / 0 / 0。**Task 15 与 Task 15U 已针对 tarball 安装的插件复测过这组数字**；本文固定的是必需形状与历史基线，某一轮实际跑出的逐套件数值由该轮的 `docs/STATUS.md` 条目记录，本文不预填。
+
+`required matrix` 不是 `pnpm test:browser` 的全部。该命令收集 `tests/browser/` 下的每一个 spec，因此完整集合是 `required matrix` + `ui-release` + `ask-flow` 三者之和。以 Task 15U 之后的声明数为准：`63 + 17 + 7 = 87`。报告 `pnpm test:browser` 的结果时只写 63 会把两个真实套件从证据里抹掉，因此三部分必须分开列出（见 `docs/STATUS.md` 的 Task 15U 与 Task 15UR 条目）。
 
 | Suite | Required |
 | --- | --- |
@@ -146,13 +153,16 @@ cmd /c mklink /J "%USERPROFILE%\.dsh\profiles\<profile>\node_modules\@dsh-smoke\
 | docx-selection | 6 / 0 / 0 |
 | pdf-renderer | 10 / 0 / 0 |
 | real-dsh-textpreview | 8 / 0 / 0 |
-| total required | 63 / 0 / 0 |
+| required matrix total | 63 / 0 / 0 |
+| ui-release | 17 / 0 / 0 |
+| ask-flow | 7 / 0 / 0 |
+| `pnpm test:browser` total | 87 / 0 / 0 |
 
 “Required” 一列的判读方式：`>=` 表示该套件允许增加用例，通过数不得低于该值；等号表示该套件当前声明的用例数就是要求数。任一列出现非零 failed 或非零 skipped 即使通过数达标也不成立。上表的用例数与各文件当前声明的 `test(` 数一致（第 2 节的表），其中 `real-dsh-textpreview` 的 8 来自 7 处声明加一个按两个视口展开的循环用例。
 
 ## 6. 夹具与测试驱动
 
-夹具由仓库自己的脚本生成，不从网络下载，这一点在四份格式 README 中均有明确表述。PDF、DOCX、PPTX、XLSX 的夹具已提交在 `tests/fixtures/**`，生成器分别是 `scripts/generate-pdf-fixtures.mjs`、`scripts/generate-docx-fixtures.mjs`、`scripts/generate-pptx-fixtures.mjs`、`scripts/generate-xlsx-fixtures.mjs`。确定性的证据强度各不相同，需要分开陈述：PDF 生成器把文档元数据固定到一个不变日期、自己不写时间戳，因此同一输入两次运行产出逐字节相同的文件（`tests/fixtures/pdf/README.md:21-33`）；DOCX 与 XLSX 的 README 声明其生成器是确定性的；其中只有 XLSX 的确定性被测试断言——`tests/unit/xlsx-fixtures.spec.ts:305-316` 比较生成器两次调用的输出，并断言已提交 workbook 中的 media part 与生成器输出逐字节相等。PPTX 夹具由生成器产出并提交，套件中没有对应的可复现性断言。文本与 CSV 夹具由 `pnpm smoke:profile prepare` 按字面量写入 `smoke-fixtures/`（`scripts/dsh-smoke-profile.mjs:91-135`），该目录被 `.gitignore` 忽略，每次运行重新生成而不是提交副本。
+夹具由仓库自己的脚本生成，不从网络下载，这一点在四份格式 README 中均有明确表述。PDF、DOCX、PPTX、XLSX 的夹具已提交在 `tests/fixtures/**`，生成器分别是 `scripts/generate-pdf-fixtures.mjs`、`scripts/generate-docx-fixtures.mjs`、`scripts/generate-pptx-fixtures.mjs`、`scripts/generate-xlsx-fixtures.mjs`。确定性的证据强度各不相同，需要分开陈述：PDF 生成器把文档元数据固定到一个不变日期、自己不写时间戳，因此同一输入两次运行产出逐字节相同的文件（`tests/fixtures/pdf/README.md:21-33`）；DOCX 与 XLSX 的 README 声明其生成器是确定性的；其中只有 XLSX 的确定性被测试断言——`tests/unit/xlsx-fixtures.spec.ts:305-316` 比较生成器两次调用的输出，并断言已提交 workbook 中的 media part 与生成器输出逐字节相等。PPTX 夹具由生成器产出并提交，套件中没有对应的可复现性断言。文本、CSV 夹具，以及 `task11-corrupt.xlsx` 这一份**故意损坏的 XLSX**，由 `pnpm smoke:profile prepare` 按字面量写入 `smoke-fixtures/`（`scripts/dsh-smoke-profile.mjs:99-148`），该目录被 `.gitignore` 忽略，每次运行重新生成而不是提交副本。损坏夹具不是提交的二进制，而是表中的一串字节（`PK\x03\x04` 之后即为结尾），因为它的作用正是让产品走到 `.dsa-xlsx-error` 这一条拒绝路径；该路径是暗色主题下失败文案对比度唯一的真实观测面，写成一个字面量可以让读者直接看到被拒绝的是哪些字节。
 
 OOXML 的安全夹具不以归档文件形式提交：元数据边界与恶意路径由测试代码在内存中构造，以便性质本身可以在 diff 中被审阅；两个构造器是 `tests/helpers/ooxml-zip.ts` 中的 `buildZip` 与 `buildMetadataZip`（`tests/fixtures/ooxml/README.md:1-45`）。
 
