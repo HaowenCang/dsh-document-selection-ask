@@ -99,7 +99,7 @@ dsh --profile <disposable-profile> --port <port> --no-open
 DSH_SMOKE_URL='http://127.0.0.1:<port>/?token=<token>' pnpm test:browser
 ```
 
-`pnpm build` 必须先于 `npm pack`：`files` 允许列表指向 `lib/`，未构建时打出的 tarball 里没有客户端 bundle。`npm pack` 是**规范 release artifact 打包命令**，`docs/STATUS.md` 记录的一切 candidate SHA-256 都由它复现；它产出的文件名由 `package.json` 的 `name` 与 `version` 决定，即 `dsh-document-selection-ask-0.1.0.tgz`，写在仓库根目录。该文件是这棵树自己的构建产物而不是源文件：它不在 `files` 允许列表内，并且被 `.gitignore` 的 `dsh-document-selection-ask-*.tgz` 一行忽略，因此既不要提交它，也不要让上一次的 tarball 被误当成当前候选。打包之后紧接着运行 `pnpm verify:package`（第 1 节）检查这个 tarball 的实际内容：它会检查必需文件、禁止形状、声明入口与随包 `README.md` 的相对链接，早于把它装进 profile，这样打包缺陷在花时间准备实例之前就被发现。
+`pnpm build` 必须先于 `npm pack`：`files` 允许列表指向 `lib/`，未构建时打出的 tarball 里没有客户端 bundle。`npm pack` 是**规范 release artifact 打包命令**，`docs/STATUS.md` 记录的一切 candidate SHA-256 都由它复现；它产出的文件名由 `package.json` 的 `name` 与 `version` 决定，即 `dsh-document-selection-ask-0.1.2.tgz`，写在仓库根目录。该文件是这棵树自己的构建产物而不是源文件：它不在 `files` 允许列表内，并且被 `.gitignore` 的 `dsh-document-selection-ask-*.tgz` 一行忽略，因此既不要提交它，也不要让上一次的 tarball 被误当成当前候选。打包之后紧接着运行 `pnpm verify:package`（第 1 节）检查这个 tarball 的实际内容：它会检查必需文件、禁止形状、声明入口与随包 `README.md` 的相对链接，早于把它装进 profile，这样打包缺陷在花时间准备实例之前就被发现。
 
 `pnpm pack` 是**当前已知的语义等价替代品，但与规范产物不逐字节相同**，因此不能用来复现本轮记录的 candidate SHA。以 Task 15UR-D 的验证环境（pnpm 11.7.0）对同一棵树的实测为例：两个 tarball 各有 92 个条目，其中 91 个逐字节相同，唯一差异是随包的 `package.json`——`pnpm pack` 把 `scripts` 移到对象末尾并去掉结尾换行符，键集合与取值完全一致（顺序无关的深比较相等）。该 tarball 同样通过 `pnpm verify:package` 的全部检查，所以本文不对它作为安装来源的可用性作否定判断，只把 `npm pack` 定为本文所有 SHA 的复现命令。
 
@@ -136,7 +136,7 @@ cmd /c mklink /J "%USERPROFILE%\.dsh\profiles\<profile>\node_modules\@dsh-smoke\
 
 第 3 步是必需的：loader 只装配 `dsh.profile.bundles` 里列出的层，链接本身不会让它加载。**只有驱动与夹具允许来自本仓库检出**；被测插件必须来自第 4 节的 tarball，否则这次运行就退回成 `link:` 安装，失去本节要证明的性质。
 
-夹具地址相对**会话工作区根**解析，因此还要确认实例的工作区根指向夹具所在的那棵树；`tests/browser/helpers/shell.ts:34` 的默认工作区名是注册表条目名，不一定等于检出目录名（`docs/manual-acceptance.md` 第 2 节记录了这一点）。若两棵树不是同一个工作副本，先确认 `smoke-fixtures/` 下同名文件逐字节相同再开始。
+夹具地址相对**会话工作区根**解析，因此还要确认实例的工作区根指向夹具所在的那棵树；`tests/browser/helpers/shell.ts:34` 的默认工作区名是注册表条目名，不一定等于检出目录名（`docs/manual-acceptance.md` 第 2 节记录了这一点）。若两棵树不是同一个工作副本，先确认 `smoke-fixtures/` 下同名文件逐字节相同再开始。Task 16 新增的 `smoke-fixtures/task7-alignment-probe.pdf` 也必须出现在那棵树的 `smoke-fixtures/` 里：`tests/browser/pdf-hidpi.spec.ts` 的 DPR 矩阵按该名字打开它，缺失时全套失败。
 
 ## 5. 当前浏览器基线
 
