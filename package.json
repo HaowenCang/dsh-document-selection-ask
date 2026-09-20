@@ -1,7 +1,6 @@
 {
   "name": "dsh-document-selection-ask",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.1.1",
   "description": "DSH client plugin: select content in TXT/Markdown/code/CSV/PDF/DOCX/PPTX/XLSX document previews and append a provenance-aware quote to the current conversation draft.",
   "type": "module",
   "license": "MIT",
@@ -97,5 +96,17 @@
     "@zip.js/zip.js": "2.15.0",
     "docx-preview": "0.4.0",
     "pdfjs-dist": "6.3.289"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HaowenCang/dsh-document-selection-ask.git"
+  },
+  "homepage": "https://github.com/HaowenCang/dsh-document-selection-ask#readme",
+  "bugs": {
+    "url": "https://github.com/HaowenCang/dsh-document-selection-ask/issues"
   }
 }
