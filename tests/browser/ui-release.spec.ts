@@ -596,21 +596,280 @@ async function scrollPreview(page: Page, delta: number): Promise<Box | null> {
 }
 
 /**
- * The live browser selection's rectangles, as the browser reports them now.
- * @param page - the browser page.
- * @returns one box per client rectangle.
+ * The two halves of the placement contract, read in one turn.
+ *
+ * The browser's live selection and the Ask button are read inside a single
+ * `evaluate` so that no animation frame can land between them: the contract is
+ * about a *pair* of states, and two separate round trips would let the pair be
+ * assembled from two different moments.
  */
-async function readSelectionRects(page: Page): Promise<Box[]> {
-  return page.evaluate(() => {
+interface PlacementState {
+  /** The live browser selection's text, trimmed; empty when it is collapsed or gone. */
+  readonly selection: string
+  /** The live selection's client rectangles, as the browser reports them now. */
+  readonly rects: readonly Box[]
+  /** Whether the Ask button is in the DOM. */
+  readonly present: boolean
+  /** The button's box, or `null` when it is absent or publishes no geometry. */
+  readonly box: Box | null
+  /** Whether a hit test at the button's own centre reaches it. */
+  readonly hitIsAsk: boolean
+  /** What that hit test reached instead. */
+  readonly hitTag: string
+}
+
+/**
+ * Read the live browser selection and the Ask button together.
+ *
+ * @param page - the browser page.
+ * @returns the observed pair.
+ */
+async function readPlacement(page: Page): Promise<PlacementState> {
+  return page.evaluate((selector) => {
     const selection = document.getSelection()
-    if (selection === null || selection.rangeCount === 0) return []
-    return [...selection.getRangeAt(0).getClientRects()].map((rect) => ({
-      x: rect.x,
-      y: rect.y,
-      width: rect.width,
-      height: rect.height,
-    }))
-  })
+    const live = selection === null ? '' : selection.toString().trim()
+    const rects =
+      selection === null || selection.rangeCount === 0
+        ? []
+        : [...selection.getRangeAt(0).getClientRects()].map((rect) => ({
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+          }))
+
+    const button = document.querySelector(selector)
+    if (button === null) {
+      return { selection: live, rects, present: false, box: null, hitIsAsk: false, hitTag: '' }
+    }
+
+    const rect = button.getBoundingClientRect()
+    const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
+    return {
+      selection: live,
+      rects,
+      present: true,
+      box: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+      hitIsAsk: hit === button || (hit !== null && button.contains(hit)),
+      hitTag: hit === null ? 'null' : hit.tagName,
+    }
+  }, ASK_BUTTON)
+}
+
+/**
+ * Whether two reads describe the same place.
+ *
+ * Sub-pixel tolerance only: the button's own left/top are set from the measured
+ * anchor, so a genuine re-placement moves it by whole pixels while a re-render of
+ * unchanged geometry may differ in the last fraction.
+ *
+ * @param a - one read.
+ * @param b - the other read.
+ * @returns true when both describe the same surface in the same place.
+ */
+function samePlacement(a: PlacementState, b: PlacementState): boolean {
+  if (a.selection !== b.selection || a.present !== b.present) return false
+  if (a.box === null || b.box === null) return a.box === b.box
+  return Math.abs(a.box.x - b.box.x) <= 0.5 && Math.abs(a.box.y - b.box.y) <= 0.5
+}
+
+/**
+ * Wait until the Ask surface and the browser selection agree and stop moving.
+ *
+ * Two things have to be waited for, and they are different.
+ *
+ * The plugin recaptures the live selection on the animation frame *after* a
+ * scroll or a resize (`src/client/selection/browser-lifecycle.ts` coalesces into
+ * one frame), so for the first frames after a perturbation the button still
+ * describes the previous geometry — present, agreeing with the live selection,
+ * and in the wrong place. Two frames is the boundary the lifecycle publishes on,
+ * and it is waited for as a boundary rather than as a duration.
+ *
+ * What follows is a stability window rather than a single sample: the state must
+ * repeat across two reads at least 250 ms apart. Without it this helper would
+ * return the frame-zero reading, and the placement assertions after it would be
+ * deciding a question the plugin had not answered yet — which is exactly how the
+ * first version of this gate let a button sit at its pre-scroll coordinate.
+ *
+ * A persistent disagreement between the two halves is the defect; every distinct
+ * pair observed is carried into the failure message so it names itself.
+ *
+ * @param page - the browser page.
+ * @param what - the perturbation being judged, for the failure message.
+ * @returns the settled state.
+ * @throws Error when no settled, agreeing state is reached within the window.
+ */
+async function settlePlacement(page: Page, what: string): Promise<PlacementState> {
+  await page.evaluate(
+    () =>
+      new Promise<boolean>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            resolve(true)
+          })
+        })
+      }),
+  )
+
+  const deadline = Date.now() + 20_000
+  const mismatches: string[] = []
+  let previous: PlacementState | null = null
+  let previousAt = 0
+
+  while (Date.now() < deadline) {
+    const state = await readPlacement(page)
+
+    if ((state.selection !== '') !== state.present) {
+      const line = `selection=${JSON.stringify(state.selection.slice(0, 24))} ask=${state.present ? 'present' : 'absent'}`
+      if (mismatches[mismatches.length - 1] !== line) mismatches.push(line)
+      previous = null
+    } else if (previous === null || !samePlacement(previous, state)) {
+      previous = state
+      previousAt = Date.now()
+    } else if (Date.now() - previousAt >= 250) {
+      return state
+    }
+
+    await page.waitForTimeout(120)
+  }
+
+  throw new Error(
+    `${what}: the Ask surface never settled into agreement with the browser selection. A live ` +
+      `selection must publish the button and a cleared selection must remove it; observed ${
+        mismatches.length === 0 ? 'a surface that never stopped moving' : mismatches.join(', then ')
+      }`,
+  )
+}
+
+/**
+ * The button's box, failing rather than skipping when it has none.
+ *
+ * @param state - the settled state.
+ * @param what - the perturbation being judged, for the failure message.
+ * @returns the measured box.
+ */
+function requireAskBox(state: PlacementState, what: string): Box {
+  expect(state.present, `${what}: a live selection must publish the Ask button`).toBe(true)
+  expect(state.box, `${what}: the Ask button must publish a bounding box`).not.toBeNull()
+  if (state.box === null) throw new Error(`${what}: the Ask button published no box`)
+  return state.box
+}
+
+/**
+ * Require the button to be absent, which is the only shape a cleared selection has.
+ *
+ * This is the half the audit brief names: a button that survives its selection is
+ * a control that quotes text the reader has already dismissed.
+ *
+ * @param state - the settled state.
+ * @param what - the perturbation being judged, for the failure message.
+ */
+function expectAskAbsent(state: PlacementState, what: string): void {
+  expect(
+    state.present,
+    `${what}: the browser selection is gone, so no Ask button may remain; one was found at ${
+      state.box === null ? 'no published box' : describeBox(state.box)
+    }`,
+  ).toBe(false)
+}
+
+/**
+ * The rectangle the product's own anchor rule would choose.
+ *
+ * Mirrors `anchorRect` in `src/client/selection/viewport.ts`: the last rectangle
+ * that intersects the viewport, falling back to the last one when none does. It
+ * is read from the browser here rather than imported, because the point of the
+ * case is to check the product's placement against the browser's own geometry.
+ *
+ * @param state - the settled state.
+ * @param viewport - the viewport size.
+ * @returns the anchor rectangle, or `null` when the selection has no geometry.
+ */
+function anchorOf(state: PlacementState, viewport: { width: number; height: number }): Box | null {
+  for (let index = state.rects.length - 1; index >= 0; index -= 1) {
+    const rect = state.rects[index]
+    if (rect === undefined) continue
+    if (rect.x + rect.width >= 0 && rect.y + rect.height >= 0 && rect.x <= viewport.width && rect.y <= viewport.height) {
+      return rect
+    }
+  }
+  return state.rects[state.rects.length - 1] ?? null
+}
+
+/**
+ * Require the button to sit as near the live selection as the viewport permits.
+ *
+ * The product places the button one margin above the anchor's top edge and then
+ * clamps it into the viewport, so the claim has three shapes and all of them are
+ * asserted: a visible anchor puts the button within a bounded distance of it, an
+ * anchor above the viewport pins the button to the top margin, and one below pins
+ * it to the bottom. The bound on the visible case is far tighter than the
+ * displacement each perturbation produces, which is what makes "the button was
+ * left where it used to be" fail here instead of passing quietly.
+ *
+ * @param ask - the button's measured box.
+ * @param anchor - the anchor rectangle the product would use.
+ * @param viewport - the viewport size.
+ * @param what - the perturbation being judged, for the failure message.
+ */
+function expectAnchored(ask: Box, anchor: Box, viewport: { width: number; height: number }, what: string): void {
+  if (anchor.y + anchor.height <= 0) {
+    expect(
+      ask.y,
+      `${what}: the live selection is above the viewport, so the button must be pinned to the top edge; it is at y=${ask.y.toFixed(1)}`,
+    ).toBeLessThanOrEqual(VIEWPORT_MARGIN + 1)
+    return
+  }
+  if (anchor.y >= viewport.height) {
+    expect(
+      ask.y + ask.height,
+      `${what}: the live selection is below the viewport, so the button must be pinned to the bottom edge; its bottom is ${(ask.y + ask.height).toFixed(1)}`,
+    ).toBeGreaterThanOrEqual(viewport.height - VIEWPORT_MARGIN - 1)
+    return
+  }
+
+  // The product's own gap, with room for the reflow between the anchor being
+  // re-read and the frame that placed the button.
+  const gap = anchor.y - (ask.y + ask.height)
+  expect(
+    Math.abs(gap - VIEWPORT_MARGIN),
+    `${what}: the button must stay anchored to the live selection; the anchor is at y=${anchor.y.toFixed(1)} ` +
+      `and the button's bottom is at ${(ask.y + ask.height).toFixed(1)}, a gap of ${gap.toFixed(1)}px`,
+  ).toBeLessThanOrEqual(72)
+}
+
+/**
+ * Assert the settled placement against the frozen contract, whichever way it fell.
+ *
+ * Both outcomes are real and each is fully checked: a live selection must have a
+ * pressable, contained, anchored button, and a cleared selection must have none.
+ * There is deliberately no third branch — the shape this replaced accepted a
+ * button that had simply disappeared while the selection was still live.
+ *
+ * @param page - the browser page.
+ * @param state - the settled state.
+ * @param what - the perturbation being judged, for the failure message.
+ */
+async function expectPlacementContract(page: Page, state: PlacementState, what: string): Promise<void> {
+  if (state.selection === '') {
+    expectAskAbsent(state, what)
+    return
+  }
+
+  const viewport = page.viewportSize()
+  if (viewport === null) throw new Error('the audit viewport is unknown')
+
+  const ask = requireAskBox(state, what)
+  expectInsideViewport(ask, viewport, `the Ask button ${what}`, 0)
+  expect(state.hitIsAsk, `${what}: a hit test at the button's centre must reach it, not ${state.hitTag}`).toBe(true)
+
+  const anchor = anchorOf(state, viewport)
+  expect(anchor, `${what}: a live selection must publish at least one rectangle`).not.toBeNull()
+  if (anchor !== null) expectAnchored(ask, anchor, viewport, what)
+
+  // The unforced actionability check runs the full hit test and viewport check and
+  // stops short of the press, so it costs no draft.
+  await page.locator(ASK_BUTTON).click({ trial: true, timeout: 10_000 })
 }
 
 /**
@@ -732,32 +991,47 @@ test.describe('placement follows the viewport', () => {
     const selected = await selectRows(page, rows, 0, 1)
     expect(selected.trim(), 'the drag must select rendered text').not.toBe('')
 
-    const before = await readAsk(page)
-    expect(before.present, 'a selection must publish the Ask button').toBe(true)
-    if (before.box === null) throw new Error('the Ask button published no box')
+    const before = await readPlacement(page)
+    expect(before.selection, 'the drag must leave a live browser selection').not.toBe('')
+    const beforeBox = requireAskBox(before, 'before the scroll')
 
-    const scrollport = await scrollPreview(page, 600)
+    // A scroll small enough that the selected rows stay on screen. That is the
+    // state in which "the button follows the selection" is measurable rather than
+    // assumed, and the displacement it produces is what a button left at its old
+    // coordinate would fail on.
+    const scrollport = await scrollPreview(page, 160)
     expect(scrollport, 'DSH must publish a preview scrollport').not.toBeNull()
-    await page.waitForTimeout(1200)
-
-    const after = await readAsk(page)
-    const rects = await readSelectionRects(page)
-
-    // Two outcomes are legitimate and this gate accepts exactly those two: the
-    // button follows the selection, or the selection is gone and the button with
-    // it. A button left at the coordinate it held before the scroll — while the
-    // selection moved — is the defect the audit brief names.
-    if (after.present && after.box !== null && rects.length > 0) {
-      const anchor = rects[rects.length - 1]
-      if (anchor !== undefined && anchor.y + anchor.height > 0 && anchor.y < 720) {
-        const beforeDistance = Math.abs(before.box.y - anchor.y)
-        const afterDistance = Math.abs(after.box.y - anchor.y)
+    const near = await settlePlacement(page, 'after a 160px preview scroll')
+    if (near.selection !== '') {
+      const viewport = page.viewportSize()
+      if (viewport === null) throw new Error('the audit viewport is unknown')
+      const anchor = anchorOf(near, viewport)
+      expect(anchor, 'a live selection must still publish geometry after the scroll').not.toBeNull()
+      if (anchor !== null) {
+        const ask = requireAskBox(near, 'after a 160px preview scroll')
         expect(
-          afterDistance,
-          `the button must stay anchored to the selection after a scroll; it sat ${beforeDistance.toFixed(0)}px from the anchor before and ${afterDistance.toFixed(0)}px after`,
-        ).toBeLessThanOrEqual(80)
+          Math.abs(ask.y - beforeBox.y),
+          `the scroll must actually have moved the button; it was at y=${beforeBox.y.toFixed(1)} and is at y=${ask.y.toFixed(1)}`,
+        ).toBeGreaterThan(20)
       }
     }
+    await expectPlacementContract(page, near, 'after a 160px preview scroll')
+
+    // Now scroll the selection out of view. This is the branch the previous shape
+    // of this case could not decide: with the anchor off screen, "near the
+    // selection" degenerates into a clamp, and a button that had vanished while
+    // its selection was still live used to pass here.
+    await scrollPreview(page, 900)
+    const far = await settlePlacement(page, 'after the selection is scrolled out of view')
+    await expectPlacementContract(page, far, 'after the selection is scrolled out of view')
+
+    // And the other half of the same state machine, on the same page: a real
+    // press on neutral chrome collapses the browser selection, and the button must
+    // go with it rather than describe text the reader has dismissed.
+    await page.locator(PREVIEW_BODY).first().click({ position: { x: 40, y: 40 }, timeout: 15_000 })
+    const cleared = await settlePlacement(page, 'after a real press clears the selection')
+    expect(cleared.selection, 'the press must genuinely clear the browser selection').toBe('')
+    expectAskAbsent(cleared, 'after a real press clears the selection')
 
     await shot(page, 'ask-after-scroll')
   })
@@ -771,18 +1045,17 @@ test.describe('placement follows the viewport', () => {
     const rows = page.locator('[data-dsa-docx-content] p')
     await selectRows(page, rows, 0, 1)
 
-    const before = await readAsk(page)
-    expect(before.present, 'a selection must publish the Ask button').toBe(true)
+    const before = await readPlacement(page)
+    expect(before.selection, 'the drag must leave a live browser selection').not.toBe('')
+    requireAskBox(before, 'before the resize')
 
     await page.setViewportSize({ width: 900, height: 600 })
-    await page.waitForTimeout(1500)
+    const after = await settlePlacement(page, 'after a viewport resize')
 
-    const after = await readAsk(page)
-    if (after.present && after.box !== null) {
-      expectInsideViewport(after.box, { width: 900, height: 600 }, 'the Ask button after a resize', 0)
-      expect(after.hitIsAsk, `a hit test at the button's centre must reach it, not ${after.hitTag}`).toBe(true)
-      await page.locator(ASK_BUTTON).click({ trial: true, timeout: 10_000 })
-    }
+    // The resize only changes the viewport, so the selection is expected to
+    // survive it; the contract is asserted either way rather than the button being
+    // allowed to disappear into a branch that asserts nothing.
+    await expectPlacementContract(page, after, 'after a viewport resize')
 
     await shot(page, 'ask-after-resize')
   })
@@ -794,8 +1067,9 @@ test.describe('placement follows the viewport', () => {
 
     const rows = page.locator('[data-dsa-docx-content] p')
     await selectRows(page, rows, 0, 1)
-    const before = await readAsk(page)
-    expect(before.present, 'a selection must publish the Ask button').toBe(true)
+    const before = await readPlacement(page)
+    expect(before.selection, 'the drag must leave a live browser selection').not.toBe('')
+    requireAskBox(before, 'before the column resize')
 
     // The shell exposes one column handle; the case fails rather than skips when
     // it disappears, because a resize the product does not offer cannot be
@@ -810,15 +1084,8 @@ test.describe('placement follows the viewport', () => {
     await page.mouse.up()
     await page.waitForTimeout(1500)
 
-    const after = await readAsk(page)
-    const viewport = page.viewportSize()
-    if (viewport === null) throw new Error('the audit viewport is unknown')
-
-    if (after.present && after.box !== null) {
-      expectInsideViewport(after.box, viewport, 'the Ask button after a column resize', 0)
-      expect(after.hitIsAsk, `a hit test at the button's centre must reach it, not ${after.hitTag}`).toBe(true)
-      await page.locator(ASK_BUTTON).click({ trial: true, timeout: 10_000 })
-    }
+    const after = await settlePlacement(page, 'after a column resize')
+    await expectPlacementContract(page, after, 'after a column resize')
 
     await shot(page, 'ask-after-column-resize')
   })
@@ -1061,6 +1328,52 @@ test.describe('contrast', () => {
     await openShell(page)
     await selectAppearance(page, '深色')
 
+    // The renderer's own refusal path, reached with real bytes rather than by
+    // inserting a look-alike element: `xlsx-corrupt` is a file whose ZIP header is
+    // followed by nothing, so the OOXML preflight refuses it and the product paints
+    // `.dsa-xlsx-error`. Until Task 15UR no fixture reached this branch, which is
+    // why its dark-theme contrast had never been measured on the real surface.
+    await openFixture(page, 'xlsx-corrupt', '[data-dsa-document-kind="xlsx"]')
+    await expect(
+      page.locator('.dsa-xlsx-error'),
+      'a corrupted workbook must reach the renderer\'s own refusal path',
+    ).toBeVisible({ timeout: 30_000 })
+    const failure = await measureStatus(page, '.dsa-xlsx-error')
+    expect(failure, 'a corrupted workbook must reach the renderer\'s own failure surface').not.toBeNull()
+    if (failure !== null) {
+      expect(failure.text, 'the failure surface must carry the product\'s own diagnosis').not.toBe('')
+      expectReadableStatus(failure, 'the workbook failure copy in dark theme', true)
+      await shot(page, 'xlsx-dark-failure')
+    }
+
+    // The theme tokens this surface depends on, read where it is painted. In rc.2
+    // neither resolves, so both declared fallbacks paint: the canvas fallback is the
+    // sheet's white and the danger fallback is the darkened red. Recording the pair
+    // is what makes the measurement above a statement about the design system
+    // rather than about one run.
+    const tokens = await page.evaluate(() => {
+      const element = document.querySelector('.dsa-xlsx-error')
+      if (element === null) return null
+      const style = getComputedStyle(element)
+      return {
+        canvas: style.getPropertyValue('--dsw-alias-bg-canvas').trim(),
+        danger: style.getPropertyValue('--dsw-alias-state-danger-primary').trim(),
+        color: style.color,
+      }
+    })
+    expect(tokens, 'the failure surface must be measurable while it is on screen').not.toBeNull()
+    if (tokens !== null && tokens.danger === '') {
+      // The architecture claim, stated as an assertion rather than as prose: with
+      // no themed danger colour defined, the style sheet's fallback is the only
+      // thing standing between this copy and illegibility, so the fallback must be
+      // the colour that actually paints. A resolved token is judged by the contrast
+      // gate above and not pinned to a literal here.
+      expect(
+        tokens.color,
+        'an unresolved danger token leaves the declared fallback as the only protection, so it must be the colour that paints',
+      ).toBe('rgb(180, 35, 24)')
+    }
+
     await openFixture(page, 'xlsx-multi-sheet', '[data-dsa-document-kind="xlsx"]')
     await page.waitForTimeout(4000)
 
@@ -1073,18 +1386,30 @@ test.describe('contrast', () => {
     await page.mouse.up()
     await page.waitForTimeout(1200)
 
+    // A real semantic selection in dark theme must publish the surface; the
+    // measurement that follows is only evidence about a button that exists.
     const ask = await readAsk(page)
-    if (ask.present && ask.box !== null) {
-      const foreground = parseColor(ask.color)
-      const background = parseColor(ask.background)
-      if (foreground === null || background === null) throw new Error('the dark-theme colours must resolve')
-      const ratio = contrastRatio(foreground, background)
-      expect(
-        ratio,
-        `the Ask label must stay readable in dark theme; ${ask.color} on ${ask.background} measures ${ratio.toFixed(2)}:1`,
-      ).toBeGreaterThanOrEqual(MIN_TEXT_CONTRAST)
-      expect(ask.hitIsAsk, 'the button must stay pressable in dark theme').toBe(true)
-    }
+    expect(ask.present, 'a real spreadsheet selection must publish the Ask button in dark theme').toBe(true)
+    expect(ask.box, 'the dark-theme Ask button must publish a bounding box').not.toBeNull()
+    if (ask.box === null) throw new Error('the dark-theme Ask button published no box')
+
+    const foreground = parseColor(ask.color)
+    const background = parseColor(ask.background)
+    expect(foreground, `the dark-theme colour must resolve: ${ask.color}`).not.toBeNull()
+    expect(background, `the dark-theme background must resolve: ${ask.background}`).not.toBeNull()
+    if (foreground === null || background === null) throw new Error('the dark-theme colours must resolve')
+
+    const ratio = contrastRatio(foreground, background)
+    expect(
+      ratio,
+      `the Ask label must stay readable in dark theme; ${ask.color} on ${ask.background} measures ${ratio.toFixed(2)}:1`,
+    ).toBeGreaterThanOrEqual(MIN_TEXT_CONTRAST)
+    expect(ask.hitIsAsk, 'the button must stay pressable in dark theme').toBe(true)
+
+    const viewport = page.viewportSize()
+    if (viewport === null) throw new Error('the audit viewport is unknown')
+    expectInsideViewport(ask.box, viewport, 'the dark-theme Ask button', 0)
+    await page.locator(ASK_BUTTON).click({ trial: true, timeout: 10_000 })
 
     await shot(page, 'ask-dark-theme')
 

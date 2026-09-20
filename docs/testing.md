@@ -135,7 +135,9 @@ cmd /c mklink /J "%USERPROFILE%\.dsh\profiles\<profile>\node_modules\@dsh-smoke\
 
 ## 5. 当前浏览器基线
 
-下表的数字是 **Task 14 在真实 DSH `0.1.5-rc.2` 上的历史实测基线**（profile `dsa-smoke`，`DSH_SMOKE_URL` 非空，`--workers=1`），逐套件来源为 `docs/STATUS.md` 的 “Task 14 primary rc.2 browser matrix” 条目；`docs/07-testing-strategy.md` 第 9 节记录了同一组数字的 63 / 0 / 0。**Task 15 会针对 tarball 安装的插件复测这组数字**；本文固定的是必需形状与历史基线，本轮复测的逐套件数值由实际执行者写入 `docs/STATUS.md`，本文不预填。
+下表的数字是 **Task 14 在真实 DSH `0.1.5-rc.2` 上的历史实测基线**（profile `dsa-smoke`，`DSH_SMOKE_URL` 非空，`--workers=1`），逐套件来源为 `docs/STATUS.md` 的 “Task 14 primary rc.2 browser matrix” 条目；`docs/07-testing-strategy.md` 第 9 节记录了同一组数字的 63 / 0 / 0。**Task 15 与 Task 15U 已针对 tarball 安装的插件复测过这组数字**；本文固定的是必需形状与历史基线，某一轮实际跑出的逐套件数值由该轮的 `docs/STATUS.md` 条目记录，本文不预填。
+
+`required matrix` 不是 `pnpm test:browser` 的全部。该命令收集 `tests/browser/` 下的每一个 spec，因此完整集合是 `required matrix` + `ui-release` + `ask-flow` 三者之和。以 Task 15U 之后的声明数为准：`63 + 17 + 7 = 87`。报告 `pnpm test:browser` 的结果时只写 63 会把两个真实套件从证据里抹掉，因此三部分必须分开列出（见 `docs/STATUS.md` 的 Task 15U 与 Task 15UR 条目）。
 
 | Suite | Required |
 | --- | --- |
@@ -146,13 +148,16 @@ cmd /c mklink /J "%USERPROFILE%\.dsh\profiles\<profile>\node_modules\@dsh-smoke\
 | docx-selection | 6 / 0 / 0 |
 | pdf-renderer | 10 / 0 / 0 |
 | real-dsh-textpreview | 8 / 0 / 0 |
-| total required | 63 / 0 / 0 |
+| required matrix total | 63 / 0 / 0 |
+| ui-release | 17 / 0 / 0 |
+| ask-flow | 7 / 0 / 0 |
+| `pnpm test:browser` total | 87 / 0 / 0 |
 
 “Required” 一列的判读方式：`>=` 表示该套件允许增加用例，通过数不得低于该值；等号表示该套件当前声明的用例数就是要求数。任一列出现非零 failed 或非零 skipped 即使通过数达标也不成立。上表的用例数与各文件当前声明的 `test(` 数一致（第 2 节的表），其中 `real-dsh-textpreview` 的 8 来自 7 处声明加一个按两个视口展开的循环用例。
 
 ## 6. 夹具与测试驱动
 
-夹具由仓库自己的脚本生成，不从网络下载，这一点在四份格式 README 中均有明确表述。PDF、DOCX、PPTX、XLSX 的夹具已提交在 `tests/fixtures/**`，生成器分别是 `scripts/generate-pdf-fixtures.mjs`、`scripts/generate-docx-fixtures.mjs`、`scripts/generate-pptx-fixtures.mjs`、`scripts/generate-xlsx-fixtures.mjs`。确定性的证据强度各不相同，需要分开陈述：PDF 生成器把文档元数据固定到一个不变日期、自己不写时间戳，因此同一输入两次运行产出逐字节相同的文件（`tests/fixtures/pdf/README.md:21-33`）；DOCX 与 XLSX 的 README 声明其生成器是确定性的；其中只有 XLSX 的确定性被测试断言——`tests/unit/xlsx-fixtures.spec.ts:305-316` 比较生成器两次调用的输出，并断言已提交 workbook 中的 media part 与生成器输出逐字节相等。PPTX 夹具由生成器产出并提交，套件中没有对应的可复现性断言。文本与 CSV 夹具由 `pnpm smoke:profile prepare` 按字面量写入 `smoke-fixtures/`（`scripts/dsh-smoke-profile.mjs:91-135`），该目录被 `.gitignore` 忽略，每次运行重新生成而不是提交副本。
+夹具由仓库自己的脚本生成，不从网络下载，这一点在四份格式 README 中均有明确表述。PDF、DOCX、PPTX、XLSX 的夹具已提交在 `tests/fixtures/**`，生成器分别是 `scripts/generate-pdf-fixtures.mjs`、`scripts/generate-docx-fixtures.mjs`、`scripts/generate-pptx-fixtures.mjs`、`scripts/generate-xlsx-fixtures.mjs`。确定性的证据强度各不相同，需要分开陈述：PDF 生成器把文档元数据固定到一个不变日期、自己不写时间戳，因此同一输入两次运行产出逐字节相同的文件（`tests/fixtures/pdf/README.md:21-33`）；DOCX 与 XLSX 的 README 声明其生成器是确定性的；其中只有 XLSX 的确定性被测试断言——`tests/unit/xlsx-fixtures.spec.ts:305-316` 比较生成器两次调用的输出，并断言已提交 workbook 中的 media part 与生成器输出逐字节相等。PPTX 夹具由生成器产出并提交，套件中没有对应的可复现性断言。文本、CSV 夹具，以及 `task11-corrupt.xlsx` 这一份**故意损坏的 XLSX**，由 `pnpm smoke:profile prepare` 按字面量写入 `smoke-fixtures/`（`scripts/dsh-smoke-profile.mjs:99-148`），该目录被 `.gitignore` 忽略，每次运行重新生成而不是提交副本。损坏夹具不是提交的二进制，而是表中的一串字节（`PK\x03\x04` 之后即为结尾），因为它的作用正是让产品走到 `.dsa-xlsx-error` 这一条拒绝路径；该路径是暗色主题下失败文案对比度唯一的真实观测面，写成一个字面量可以让读者直接看到被拒绝的是哪些字节。
 
 OOXML 的安全夹具不以归档文件形式提交：元数据边界与恶意路径由测试代码在内存中构造，以便性质本身可以在 diff 中被审阅；两个构造器是 `tests/helpers/ooxml-zip.ts` 中的 `buildZip` 与 `buildMetadataZip`（`tests/fixtures/ooxml/README.md:1-45`）。
 
