@@ -54,6 +54,8 @@
  * R10 the published `files`/`exports` surface names no test, report or absolute path
  * R11 no private DSH source path in the built artifacts
  * R12 the built client bundle declares every runtime service the plugin injects
+ * R13 the `files` allowlist covers every declared entry point, and ships no
+ *     runtime asset the inline architecture forbids
  *
  * ## Checks from `scripts/dsh-doctor.mjs` not carried over
  *
@@ -462,6 +464,35 @@ const FORBIDDEN_PUBLISHED_FRAGMENTS = [
 
 /** The runtime services the built client must declare, per its own unit spec. */
 const REQUIRED_SERVICES = ['slots', 'documentPreviews']
+
+/**
+ * Side-asset shapes R13 refuses inside the `files` allowlist.
+ *
+ * The plugin's runtime assets are inline: `tsdown.config.ts` embeds the PDF.js
+ * worker, the CMap/standard-font/wasm families and the gzip-compressed Duke sheets
+ * WASM into `lib/client.js`, and the XLSX worker is built from a `blob:` over the
+ * embedded source. A side file with any of these names in the published surface
+ * would therefore be either a second delivery path nobody reviewed or a dead
+ * entry, so the shapes are named.
+ *
+ * The Windows drive-rooted shape is written as a regular-expression literal with
+ * an escaped separator, for the same reason {@link HOME_DIRECTORY_MARKERS} is:
+ * `tests/unit/reproducibility.spec.ts` scans this file for machine-specific path
+ * shapes and does not exempt a detector.
+ */
+const FORBIDDEN_PACKAGE_ENTRY_SHAPES = [
+  { label: 'side WASM binary', pattern: /\.wasm$/i },
+  { label: 'side PDF worker script', pattern: /pdf\.worker/i },
+  { label: 'side XLSX worker script', pattern: /xlsx-worker/i },
+  { label: 'side PDF.js asset', pattern: /\.(?:bcmap|pfb)$/i },
+  { label: 'source map', pattern: /\.map$/i },
+  { label: 'test or fixture tree', pattern: /^(?:tests|smoke-fixtures|test-results|playwright-report|coverage)\// },
+  { label: 'installed dependency tree', pattern: /(^|\/)node_modules\// },
+  { label: 'version-control directory', pattern: /(^|\/)\.git\// },
+  { label: 'packed artifact', pattern: /\.tgz$/i },
+  { label: 'Windows drive-rooted path', pattern: /[A-Za-z]:\\Users\\/ },
+  { label: 'path that leaves the package root', pattern: /(^|\/)\.\.\// },
+]
 
 /** The inject declaration the built client must carry, as `tsdown` emits it. */
 const INJECT_DECLARATION = /\binject\s*:\s*\[|\binject\s*=\s*\[/
@@ -1772,6 +1803,115 @@ function ruleDeclaredServices(findings) {
 }
 
 /**
+ * R13: the `files` allowlist covers every declared entry point, and ships no
+ * runtime asset the inline architecture forbids.
+ *
+ * Two packaging questions are asked here, and they are the two that a release
+ * check makes by hand.
+ *
+ * The first is coverage: `main`, `types`, `exports.*` and `dsh.bundle.patch` are
+ * the paths a consumer and the DSH loader resolve, and every one of them has to be
+ * inside the `files` allowlist. A missing entry is a field naming a file the
+ * tarball does not carry — the package installs and then fails to resolve, which
+ * is exactly the defect a `files` allowlist introduces when it is edited without
+ * checking the entry points.
+ *
+ * The second is the shipping shape. This plugin's runtime assets are inline by
+ * construction: the PDF.js worker, the PDF.js asset families and the compressed
+ * Duke sheets WASM all travel inside `lib/client.js`, and the XLSX worker is
+ * constructed from a `blob:` over that same embedded source. A `.wasm`, a
+ * `pdf.worker.*` or an `xlsx-worker.*` entry appearing in `files` would therefore
+ * mean either a second, unreviewed delivery path or a dead file. Both are worth a
+ * finding.
+ *
+ * What this rule does not claim: it compares text in `package.json` with text in
+ * `package.json`. It does not open the tarball, does not run `npm pack`, and
+ * cannot tell whether a glob matches zero files on disk — that is what
+ * `pnpm verify:package` is for, and it runs against a real `.tgz` instead.
+ *
+ * @param findings - this rule's finding list.
+ */
+function rulePackageSurface(findings) {
+  const manifest = readJson(join(ROOT, 'package.json'))
+  if (manifest === null) {
+    report(findings, 'package.json is missing or is not JSON, so the packaging surface cannot be read', 'package.json')
+    return
+  }
+
+  const allowlist = (Array.isArray(manifest.files) ? manifest.files : []).map((value) => String(value).split('\\').join('/'))
+  if (allowlist.length === 0) {
+    report(findings, 'package.json declares no `files` allowlist, so the published surface is whatever happens to be in the directory', 'package.json')
+    return
+  }
+
+  const targets = []
+  const addTarget = (where, value) => {
+    if (typeof value === 'string') targets.push({ where, value: value.split('\\').join('/') })
+  }
+  addTarget('main', manifest.main)
+  addTarget('types', manifest.types)
+  for (const [subpath, target] of Object.entries(manifest.exports ?? {})) {
+    if (typeof target === 'string') addTarget(`exports["${subpath}"]`, target)
+    else if (target !== null && typeof target === 'object') {
+      for (const [condition, value] of Object.entries(target)) addTarget(`exports["${subpath}"].${condition}`, value)
+    }
+  }
+  addTarget('dsh.bundle.patch', manifest.dsh?.bundle?.patch)
+
+  if (targets.length === 0) {
+    report(findings, 'package.json declares no `main`, `types`, `exports` or `dsh.bundle.patch`, so this rule could not measure the entry points', 'package.json')
+    return
+  }
+
+  /** Strip the leading `./` npm allows, so a target and a `files` entry compare as paths. */
+  const normalise = (value) => value.replace(/^\.\//, '')
+
+  /**
+   * Files npm always packs when present, whatever `files` says.
+   *
+   * `package.json` is one of them — npm documents that `files` is overridden for
+   * it, and the `exports["./package.json"]` subpath this repository declares is the
+   * conventional way to expose it — so requiring an explicit allowlist row for it
+   * would fail a correct manifest. The list is deliberately just this one file:
+   * `README`, `LICENSE` and the notice are also auto-included by npm, but this
+   * repository names them explicitly and the assertion below keeps that.
+   */
+  const ALWAYS_PACKED = ['package.json']
+
+  for (const { where, value } of targets) {
+    const target = normalise(value)
+    if (ALWAYS_PACKED.includes(target)) continue
+    const covered = allowlist.some((entry) => {
+      const listed = normalise(entry)
+      if (listed === target) return true
+      // A glob or a directory entry covers the target when it is a path prefix of
+      // it. `lib/types/**/*.d.ts` is the one glob this repository uses, and npm
+      // treats a `files` glob's `**` as "any depth under this directory".
+      const prefix = listed.includes('**') ? listed.slice(0, listed.indexOf('**')) : listed
+      if (prefix === '') return false
+      return target.startsWith(prefix.endsWith('/') ? prefix : `${prefix}/`)
+    })
+    if (!covered) {
+      report(findings, `${where} = ${value} is not covered by the \`files\` allowlist, so the tarball installs a package whose own entry point is absent`, 'package.json')
+    }
+  }
+
+  for (const required of ['README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md']) {
+    if (!allowlist.includes(required)) {
+      report(findings, `\`files\` does not name ${required}, which the package must ship`, 'package.json')
+    }
+  }
+
+  for (const entry of allowlist) {
+    for (const { label, pattern } of FORBIDDEN_PACKAGE_ENTRY_SHAPES) {
+      if (pattern.test(entry)) {
+        report(findings, `\`files\` ships a ${label}, which the inline runtime architecture does not use and a release must not carry by accident`, 'package.json', undefined, undefined, entry)
+      }
+    }
+  }
+}
+
+/**
  * The rules, in report order. Each carries the one-line meaning the summary prints.
  */
 const RULES = [
@@ -1787,6 +1927,7 @@ const RULES = [
   { id: 'R10', meaning: 'published files/exports name no test, report or absolute path', run: rulePublishedSurface },
   { id: 'R11', meaning: 'no private DSH source path in the built artifacts', run: ruleBuiltArtifactInternals },
   { id: 'R12', meaning: 'built client declares every injected runtime service', run: ruleDeclaredServices },
+  { id: 'R13', meaning: 'files allowlist covers every entry point and ships no side runtime asset', run: rulePackageSurface },
 ]
 
 /**

@@ -6,8 +6,16 @@
 # served as the plugin's `client.js`) load in the web GUI and call
 # `applyClient(ctx)` on the client context.
 #
-# Task 1 registers no renderer and no slot contribution, so this patch is the
-# complete activation surface for the package as it stands.
+# That browser half is the whole activation surface today, and this patch is
+# still one insert row of one entry. On the client context `applyClient`
+# registers four extension renderers — PDF, DOCX, PPTX and XLSX — through the
+# public `ctx.documentPreviews.register` service. The builtin TXT, Markdown,
+# code and CSV previews are not replaced: this plugin registers only the four
+# formats DSH's own preview service does not render. The Ask surface is
+# contributed through the `shell.overlay` slot and the composer target through
+# the `conversation.input.overlay` slot; none of those registrations is a patch
+# entry, and disabling the plugin disposes them and leaves the builtin previews
+# intact.
 - insert:
     - id: document-selection-ask
       name: 'dsh-document-selection-ask'

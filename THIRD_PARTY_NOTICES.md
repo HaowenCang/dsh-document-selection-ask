@@ -12,16 +12,22 @@ a permissive project license is not a claim about anything it depends on.
 ## Shipped in the plugin package
 
 `pdfjs-dist` is this repository's first **bundled** runtime dependency. It is
-declared in `dependencies`, and unlike `@zip.js/zip.js` it is inside the built
-`lib/client.js` today: the PDF renderer imports it, and the DSH client loader
-cannot resolve a bare npm specifier at run time, so `tsdown.config.ts` names it
-in `deps.alwaysBundle`. The artifact is roughly 6.8 MB raw and 3.0 MB gzipped as a
-result, most of which is PDF.js itself, its worker and its three asset families.
+declared in `dependencies`, and it is inside the built `lib/client.js` today: the
+PDF renderer imports it, and the DSH client loader cannot resolve a bare npm
+specifier at run time, so `tsdown.config.ts` names it in `deps.alwaysBundle`. The
+artifact is 16,331,628 bytes raw and 6,248,980 bytes gzipped as a result. The
+packages the bundler's own `//#region` comments attribute inside it occupy
+15,756,695 of those characters, and `pdfjs-dist` is the largest single share at
+6,731,173 characters — PDF.js itself, its worker and its three asset families.
 
-`@zip.js/zip.js` is the second runtime dependency. The built `lib/client.js` does
-not contain it — nothing in the shipping entry point reaches `src/client/ooxml/`
-until a renderer does — but it is a runtime dependency from the moment it is
-declared, and it is recorded here as one.
+`@zip.js/zip.js` is the second runtime dependency, and it is **also** inside the
+built `lib/client.js`. The browser entry reaches it: `applyClient` registers the
+four renderers, each registration path reaches `src/client/ooxml/` for the shared
+OOXML preflight, and that module imports the package's public entry. The build
+inlines it under `alwaysBundle`, and the artifact carries 34 `//#region
+node_modules/.pnpm/@zip.js+zip.js@2.15.0/…` comments naming it, occupying 272,951
+characters. It is recorded here both as a declared runtime dependency and as a
+bundled one.
 
 The table is the **complete** shipped set, and `scripts/verify.mjs` R8 derives that
 set automatically rather than restating it: the declared production dependencies,
@@ -281,17 +287,34 @@ runtime/test-only: runtime dependency (bundled into lib/client.js)
 ```
 
 The version is **not chosen by this project.** It is the exact version the
-primary verified runtime carries: the installed
-`@deepseek-ai/dsh-client-ui-sidebar-documentpreview@0.1.5-rc.1` package declares
-`"pdfjs-dist": "6.3.289"` in its own `devDependencies`, and that is the version
-whose build the installed `lib/client.js` was compiled from — the compiled bundle
-contains `pdfjsVersion = 6.3.289`, `pdfjsBuild = 1c8020a7d` and a source comment
-naming `pdfjs-dist@6.3.289`. A PDF.js worker speaks a message protocol that is not
-stable across releases, so a plugin whose renderer used a different version from
-the one DSH ships would be a compatibility claim nobody could verify. The
-specifier is therefore pinned exactly — `"pdfjs-dist": "6.3.289"`, with no `^`,
-`~` or range — and `scripts/dsh-doctor.mjs` reports the pin against the
-installation on this machine.
+primary verified runtime carries. The installed
+`@deepseek-ai/dsh-client-ui-sidebar-documentpreview@0.1.5-rc.2` — recorded in
+`devDependencies` at that release and reachable through the pnpm store — declares
+`"pdfjs-dist": "6.3.289"` in its own `devDependencies`. The version that DSH's
+own document preview compiles against is therefore 6.3.289 on the current
+baseline, and that is the value this project pins. A PDF.js worker speaks a
+message protocol that is not stable across releases, so a plugin whose renderer
+used a different version from the one DSH ships would be a compatibility claim
+nobody could verify.
+
+This file records the pin against the installed package rather than against the
+DSH bundle: the installed
+`@deepseek-ai/dsh-client-ui-sidebar-documentpreview/lib/client.js` is 6,888,390
+bytes and does not carry the string `pdfjsVersion` at all, so it is not an
+authority for which PDF.js build the runtime resolves. What the pin is checked
+against is the declaration above and this repository's own artifact: the built
+`lib/client.js` carries `pdfjsVersion = 6.3.289` and `pdfjsBuild = 1c8020a7d`,
+inside a module the bundler attributes to
+`node_modules/.pnpm/pdfjs-dist@6.3.289/node_modules/pdfjs-dist/build/pdf.mjs`. The
+specifier is pinned exactly — `"pdfjs-dist": "6.3.289"`, with no `^`, `~` or range
+— and `scripts/verify.mjs` R8 compares the version this file records with the one
+`pnpm-lock.yaml` resolves.
+
+The historical note that this pin was first taken from
+`@deepseek-ai/dsh-client-ui-sidebar-documentpreview@0.1.5-rc.1` remains true of
+Task 7, where the dependency was introduced, and is retained in this file's
+record of that Task. The release the project is verified against today is
+`0.1.5-rc.2`, and the paragraph above states the current baseline.
 
 The license was verified against published registry metadata rather than against
 this project's documentation: `npm view pdfjs-dist@6.3.289 version license
