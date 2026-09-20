@@ -55,11 +55,21 @@ DSH 右侧的文件预览可以显示 TXT、Markdown、源码与配置文件、C
 ```bash
 pnpm install
 pnpm build
-pnpm pack
+npm pack
+pnpm verify:package ./dsh-document-selection-ask-0.1.0.tgz
 ```
 
-`pnpm pack` 产出 `dsh-document-selection-ask-0.1.0.tgz`，文件名由 `package.json` 的 name 与 version
-决定。随后在一个自有 profile 中安装并启动：
+`npm pack` 产出 `dsh-document-selection-ask-0.1.0.tgz`，文件名由 `package.json` 的 name 与 version
+决定。`pnpm verify:package` 检查这个已产出 tarball 的实际内容，应当在安装之前通过。
+
+`npm pack` 是本项目 0.1.0 release candidate artifact 的规范打包命令，本文记录的一切 tarball
+SHA-256 都由它复现。当前验证环境中的 `pnpm pack`（11.7.0）会规范化随包的 `package.json`，因此产出
+语义等价但字节不同的 tarball，不用于复现本文记录的 SHA：两个 tarball 各有 92 个条目，其中 91 个
+逐字节相同，唯一差异在 `package.json`——`pnpm pack` 把 `scripts` 移到对象末尾并去掉结尾换行符，
+两者的键集合与取值完全一致。该 tarball 同样通过 `pnpm verify:package` 的全部检查，因此本文只说明
+它不是本文所用 SHA 的复现命令，不对它作为安装来源的可用性作否定判断。
+
+随后在一个自有 profile 中安装并启动：
 
 ```bash
 dsh --profile dsa-dev --from-default-profile web
@@ -91,7 +101,8 @@ dsh --profile dsa-dev --port 50120 --no-open
 之下，不需要改动 DSH 的内部清单。这是本次验证环境中的观测结果；本文不对 DSH 其它版本或其它平台的
 行为作断言。
 
-`pnpm pack` 与 `private: true` 并不冲突，`private` 只阻止发布到 registry。
+`npm pack` 与 `private: true` 并不冲突：`private: true` 阻止的是向 registry 发布，而不是在本地
+创建 tarball。
 
 ### 源码检出（开发路径）
 

@@ -3513,6 +3513,67 @@ addressed, and none is claimed.
 Release, `main` is untouched at `cfabbf7`, and PR #9 stays a draft. The round
 stops at a verified release candidate pending an external merge audit.
 
+### Task 15UR-D — canonical pack command and artifact re-freeze
+
+Documentation and package-surface only: no `src/**`, `tests/**`, `scripts/**`,
+`package.json` or lockfile change, and the runtime bundle is byte-identical to
+the Task 15UR freeze.
+
+**Canonical pack command = `npm pack`.** It is the command that reproduces every
+candidate SHA recorded in this file, and it is now the only packaging step named
+by the packaged `README.md` and by the release-validation path in
+`docs/testing.md`; both previously said `pnpm pack` and both were corrected in
+this round, together with the `private: true` wording. The byte-level difference
+is retained as documented evidence rather than written out of the record: on the
+same tree pnpm 11.7.0 emits 92 entries of which 91 are byte-identical to the
+`npm pack` artifact, the single difference being the shipped `package.json`,
+where `scripts` moves to the end of the object and the trailing newline is
+dropped — the same key set and the same values, equal under an order-insensitive
+deep comparison. The pnpm artifact passes every `pnpm verify:package` check, so
+nothing here claims that `pnpm pack` is broken or that its tarball cannot be
+installed; it is simply not the command behind the recorded SHA.
+
+**Scripted acceptance is not human manual acceptance.** The eight-format core
+acceptance in Task 15U and Task 15UR is agent-performed scripted acceptance on
+the real application, not human execution of `docs/manual-acceptance.md`; this
+round does not record that checklist as executed — **human manual acceptance =
+NOT PERFORMED IN TASK 15UR-D.** Under the current review, scripted real-app
+acceptance together with the 87 / 0 / 0 browser matrix, the UI geometry and
+accessibility measurements and the tarball installation close this code and UI
+change, and a human visual sanity check is a recommended pre-publication step
+rather than a merge blocker for PR #9. `docs/testing.md` now states this
+distinction explicitly.
+
+**Re-frozen artifact.** The packaged `README.md` is in the `files` allowlist, so
+correcting it necessarily moves artifact identity. The Task 15R candidate
+`1FEAD2827C7BC3AF3ACB39DD56EC9CE065147D889534A002303F5D6D5E7EE159` is
+superseded by `93EE00FBC257A91AD273381839176663A544D75B3C5DA4917751526B61B6B9F9`
+(6374493 bytes; 6.4 MB packed, 16.7 MB unpacked, 92 files; two consecutive
+`npm pack` runs identical). Extracting both artifacts and comparing all 92
+entries isolates the change to exactly one packaged file, `README.md` — the other
+91 are byte-identical. `lib/client.js`
+`C866C7945F41A35EC1BE36C48BEAFB1202AA62D8874F1CDADA911186BB34E285` and
+`lib/index.mjs`
+`FAC72B86168E002CB6DD2939C1775CAD0D149AFB24C4C2264B1110B079A60F39` are
+unchanged. The same correction moves the pnpm artifact from `4A6D6114…` to
+`A630FBBD132B7F0F5AA33FD062752EA7CF3BBD5C9B103ED52F312550E83BE548`, which is the
+expected consequence of a changed packaged README rather than a new finding.
+
+**Independent install of the re-frozen artifact.** The final `npm pack` tarball
+was installed with `dsh plugin --profile dsa-t15urd add <tarball>` into a profile
+newly created from the shipped web template on DSH `0.1.5-rc.2`. The plugin lands
+as an unpacked directory rather than a link into this checkout, and the installed
+`lib/client.js` and `lib/index.mjs` hash-match the frozen values above. The
+instance booted with no host error output, and the targeted `universal-selection`
+smoke on it is **10 passed / 0 failed / 0 skipped** — the evidence that the
+re-frozen tarball installs, boots and actually executes its client bundle. The
+87 / 0 / 0 full matrix recorded in Task 15UR remains the browser evidence for
+this same runtime bundle; the eight-format scripted real-app acceptance was not
+re-run, because neither the runtime bundle nor the tests changed. A fresh clone
+of the frozen commit reproduces the same two bundle hashes and the same
+`93EE00FB…` tarball through `pnpm install --frozen-lockfile`, `pnpm build` and
+`npm pack`.
+
 ## Synchronization
 
 Every completed Task is committed locally and pushed to `origin`, and the round

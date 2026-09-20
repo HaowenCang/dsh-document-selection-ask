@@ -83,20 +83,25 @@
 
 **`docs/manual-acceptance.md` 是真实应用上的最终发布证据，由人在真实 rc.2 Web UI 中执行。** 它不是命令，也不产生机器可判定的退出码；它验证的是交互契约（八种格式的可选中性、草稿保全、无自动提交、无远端请求、渲染器切换、插件禁用与恢复），结果按行记入该轮的状态记录。任何一项 `FAIL` 阻塞发布。
 
+该人工清单与**代理执行的脚本化真实应用验收**是两件事，状态记录中必须分开陈述，不得互相替代。Task 15U 与 Task 15UR 的八种格式核心验收属于后者：由代理在真实 rc.2 实例上以脚本驱动完成（真实拖选、浮层按钮自身中心的非强制命中测试、捕获阶段 `submit` 观察器），其结论只覆盖脚本实际断言的性质，**不构成**人工清单已执行，也不得记为人工验收通过。在当前审查结论下，脚本化真实应用验收、浏览器三套件 **87 / 0 / 0**、UI 几何与可访问性测量以及 tarball 安装这四项合起来足以闭合本次代码与 UI 变更；人工目视与手工 sanity check 属于**发布前的建议步骤**，不是本轮合并的阻塞条件，其是否执行由该轮状态记录如实记载。
+
 ## 4. 本地 tarball 安装与发布验证路径
 
 发布验证要安装的是**将要发布的那个 tarball**，而不是源码工作树。命令序列如下，`<disposable-profile>`、`<port>`、`<path-to-tgz>`、`<token>` 都是占位符。
 
 ```bash
 pnpm build
-pnpm pack
+npm pack
+pnpm verify:package <path-to-tgz>
 dsh --profile <disposable-profile> --from-default-profile web
 dsh plugin --profile <disposable-profile> add <path-to-tgz>
 dsh --profile <disposable-profile> --port <port> --no-open
 DSH_SMOKE_URL='http://127.0.0.1:<port>/?token=<token>' pnpm test:browser
 ```
 
-`pnpm build` 必须先于 `pnpm pack`：`files` 允许列表指向 `lib/`，未构建时打出的 tarball 里没有客户端 bundle。`pnpm pack` 产出的文件名由 `package.json` 的 `name` 与 `version` 决定，即 `dsh-document-selection-ask-0.1.0.tgz`，写在仓库根目录。该文件是这棵树自己的构建产物而不是源文件：它不在 `files` 允许列表内，并且被 `.gitignore` 的 `dsh-document-selection-ask-*.tgz` 一行忽略，因此既不要提交它，也不要让上一次的 tarball 被误当成当前候选。打包之后紧接着运行 `pnpm verify:package`（第 1 节）检查这个 tarball 的实际内容：它会检查必需文件、禁止形状、声明入口与随包 `README.md` 的相对链接，早于把它装进 profile，这样打包缺陷在花时间准备实例之前就被发现。
+`pnpm build` 必须先于 `npm pack`：`files` 允许列表指向 `lib/`，未构建时打出的 tarball 里没有客户端 bundle。`npm pack` 是**规范 release artifact 打包命令**，`docs/STATUS.md` 记录的一切 candidate SHA-256 都由它复现；它产出的文件名由 `package.json` 的 `name` 与 `version` 决定，即 `dsh-document-selection-ask-0.1.0.tgz`，写在仓库根目录。该文件是这棵树自己的构建产物而不是源文件：它不在 `files` 允许列表内，并且被 `.gitignore` 的 `dsh-document-selection-ask-*.tgz` 一行忽略，因此既不要提交它，也不要让上一次的 tarball 被误当成当前候选。打包之后紧接着运行 `pnpm verify:package`（第 1 节）检查这个 tarball 的实际内容：它会检查必需文件、禁止形状、声明入口与随包 `README.md` 的相对链接，早于把它装进 profile，这样打包缺陷在花时间准备实例之前就被发现。
+
+`pnpm pack` 是**当前已知的语义等价替代品，但与规范产物不逐字节相同**，因此不能用来复现本轮记录的 candidate SHA。以 Task 15UR-D 的验证环境（pnpm 11.7.0）对同一棵树的实测为例：两个 tarball 各有 92 个条目，其中 91 个逐字节相同，唯一差异是随包的 `package.json`——`pnpm pack` 把 `scripts` 移到对象末尾并去掉结尾换行符，键集合与取值完全一致（顺序无关的深比较相等）。该 tarball 同样通过 `pnpm verify:package` 的全部检查，所以本文不对它作为安装来源的可用性作否定判断，只把 `npm pack` 定为本文所有 SHA 的复现命令。
 
 `dsh --profile <disposable-profile> --from-default-profile web` 从随附的 web 模板**创建**一个自定义 profile，随后继续引导它（已安装 DSH 的启动器帮助文本写为 “create rescue from the shipped web template, then boot it”）。因此初始化完成后需要先结束该进程，再执行下一步；对一个已经存在的 profile 重复使用 `--from-default-profile` 会被拒绝（`omit --from-default-profile to use it`），随附模板名也不能作为自定义 profile 名。启动器自身的标志必须排在应用标志之前。
 
