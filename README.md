@@ -4,7 +4,7 @@
 
 - 代码仓库：https://github.com/HaowenCang/dsh-document-selection-ask
 - 许可证：本仓库自身代码为 MIT，见 [LICENSE](LICENSE)；随包第三方组件各自保留其许可证，权威清单为 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
-- 项目状态：实施计划 15 个 Task 全部完成，release candidate 已在真实 DSH `0.1.5-rc.2` 上验证；**尚未发布**——npm registry 上没有该包，没有 git tag，也没有 GitHub Release。本轮（Task 15）只涉及发布文档与打包准备，`src/client/**` 的运行行为未改动。
+- 项目状态：实施计划 15 个 Task 全部完成，v0.1.2 release candidate 已在真实 DSH `0.1.5-rc.2` 上验证。`dsh-document-selection-ask@0.1.1` 已发布到 npm registry；**v0.1.2 尚未发布**——没有 `v0.1.2` git tag，也没有对应的 GitHub Release，正式发布动作由后续 release gate 执行。v0.1.2 是 PDF 高 DPI 渲染缺陷的 hotfix，完整根因与测量见仓库中的 [docs/STATUS.md](https://github.com/HaowenCang/dsh-document-selection-ask/blob/main/docs/STATUS.md)（该文件不随包分发）。
 
 ## 项目用途
 
@@ -45,8 +45,10 @@ DSH 右侧的文件预览可以显示 TXT、Markdown、源码与配置文件、C
 
 ## 安装
 
-该包在 `package.json` 中为 `private`，未发布到 npm registry，因此不存在按 registry 包名安装的
-方式。当前经过验证的分发路径是本地 tarball 安装。
+规范包名是 `dsh-document-selection-ask`，`package.json` 已移除 `private` 并声明
+`publishConfig.access: public`，因此 v0.1.2 具备按 registry 包名安装的条件。该版本尚未发布，所以在
+发布动作执行之前，`npm install dsh-document-selection-ask` 取到的是已发布的 `0.1.1`。当前经过验证
+的分发路径是本地 tarball 安装。
 
 ### 本地 tarball 安装
 
@@ -56,18 +58,20 @@ DSH 右侧的文件预览可以显示 TXT、Markdown、源码与配置文件、C
 pnpm install
 pnpm build
 npm pack
-pnpm verify:package ./dsh-document-selection-ask-0.1.0.tgz
+pnpm verify:package ./dsh-document-selection-ask-0.1.2.tgz
 ```
 
-`npm pack` 产出 `dsh-document-selection-ask-0.1.0.tgz`，文件名由 `package.json` 的 name 与 version
+`npm pack` 产出 `dsh-document-selection-ask-0.1.2.tgz`，文件名由 `package.json` 的 name 与 version
 决定。`pnpm verify:package` 检查这个已产出 tarball 的实际内容，应当在安装之前通过。
 
-`npm pack` 是本项目 0.1.0 release candidate artifact 的规范打包命令，本文记录的一切 tarball
-SHA-256 都由它复现。当前验证环境中的 `pnpm pack`（11.7.0）会规范化随包的 `package.json`，因此产出
-语义等价但字节不同的 tarball，不用于复现本文记录的 SHA：两个 tarball 各有 92 个条目，其中 91 个
-逐字节相同，唯一差异在 `package.json`——`pnpm pack` 把 `scripts` 移到对象末尾并去掉结尾换行符，
-两者的键集合与取值完全一致。该 tarball 同样通过 `pnpm verify:package` 的全部检查，因此本文只说明
-它不是本文所用 SHA 的复现命令，不对它作为安装来源的可用性作否定判断。
+`npm pack` 是本项目 0.1.2 release candidate artifact 的规范打包命令，本次候选的 tarball SHA-256 由它
+复现，记录在仓库的 [docs/STATUS.md](https://github.com/HaowenCang/dsh-document-selection-ask/blob/main/docs/STATUS.md)
+Task 16 一节（该文件不随包分发）。当前验证环境中的 `pnpm pack`
+（11.7.0）会规范化随包的 `package.json`，因此产出语义等价但字节不同的 tarball，不用于复现该 SHA：
+Task 15UR 记录的两个 tarball 各有 92 个条目，其中 91 个逐字节相同，唯一差异在 `package.json`——
+`pnpm pack` 把 `scripts` 移到对象末尾并去掉结尾换行符，两者的键集合与取值完全一致。该 tarball 同样
+通过 `pnpm verify:package` 的全部检查，因此本文只说明它不是该 SHA 的复现命令，不对它作为安装来源的
+可用性作否定判断。
 
 随后在一个自有 profile 中安装并启动：
 
@@ -101,8 +105,8 @@ dsh --profile dsa-dev --port 50120 --no-open
 之下，不需要改动 DSH 的内部清单。这是本次验证环境中的观测结果；本文不对 DSH 其它版本或其它平台的
 行为作断言。
 
-`npm pack` 与 `private: true` 并不冲突：`private: true` 阻止的是向 registry 发布，而不是在本地
-创建 tarball。
+`npm pack` 与 v0.1.2 的发布准备并不冲突：它只在本地产出 tarball，不接触 registry；v0.1.2 的
+`package.json` 已移除 `private` 并声明 `publishConfig`，registry 发布由后续 release gate 单独执行。
 
 ### 源码检出（开发路径）
 
@@ -187,7 +191,8 @@ pnpm test:browser          # Playwright；需要运行中的 DSH 与 DSH_SMOKE_U
   超过任一条上限都会被拒绝，并显示对应的用户可见错误，不会静默截断。
 - 渲染保真度不作保证。DOCX 出处的「渲染页」是浏览器分页的结果，不是源文档自身的分页；PDF、DOCX、
   PPTX、XLSX 的版式由各自的第三方渲染器决定，人工验收程序也不以版式一致性为判据。
-- 当前状态为 release candidate：未发布、无 tag、无 GitHub Release，也没有 npm 发布包。
+- 当前状态：`0.1.1` 已发布到 npm registry，无 `v0.1.1` git tag、无 GitHub Release；`0.1.2` 为
+  release candidate，已具备 npm 发布元数据但尚未发布，无 tag、无 GitHub Release。
 
 ## 许可证与第三方声明
 
