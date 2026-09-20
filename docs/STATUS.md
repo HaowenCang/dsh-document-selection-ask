@@ -71,6 +71,56 @@ assumption that no longer describes the acceptance policy.
     Task 13 rc.1 evidence keep describing the same shipped artifact
   - full detail under "Current gate"
 
+- Task 14R — exclusive runtime override closure (a correction to the Task 14 gate,
+  opened by the external audit of the Task 14 PASS report)
+  - recorded history: Task 14 reported PASS with `DSH_INSTALL_NODE_MODULES`
+    documented as an **exclusive** override → the external audit found that the
+    documented property did not hold → this round corrected the discovery
+    semantics → Task 14 is closed on the corrected gate
+  - the defect was an ordering defect, not a missing rule.
+    `discoverRuntime(env)` called `probePathCli(env)` unconditionally *before*
+    `runtimeCandidates(env)`, and both `PATH`-derived verdict rules ran whenever
+    `cli !== null`. An override therefore still executed the ambient
+    `dsh --version` and still let its result decide the gate: a valid rc.2
+    override with a broken launcher first on `PATH` failed with "a `dsh` launcher
+    is on PATH but `dsh --version` exited 7", and the same override with an rc.1
+    launcher on `PATH` failed with "the `dsh` on PATH reports 0.1.5-rc.1 while …
+    holds 0.1.5-rc.2". Both were reproduced against the pre-fix script before the
+    correction was written
+  - the correction reorders discovery so the authority is decided first:
+    `runtimeCandidates(env)` runs, and `probePathCli(env)` is invoked only when
+    `exclusive` is false. Under an override the `dsh` on `PATH` is not executed,
+    not read and not reported, so exclusivity now holds at three levels at once —
+    which locations are read, which runtime is selected, and what reaches the
+    verdict. Neither a broken launcher nor a different release on `PATH` can
+    change the result
+  - a bad override still fails loudly on its own evidence: absent directory, a
+    directory that is not a `node_modules`, no `@deepseek-ai/dsh` inside it, or a
+    version that disagrees with the contract pin. No fallback to `PATH`, to
+    `DSH_HOME` or to the home `node_modules` was introduced, and the override
+    error path is unchanged from Task 14
+  - the override is now visible in the report, not only in the code: both
+    commands print `runtime discovery = DSH_INSTALL_NODE_MODULES override` and
+    `PATH CLI report = NOT PROBED (explicit override)`. `scripts/dsh-doctor.mjs`
+    still imports `inspectContractEnvironment()` rather than restating the
+    decision, so it inherits the corrected semantics instead of duplicating them,
+    and it reports the same two lines
+  - the default no-override route is untouched, P6 included: a `dsh` launcher on
+    `PATH` that cannot report a version remains a failure rather than a note,
+    because that launcher's directory also supplies the compared installation
+  - `docs/compatibility.md` stated the exclusivity more strongly than the code
+    implemented it; it now states exactly what the code does, for both commands
+  - no production, pin, lockfile or browser-test file was touched. The round
+    changed the checker and the doctor, the two command reports, and the
+    documentation that describes them
+  - one arithmetic correction to the round's own reporting, with no code
+    consequence: the Task 14 report described the `pnpm-lock.yaml` delta as
+    `54+/54-`, while the actual change against the baseline is **45 additions /
+    45 deletions** (`git diff --numstat 0ed146e8 HEAD -- pnpm-lock.yaml`). No
+    file was edited to make a count agree; the lockfile itself is unchanged by
+    Task 14R
+  - full detail under "Current gate"
+
 - Task 13
   - commits: `9064bfdfc5c14c7e7e48df393e1cee7255830e92` (the round's work),
     `08d93f910b71c8db01f0bd8839c1e480d5779cc5` (the round's record),
@@ -1342,23 +1392,31 @@ a WASM integrity failure still fails closed.
   versions, the current DSH runtime, the runtime's `sidebar-documentpreview`
   version, the installed `pdfjs-dist` version and the Node version, then compiles
   the probes and sets a non-zero exit code for any inconsistency. Runtime
-  discovery is `DSH_INSTALL_NODE_MODULES` (exclusive when set), then the `dsh` CLI
-  on `PATH` — whose own version command is executed and whose output shape is
-  validated rather than assumed — then the public `DSH_HOME` layout. It performs
+  discovery is `DSH_INSTALL_NODE_MODULES`, exclusive when set: the override is
+  the only authority, the `dsh` CLI on `PATH` is not probed at all in that mode,
+  and there is no fallback to `PATH`, `DSH_HOME` or the home `node_modules`. With
+  no override the routes are the `dsh` CLI on `PATH` — whose own version command
+  is executed and whose output shape is validated rather than assumed — then the
+  public `DSH_HOME` layout. It performs
   no registry query, no download, no install and no file write; the compile step
   invokes the project's own TypeScript binary directly rather than through the
   package manager, so it cannot make the package manager decide to install
-- Task 14 negative proofs — seven, on throwaway copies and environment overrides,
-  with the positive worktree never edited to manufacture a failure:
+- Task 14 negative proofs — seven, plus the three Task 14R added (P7–P9), on
+  throwaway copies and environment overrides, with the positive worktree never
+  edited to manufacture a failure:
   - P1 current rc.2: `pnpm check:dsh-contracts` **PASS** (exit 0)
-  - P2 a real rc.1 installation (`@deepseek-ai/dsh@0.1.5-rc.1` plus its
-    `sidebar-documentpreview`, installed into a throwaway directory) named through
-    `DSH_INSTALL_NODE_MODULES`: **FAIL**, exit 1, with
-    "runtime version mismatch: the installed DSH is 0.1.5-rc.1 while the contract
-    packages pin 0.1.5-rc.2". No fallback to the PATH CLI's rc.2 was taken, and
-    the second problem line states that the compared installation is not the one
-    the machine runs. A throwaway override pointing at a directory with no DSH at
-    all also fails loudly instead of falling back
+  - P2 a real rc.1 installation (`@deepseek-ai/dsh@0.1.5-rc.1`, installed into a
+    throwaway directory outside the repository) named through
+    `DSH_INSTALL_NODE_MODULES`, with an rc.2 launcher first on `PATH`: **FAIL**,
+    exit 1, "runtime version mismatch: the installed DSH is 0.1.5-rc.1 while the
+    contract packages pin 0.1.5-rc.2". The failure is the override against the
+    contract pin and nothing else, which is the point of the re-attribution: the
+    report contains no `PATH` problem line, because the machine's rc.2 CLI was
+    never probed, and the launcher stub on `PATH` left no marker file. Task 14
+    credited a second problem line to a `PATH`/override comparison; that
+    comparison was itself the defect, and it no longer happens. A throwaway
+    override pointing at a directory with no DSH at all still fails loudly
+    instead of falling back
   - P3 one declared pin mutated to `0.1.5-rc.1` in a throwaway copy: **FAIL**,
     exit 1 — "do not pin one DSH release: 0.1.5-rc.1, 0.1.5-rc.2" plus the
     declared/installed mismatch for that package
@@ -1371,9 +1429,43 @@ a WASM integrity failure still fails closed.
     given `'panel'`): **FAIL**, exit 1, with the compiler's own
     `error TS2322: Type '"panel"' is not assignable to type '"list"'`
   - P6 a `dsh` launcher placed on `PATH` that exits 3 instead of reporting a
-    version: **FAIL**, exit 1 — "a `dsh` launcher is on PATH but `dsh --version`
-    exited 3". The launcher's presence is what makes its failure load-bearing, so
-    it is not downgraded to a note; the healthy route still reports PASS
+    version, with no override set: **FAIL**, exit 1 — "a `dsh` launcher is on PATH
+    but `dsh --version` exited 3". The launcher's presence is what makes its
+    failure load-bearing, so it is not downgraded to a note; the healthy route
+    still reports PASS. Task 14R re-ran this proof and added the execution
+    evidence: the stub's marker file **was** written, so the default route really
+    does probe `PATH` — the contrast with P7 and P8 is what makes their absent
+    markers meaningful
+  - P7 (Task 14R) a valid rc.2 override — the machine's own installation
+    (`…\Roaming\npm\node_modules`, holding `@deepseek-ai/dsh@0.1.5-rc.2`) — with a
+    deliberately broken `dsh.cmd` first on `PATH` that writes a marker file and
+    exits 7: **PASS**, exit 0, compile step included. The marker file was absent,
+    the report printed `PATH CLI report = NOT PROBED (explicit override)` and
+    carried no `PATH` problem. The same environment run against the pre-fix
+    script extracted from `HEAD`: **FAIL**, exit 1, "a `dsh` launcher is on PATH
+    but `dsh --version` exited 7", marker written — the defect and its correction
+    shown against one another
+  - P8 (Task 14R) an rc.2 override with an rc.1 launcher first on `PATH` (the stub
+    prints `0.1.5-rc.1` and exits 0, confirmed by running it directly): **PASS**,
+    exit 0, compile step included. The override is an explicit authority, so no
+    `PATH` runtime mismatch is reported. The pre-fix script on the same
+    environment: **FAIL**, exit 1, "the `dsh` on PATH reports 0.1.5-rc.1 while …
+    holds 0.1.5-rc.2; the compared installation is not the one this machine
+    runs", with the stub's marker written
+  - P9 (Task 14R) an override pointing at an empty directory — not a
+    `node_modules`, holding no `@deepseek-ai/dsh` — with a valid rc.2 launcher
+    first on `PATH`: **FAIL**, exit 1 — "the DSH_INSTALL_NODE_MODULES override
+    points at a directory holding no @deepseek-ai/dsh package.json (tried …); the
+    override is exclusive, so no other location is consulted". The rc.2 launcher
+    was not executed (no marker), no fallback PASS was produced, and the override
+    error is the only problem reported: the reverse proof of exclusivity
+  - P7–P9 share one construction, so their results are comparable: one stub
+    directory prepended to `PATH`, one `DSH_INSTALL_NODE_MODULES` value, and the
+    gate run in the positive worktree. No throwaway copy of the repository was
+    needed, because these proofs change the environment rather than the tree. The
+    marker file is the observable probe — it is written by the stub launcher
+    itself, so its absence is evidence that `dsh --version` was never executed,
+    not merely that its result was discarded
   - the checker also fired on a real defect rather than a synthesised one: with
     the smoke driver's manifest still at rc.1 it reported
     "tests/browser/smoke-driver/package.json: @deepseek-ai/dsh-client-ui-sidebar-right
@@ -1384,6 +1476,17 @@ a WASM integrity failure still fails closed.
   doctor keeps its documented semantics (an absent installation is a note, and a
   failure with `--runtime`), and the checker requires the installation to be
   found
+  - Task 14R extended this to the override semantics rather than duplicating them
+    in the doctor: `DSH_INSTALL_NODE_MODULES=<valid rc.2> pnpm dsh:doctor --
+    --runtime` **PASS** (exit 0) both with the broken launcher first on `PATH` and
+    with the rc.1 launcher first on `PATH`, printing the same
+    `runtime discovery = DSH_INSTALL_NODE_MODULES override` and
+    `PATH CLI report = NOT PROBED (explicit override)` lines the checker prints,
+    with neither stub's marker written. `scripts/dsh-doctor.mjs` gained only two
+    reporting lines reading the shared state; the decision is still imported from
+    `inspectContractEnvironment()`, and no second copy of the discovery logic
+    exists. In the default no-override mode the doctor and the checker both still
+    probe `PATH`
 - Task 14 primary rc.2 browser matrix — re-run on the rc.2-pinned checkout against
   real DSH `0.1.5-rc.2`, profile `dsa-smoke`, `DSH_SMOKE_URL` non-empty,
   `--workers=1`: universal selection **10 / 0 / 0**, resource cleanup **6 / 0 / 0**,
@@ -1471,6 +1574,31 @@ a WASM integrity failure still fails closed.
   identical before and after the rc.1 → rc.2 pin migration. The pin upgrade
   changed type-resolution inputs only, so no production byte moved; this is also
   why Task 13's rc.1 real-app evidence still describes the shipped artifact
+- Task 14R correction, verified on the frozen tree — the override is exclusive in
+  behaviour, not only in prose. With `DSH_INSTALL_NODE_MODULES` set, the `dsh` on
+  `PATH` is never executed (P7 and P8 leave no marker file, while the same
+  environments run against the pre-fix script fail and do write one); a different
+  release or a broken launcher on `PATH` cannot change the verdict (P7, P8); and
+  an override that is honoured but wrong fails on its own evidence without
+  falling back (P2, P9). The default no-override route still probes `PATH` and
+  still fails on a launcher that cannot report a version (P6, marker written):
+  `pnpm check:dsh-contracts` PASS, `pnpm dsh:doctor -- --runtime` PASS,
+  `pnpm typecheck` PASS, `pnpm test` **1,052 passed / 0 failed over 58 files** —
+  identical to the Task 14 count, so no test was deleted, skipped or weakened —
+  `pnpm build` PASS, `pnpm verify` **12/12**, `npm pack --dry-run` **89 files**,
+  `git diff --check` clean
+- Task 14R production and bundle boundary — `lib/client.js`
+  `735F8B77EC0B899F9740A8C0591AB7FE0A294C9D5F185A69A9B4A8F7134A183D` and
+  `lib/index.mjs`
+  `FAC72B86168E002CB6DD2939C1775CAD0D149AFB24C4C2264B1110B079A60F39` are
+  byte-identical to the Task 14 build, `git diff 9e811dad -- src` and
+  `git diff 0ed146e8 -- src` are both empty, and no pin, lockfile, browser test or
+  smoke-driver file changed. The round's diff is confined to
+  `scripts/check-dsh-contracts.mjs`, `scripts/dsh-doctor.mjs`, `README.md`,
+  `docs/compatibility.md` and this file, so Task 14's rc.2 browser matrix
+  (**63 passed / 0 failed / 0 skipped**) is retained rather than re-run: it
+  exercised an artifact and a set of tests that this round did not touch, on the
+  same grounds that let Task 13's rc.1 evidence survive the pin migration
 - Task 14 adversarial review — Agent D's read-only review of the integrated tree,
   with zero files modified, found no blocking problem and five should-fix items,
   all of which are closed in the tree being reviewed:
@@ -2237,6 +2365,18 @@ user's own `dsa-smoke` profile tree, whose links already point at this worktree.
   fires, production delta stays zero, no browser file changed so the frozen rc.2
   and rc.1 matrices are retained, and the final tree was frozen with zero active
   sub-agents
+- Task 14R — PASS on the corrected gate (checker exclusive-override remediation,
+  recorded in full above). What was defective in the Task 14 PASS report was its
+  evidence about the gate, not its conclusions about the pins, the compile
+  contracts or the real-app matrix: `DSH_INSTALL_NODE_MODULES` was documented as
+  exclusive while `discoverRuntime` called `probePathCli` before consulting the
+  override and both `PATH` verdict rules ran regardless, so a valid rc.2 override
+  could fail because of the machine's ambient `PATH`. Discovery now resolves the
+  override first and never probes `PATH` in that mode; P7–P9 were added and P2 was
+  re-attributed, with the pre-fix script run against the same environments as a
+  control. Every static gate passes, `lib/client.js` and `lib/index.mjs` are
+  byte-identical, the `src` delta from both baselines is zero, no pin, lockfile or
+  browser file changed, and the frozen tree carried zero active sub-agents
 
 `LICENSE` is the standard MIT text with the copyright holder taken from the
 authenticated GitHub account. `package.json` declares `"license": "MIT"`.
@@ -2271,6 +2411,14 @@ ended with zero production delta and Task 14 ends with zero production delta as
 well — `git diff 0ed146e8 -- src` is empty, and both shipped artifacts are
 byte-identical to the Task 13 build. What moved is the compile-contract baseline,
 the gate that decides it, and the documentation that states the support surface.
+
+That closure stands on the corrected gate. The external audit of the Task 14 PASS
+report found the checker's `DSH_INSTALL_NODE_MODULES` exclusivity documented but
+not implemented — the `PATH` CLI was probed before the override was consulted, and
+its verdict rules ran regardless — and Task 14R corrected the discovery order so
+the override excludes the `PATH` route instead of merely outranking it. The chain
+is recorded in full: Task 14's initial PASS report, the audit finding, the
+Task 14R correction, and this closure.
 
 The handover below is retained as history.
 

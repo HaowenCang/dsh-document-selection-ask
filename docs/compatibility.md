@@ -50,7 +50,7 @@ Node 版本要求为 `^22.19.0 || >=24.0.0`，由 `package.json` 的 `engines` �
 
 - 项目契约的发布版本固定值；审计的字段是 `dependencies`、`devDependencies` 与 `optionalDependencies`，`peerDependencies` 明确排除在外——peer 范围描述的是消费者可以带来什么，不是本次编译所依据的内容，本仓库唯一一条 peer 是 `^4.0.2`，并非精确固定；
 - 仓库中每一个声明了 `@deepseek-ai/*` 固定的 `package.json`，连同其声明版本与已安装版本；这一发现过程会遍历仓库（深度受限，并跳过 `node_modules`、`lib`、`dist`、`coverage`、`test-results`、`playwright-report`、`smoke-fixtures` 等目录），因为测试专用的 smoke driver 带有自己的契约固定，遗留在那里的旧版本与根清单里的旧版本是同一个缺陷；
-- 当前 DSH 运行时版本，其发现从不硬编码，按三条路由依次尝试：`DSH_INSTALL_NODE_MODULES`（设置后即为唯一被检查的位置，指向错误目录必须显式失败而不是回落到其他位置）；`PATH` 上的 `dsh` CLI（执行其自身的版本命令并校验输出形状，而不是假定它可用；启动器存在但版本命令失败时判定为失败而非提示，因为该目录同时提供了被比较的安装，缺了这条证据就无法确认所比较的正是本机运行的实例）；以及公开的 `DSH_HOME` 布局（`$DSH_HOME` 或默认主目录下的 `profiles/node_modules`，其后是主目录自己的 `node_modules`）；
+- 当前 DSH 运行时版本，其发现从不硬编码。`DSH_INSTALL_NODE_MODULES` 设置且非空时即为唯一权威：它既是唯一被检查的位置，也是唯一的运行时选择依据，还是唯一能进入判定的证据。指向不存在、不是 `node_modules`、不含 `@deepseek-ai/dsh`，或版本与契约固定值不符的目录，都必须显式失败，不会回落到任何其他位置。该模式下 `PATH` 上的 `dsh` CLI 根本不会被探查——不执行其版本命令、不读取其结果、也不打印其报告，输出为 `PATH CLI report = NOT PROBED (explicit override)`——因此环境里另一个版本的启动器，或一个坏掉的启动器，都无法影响结论。未设置该变量时才依次尝试另外两条路由：`PATH` 上的 `dsh` CLI（执行其自身的版本命令并校验输出形状，而不是假定它可用；启动器存在但版本命令失败时判定为失败而非提示，因为该目录同时提供了被比较的安装，缺了这条证据就无法确认所比较的正是本机运行的实例），以及公开的 `DSH_HOME` 布局（`$DSH_HOME` 或默认主目录下的 `profiles/node_modules`，其后是主目录自己的 `node_modules`）；
 - 该运行时中 `sidebar-documentpreview` 的版本；
 - 已安装的 `pdfjs-dist` 版本与 Node 版本。
 
@@ -60,7 +60,7 @@ Node 版本要求为 `^22.19.0 || >=24.0.0`，由 `package.json` 的 `engines` �
 
 任何不一致都会让脚本以非零退出码结束。退出码 `0` 表示全部检查通过，`1` 表示契约环境不一致，`2` 表示命令行未被理解。整个脚本只读：它不查询 registry、不下载包、不执行安装、不写文件，也不改动 DSH 安装。
 
-`pnpm dsh:doctor` 报告同一份环境判定，并共享同一实现（它从门禁脚本导入环境检查函数），因此两条命令不可能给出互相矛盾的结论。两者的差别在于默认语义与编译步骤：`dsh:doctor` 回答的是「本机的 DSH 是否是这些固定值所描述的那一个」，并把「未发现安装」记为说明性提示，除非传入 `--runtime` 才把它当作失败；`check:dsh-contracts` 要求必须找到安装，并在报告 PASS 之前编译契约探针。
+`pnpm dsh:doctor` 报告同一份环境判定，并共享同一实现（它从门禁脚本导入环境检查函数），因此两条命令不可能给出互相矛盾的结论。共享范围包括 override 语义：设置了 `DSH_INSTALL_NODE_MODULES` 时，`dsh:doctor` 报告同一发现来源，同样打印 `PATH CLI report = NOT PROBED (explicit override)`，也不单独复制一套发现逻辑。两者的差别在于默认语义与编译步骤：`dsh:doctor` 回答的是「本机的 DSH 是否是这些固定值所描述的那一个」，并把「未发现安装」记为说明性提示，除非传入 `--runtime` 才把它当作失败；`check:dsh-contracts` 要求必须找到安装，并在报告 PASS 之前编译契约探针。
 
 版本比较通过本身不构成兼容性证据。固定值一致只说明清单与安装相互匹配，既不能证明插件所依赖的公开契约仍然存在且形状未变，也不能证明它在真实应用里可用。作出支持判定的是两件事：编译步骤证明探针针对已安装的声明能够编译，真实应用验收证明交互契约在真实运行时、真实渲染器与真实指针手势下成立。
 

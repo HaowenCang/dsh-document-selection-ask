@@ -10,9 +10,8 @@
 | 项目 | 状态 |
 |---|---|
 | Design | APPROVED |
-| Tasks 1–13 | COMPLETE（已合并） |
-| Task 14 | CURRENT / EVALUATION（本分支，未合并） |
-| Task 15 | NOT AUTHORIZED |
+| Tasks 1–14 | COMPLETE |
+| Task 15 | NEXT / NOT AUTHORIZED |
 | Current official DSH runtime | `0.1.5-rc.2` |
 | Primary blocking real-app runtime | `0.1.5-rc.2` |
 | Primary compile-contract baseline | `0.1.5-rc.2` |
@@ -158,7 +157,7 @@ pnpm test
 pnpm build
 ```
 
-不需要、也不允许预先修复用户级 DSH 安装。`pnpm dsh:doctor` 仅做检测：比对 contract pin 与本机 DSH 安装版本，不一致时以非零退出码报告；`--runtime` 要求必须找到本机安装。`pnpm check:dsh-contracts` 是 Task 14 的完整 gate：它报告 contract release pin、各 manifest 的已声明与已安装版本、当前 DSH runtime、sidebar-documentpreview、`pdfjs-dist` 与 Node 版本，随后编译 contract probes，任何一项不一致即以非零退出码失败。它不联网、不安装、不写文件；`DSH_INSTALL_NODE_MODULES` 可显式指定 runtime，且指定后不会回退到 PATH。二者共用同一份判定逻辑，不会给出互相矛盾的结论。构建、类型检查与测试都不读取仓库之外的路径，全新 clone 只需 `pnpm install` 即可通过上述 gate；`docs/STATUS.md` 的历史记录中引用了若干一次性隔离安装的路径，那是对既往执行的描述，不是本仓库的依赖。
+不需要、也不允许预先修复用户级 DSH 安装。`pnpm dsh:doctor` 仅做检测：比对 contract pin 与本机 DSH 安装版本，不一致时以非零退出码报告；`--runtime` 要求必须找到本机安装。`pnpm check:dsh-contracts` 是 Task 14 的完整 gate：它报告 contract release pin、各 manifest 的已声明与已安装版本、当前 DSH runtime、sidebar-documentpreview、`pdfjs-dist` 与 Node 版本，随后编译 contract probes，任何一项不一致即以非零退出码失败。它不联网、不安装、不写文件；`DSH_INSTALL_NODE_MODULES` 可显式指定 runtime，一旦指定即为唯一权威：`PATH` 上的 `dsh` 不会被探查，也不会回退到 `DSH_HOME` 或主目录 `node_modules`，override 本身有误时显式失败。二者共用同一份判定逻辑，不会给出互相矛盾的结论。构建、类型检查与测试都不读取仓库之外的路径，全新 clone 只需 `pnpm install` 即可通过上述 gate；`docs/STATUS.md` 的历史记录中引用了若干一次性隔离安装的路径，那是对既往执行的描述，不是本仓库的依赖。
 
 ## 真实 DSH 预览 smoke（开发者用，非用户功能）
 
