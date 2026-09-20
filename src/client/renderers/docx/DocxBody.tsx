@@ -20,7 +20,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { JSX } from 'react'
 
 import type { DocumentPreviewProps } from '../../dsh/contracts.js'
-import { documentSelectionStrings } from '../../ui/locales.js'
+import { documentRendererStrings } from '../../ui/locales.js'
 import { useResourceInvalidation } from '../resource-invalidation.js'
 import { renderDocx } from './engine.js'
 import {
@@ -28,12 +28,10 @@ import {
   DOCX_DOCUMENT_KIND_ATTRIBUTE,
   DOCX_RESOURCE_ADDRESS_ATTRIBUTE,
   DOCX_SELECTABLE_ATTRIBUTE,
+  DOCX_STATUS_ATTRIBUTE,
   DOCX_STYLE_HOST_ATTRIBUTE,
 } from './identity.js'
 import type { DocxRendererInjectFace } from './register.js'
-
-/** Copy shown when the preview has no complete bytes to render. */
-const NO_BYTES_TEXT = 'DOCX 预览需要完整文件内容。'
 
 /** Props this body receives: the framework's own, plus the slot-injected callbacks. */
 export type DocxBodyProps = DocumentPreviewProps & Partial<DocxRendererInjectFace>
@@ -57,7 +55,7 @@ export function DocxBody(props: DocxBodyProps): JSX.Element {
 
   // Resolved on every render rather than captured once, so the copy follows the
   // document's language without a second subscription to observe a change.
-  const strings = documentSelectionStrings(globalThis.document)
+  const strings = documentRendererStrings(globalThis.document)
 
   // The resource this body renders stops being selectable when the body unmounts,
   // when the address changes, or when its tab is released. The renderer publishes
@@ -81,7 +79,7 @@ export function DocxBody(props: DocxBodyProps): JSX.Element {
 
   useEffect(() => {
     if (content.kind !== 'bytes') {
-      setState({ kind: 'failed', message: NO_BYTES_TEXT })
+      setState({ kind: 'failed', message: strings.docxNeedsBytes })
       return
     }
 
@@ -147,14 +145,10 @@ export function DocxBody(props: DocxBodyProps): JSX.Element {
       <div ref={styleHostRef} {...{ [DOCX_STYLE_HOST_ATTRIBUTE]: '' }} />
       <div ref={contentHostRef} {...{ [DOCX_SELECTABLE_ATTRIBUTE]: '' }} />
       {state.kind === 'loading' && (
-        <div style={{ padding: '32px', textAlign: 'center', color: '#666' }}>
-          {strings.loading}
-        </div>
+        <div {...{ [DOCX_STATUS_ATTRIBUTE]: 'loading' }}>{strings.loading}</div>
       )}
       {state.kind === 'failed' && (
-        <div style={{ padding: '32px', textAlign: 'center', color: '#dc2626' }}>
-          {state.message}
-        </div>
+        <div {...{ [DOCX_STATUS_ATTRIBUTE]: 'failed' }}>{state.message}</div>
       )}
     </section>
   )

@@ -99,6 +99,20 @@ export const OVERLAY_CSS = `
   pointer-events: auto;
   box-shadow: var(--dsw-elevation-panel, 0 3px 8px 0 rgb(0 0 0 / 3%));
 }
+
+/*
+ * The live region that carries the notice. It is mounted whether or not there is
+ * a message — an assistive technology announces a mutation inside a region it
+ * already knows, not a region that arrives already populated — so it has to be
+ * inert when empty: no box, and no pointer target. The pointer-events property is
+ * restored on the notice itself, which is what keeps the region from swallowing a
+ * press aimed at the surface underneath it.
+ */
+[data-dsa-selection-error-region] {
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
 `
 
 /**
