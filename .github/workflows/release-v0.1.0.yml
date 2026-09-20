@@ -1,0 +1,139 @@
+name: Release v0.1.0
+
+on:
+  push:
+    branches:
+      - release-automation/v0.1.0
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      TARGET_SHA: 436bb052c97f74f9dfc7dfbd1e38e1467fd987d5
+      EXPECTED_TARBALL_SHA256: 93EE00FBC257A91AD273381839176663A544D75B3C5DA4917751526B61B6B9F9
+      TARBALL: dsh-document-selection-ask-0.1.0.tgz
+    steps:
+      - name: Check out the verified release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 0
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install pnpm 11.7.0
+        shell: pwsh
+        run: npm install --global pnpm@11.7.0
+
+      - name: Install dependencies
+        shell: pwsh
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        shell: pwsh
+        run: pnpm build
+
+      - name: Create and verify canonical release tarball
+        shell: pwsh
+        run: |
+          npm pack
+          pnpm verify:package ".\${{ env.TARBALL }}"
+          $actual = (Get-FileHash ".\${{ env.TARBALL }}" -Algorithm SHA256).Hash.ToUpperInvariant()
+          Write-Host "Canonical tarball SHA-256: $actual"
+          if ($actual -ne "${{ env.EXPECTED_TARBALL_SHA256 }}") {
+            throw "Canonical tarball SHA-256 mismatch. Expected ${{ env.EXPECTED_TARBALL_SHA256 }}, got $actual. Refusing to create tag or release."
+          }
+
+      - name: Verify runtime bundle identities
+        shell: pwsh
+        run: |
+          $client = (Get-FileHash ".\lib\client.js" -Algorithm SHA256).Hash.ToUpperInvariant()
+          $host = (Get-FileHash ".\lib\index.mjs" -Algorithm SHA256).Hash.ToUpperInvariant()
+          if ($client -ne "C866C7945F41A35EC1BE36C48BEAFB1202AA62D8874F1CDADA911186BB34E285") {
+            throw "client bundle hash mismatch: $client"
+          }
+          if ($host -ne "FAC72B86168E002CB6DD2939C1775CAD0D149AFB24C4C2264B1110B079A60F39") {
+            throw "host bundle hash mismatch: $host"
+          }
+
+      - name: Prepare checksum and release notes
+        shell: pwsh
+        run: |
+          "${{ env.EXPECTED_TARBALL_SHA256 }}  ${{ env.TARBALL }}" | Set-Content -Encoding utf8 ".\SHA256SUMS.txt"
+          @'
+          # dsh-document-selection-ask v0.1.0
+
+          Initial public GitHub release of the DSH document-selection Ask plugin.
+
+          ## Highlights
+
+          - Select content in TXT, Markdown, code/config, CSV, PDF, DOCX, PPTX, and XLSX previews.
+          - Append a provenance-aware quote to the current conversation draft.
+          - Preserve the existing draft and return focus to the composer.
+          - Never auto-submit the message.
+          - PDF uses a selectable TextLayer; DOCX/PPTX use rendered DOM selection; XLSX uses semantic cell ranges.
+          - Browser-local document parsing with no remote Office/PDF viewer or CDN runtime dependency.
+          - OOXML preflight/extraction limits and fail-closed handling are included.
+
+          ## Verified environment
+
+          - DSH: 0.1.5-rc.2
+          - Node: ^22.19.0 or >=24.0.0
+          - Primary verified platform: Windows 11 with Chromium-based DSH Web UI
+          - Browser regression suite: 87 passed / 0 failed / 0 skipped
+          - Final release artifact was independently installed into a disposable DSH rc.2 profile before release.
+
+          ## Install
+
+          Download `dsh-document-selection-ask-0.1.0.tgz` from this release, then install it into a disposable/custom DSH profile:
+
+          ```text
+          dsh plugin --profile <profile> add <absolute-path-to-dsh-document-selection-ask-0.1.0.tgz>
+          ```
+
+          The package is intentionally still `private: true`; this release is distributed through GitHub Releases and is not published to the npm registry.
+
+          ## Limits
+
+          - Legacy DOC/PPT/XLS are not supported.
+          - OCR, document editing, persistent annotations, and persistent highlights are not included.
+          - Quote text is limited to 16,384 UTF-16 code units.
+          - XLSX selection is additionally limited to 200 cells.
+          - macOS, Linux, mobile, native browser zoom UI, Windows High Contrast, and OS scaling changes were not part of the verified matrix.
+          - PDF/XLSX document canvases intentionally remain light in dark mode.
+
+          ## Integrity
+
+          Canonical artifact SHA-256:
+
+          ```text
+          93EE00FBC257A91AD273381839176663A544D75B3C5DA4917751526B61B6B9F9  dsh-document-selection-ask-0.1.0.tgz
+          ```
+
+          Release commit:
+
+          ```text
+          436bb052c97f74f9dfc7dfbd1e38e1467fd987d5
+          ```
+          '@ | Set-Content -Encoding utf8 ".\RELEASE_NOTES.md"
+
+      - name: Create verified v0.1.0 tag
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a v0.1.0 "${{ env.TARGET_SHA }}" -m "dsh-document-selection-ask v0.1.0"
+          git push origin refs/tags/v0.1.0
+
+      - name: Create GitHub Release and attach canonical artifact
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create v0.1.0 ".\${{ env.TARBALL }}" ".\SHA256SUMS.txt" --verify-tag --title "dsh-document-selection-ask v0.1.0" --notes-file ".\RELEASE_NOTES.md"
