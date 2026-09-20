@@ -3178,6 +3178,169 @@ Task 3 notes carried forward:
   placement arithmetic only; the Playwright smoke covers a real selection's real
   rectangles.
 
+### Task 15U — production UI/UX release audit
+
+Audit round over the production UI that Tasks 1–15 built. No feature was added,
+no renderer functionality was extended, and the selection kernel, provenance,
+quote formatting, composer bridge, OOXML security and worker/WASM architecture
+were not touched. The round began read-only and changed production only where a
+defect had been measured first.
+
+**Baseline and isolation.**
+
+| Item | Value |
+| --- | --- |
+| `main` at audit start | `cfabbf7fc991fac46bbabf40f4c01855e4c8d8e5` (`Merge Task 15 release candidate verification`) |
+| Evaluation branch | `eval/deepseek-v4.1-flash-task15u-ui-20260920` |
+| Worktree | `E:\Projects\DSHarness\dsh-document-selection-ask-deepseek-task15u-ui-20260920` |
+| DSH runtime | `0.1.5-rc.2` — contract pin, `PATH` CLI and the browser instance all rc.2 |
+| Release candidate before the audit | tarball `A5CC5012…`, `lib/client.js` `735F8B77…`, `lib/index.mjs` `FAC72B86…` |
+
+The audit ran against a live DSH `0.1.5-rc.2` web instance with the plugin
+mounted (`dsa-smoke` profile linked at this worktree), and against a second
+instance booted from a **disposable release profile** (`dsa-t15u-release`) whose
+plugin came from the packed `.tgz` rather than from the repository.
+
+**What was measured, and how.** A new suite, `tests/browser/ui-release.spec.ts`
+(17 cases), encodes the objective gates: viewport containment and
+`elementFromPoint` hit tests at the button's own centre for the four required
+viewports (1024×768, 1280×720, 1440×900, 1920×1080); placement after a real
+preview scroll, a viewport resize and a real drag of the shell's column handle;
+the unforced actionability check; Tab traversal, focus-ring geometry, Enter and
+Space activation, composer focus return and `auto-submit = 0`; a 24 px target
+measurement; contrast computed from resolved colours for the Ask button in both
+its states, for the renderer status surfaces in both themes and for the workbook
+status; the live-notice region's existence before its message; the workbook
+no-rectangle fallback; and both locales through DSH's own language resolution.
+Screenshots were written only as human evidence, outside the repository, and no
+`toHaveScreenshot()` baseline was committed: this machine's rasteriser and GPU
+must not become the release gate.
+
+**Read-only findings, and what happened to each.**
+
+| # | Surface | Severity | Measured evidence | Outcome |
+| --- | --- | --- | --- | --- |
+| 1 | PPTX loading copy on the renderer's own desk | BLOCKING | 13 px `#666` on `#555555` = **1.30:1** | remediated |
+| 2 | DOCX loading copy on the renderer's own desk | BLOCKING | 13 px `#666` on `#808080` = **1.45:1** | remediated |
+| 3 | DOCX page clipped with no route to it | MAJOR | page left edge at x=595 against a scrollport starting at x=704 with `scrollWidth == clientWidth == 576`: **109 px permanently unreachable** | remediated |
+| 4 | Ask fallback over the composer's editable surface | MAJOR | with an XLSX selection the button occupied `[576,345,102×32]` inside the card `[296,333,382×114]`, overlapping the input box `[296,341,378×52]` by 3 136 px² (16 %); a press in the overlap hit the button | remediated |
+| 5 | Renderer notices bypassing the locale table | MAJOR | PDF `重试` and `PDF 预览需要完整文件内容。`, the DOCX/PPTX/XLSX no-bytes copy, the two XLSX engine failures and the English `aria-label="Workbook sheets"` all rendered in a language other than the resolved one | remediated |
+| 6 | Live region created already populated | MINOR | `[data-dsa-selection-error]` came into existence in the same commit as its text | remediated |
+| 7 | XLSX error copy below the text threshold | MINOR | 13 px `#e5484d` on white = **3.91:1** | remediated |
+| 8 | XLSX sheet tablist incomplete as an ARIA tab widget | NOTE | `aria-controls` and roving `tabindex` are absent; the four properties this round requires — accessible names, keyboard reachability, exposed active state, focus indicator — all hold | recorded, not changed |
+| 9 | PDF page stays white in dark theme | NOTE | `#ffffff` page under `body[data-ds-dark-theme]` | recorded as a deliberate scoping decision: a darkened page would destroy the contrast of the PDF's own rasterised text |
+| 10 | Keyboard traversal depends on tab order | MINOR | from the page background the traversal reaches the button on the `dsa-smoke` shell and does not on the minimal release shell, because passing through the composer's editable surface collapses the browser selection and the kernel then clears the snapshot by its documented contract | recorded; closing it would require changing the frozen selection architecture, which this round is not authorised to do |
+
+**Claims checked and rejected.** Three source-derived findings did not survive
+measurement and are recorded as rejected rather than fixed. The PPTX
+`scrollportRef` claim assumed the plugin's own section scrolls; measured, the
+section is 736 px tall inside a 644 px body and is **not** scrollable, so the
+shared preview body the plugin reports is the correct scroll owner. The XLSX
+sheet-tab claim predicted a clipped viewer bottom; measured,
+`scrollHeight == clientHeight == 644` and the viewer viewport ends exactly at the
+root's bottom edge. The toast claim predicted an inverted label on a light toast
+in dark theme; measured, the pairing resolves to `#f9fafb` on `#43454a` and
+holds. One hypothesis of this audit was rejected the same way: the `--dsw-*`
+tokens are declared on `body`, not on `:root`, so reading them from
+`document.documentElement` returns empty while the overlay resolves them
+correctly.
+
+**A defect introduced by this round, and found by it.** The first remediation
+gave the DOCX/PPTX status surfaces a themed card with a danger-coloured failure
+state. Measuring the real failure surface afterwards showed that
+`--dsw-alias-state-danger-primary` resolves to **nothing** in rc.2, so the
+literal fallback painted: `#b42318` on the dark card `rgb(35,35,36)` measured
+**2.39:1**. The failure state is now distinguished by its `data-dsa-*-status`
+attribute and by the copy itself, and its text uses the label token, which
+follows both themes. Status contrast in dark theme is now a gate in the suite
+rather than a one-off measurement.
+
+**Production changes, and the reason for each.**
+
+| File | Change | Reason |
+| --- | --- | --- |
+| `src/client/ui/position.ts` | the fallback clears the composer card — above it, below it only when the card is pinned to the top | finding 4 |
+| `src/client/ui/SelectionErrorToast.tsx` | the live region is always mounted and the message is its child | finding 6 |
+| `src/client/ui/styles.ts` | an inert zero-size rule for the always-mounted region | finding 6 |
+| `src/client/ui/locales.ts` | added `RendererStrings` and its two tables **additively**; the six-key `SelectionStrings` contract is unchanged | finding 5 |
+| `src/client/renderers/{pdf,docx,pptx,xlsx}/*Body.tsx` | resolve the new renderer copy; the DOCX/PPTX status markup moved from inline colours to a styled attribute | findings 1, 2, 5 |
+| `src/client/renderers/{docx,pptx}/styles.ts` | a themed, self-painted status card; DOCX wrapper `min-width: max-content` | findings 1, 2, 3 |
+| `src/client/renderers/xlsx/styles.ts` | a darker danger fallback for the failure copy | finding 7 |
+| `src/client/renderers/xlsx/XlsxSheetTabs.tsx` | localized accessible name | finding 5 |
+| `tests/client/selection-overlay.client.spec.tsx` | three fallback expectations updated to the corrected offsets, each with the measured reason in its comment | finding 4 — the expectations pinned the defective placement; no assertion was weakened |
+
+**Post-remediation evidence.**
+
+- Renderer failure surfaces reached on a cold shell with corrupted fixture bytes:
+  PDF `无法显示文档：Invalid PDF structure.` with its retry control at
+  **18.90:1** and **18.43:1**; DOCX `invalid-archive` **18.90:1**; PPTX
+  `无法显示文档` **18.90:1**; XLSX `无法显示文档` **6.57:1**. Every surface
+  carries the parser's own diagnosis rather than a generic replacement, none
+  carries a stack trace, and no stale Ask button survives.
+- Dark theme selected through the product's own settings dialog
+  (`设置 → 通用设置 → 外观 → 深色`), which sets `body[data-ds-dark-theme]` and
+  resolves `--dsw-alias-bg-layer-1` to `#232324`,
+  `--dsw-alias-label-primary` to `#f9fafb` and
+  `--dsw-alias-button-floating-fill` to `#2c2c2e`. The Ask label measured
+  **13.34:1** there and hit-tested to itself.
+- The XLSX fallback now sits clear of the card, and probes at 25 %, 50 %, 75 %
+  and 95 % across the editable surface's own box never land on a button.
+
+**Suites and gates.**
+
+| Suite | Result |
+| --- | --- |
+| `ui-release.spec.ts` (new) | **17 / 0 / 0** — on the worktree build and again on the tarball-installed release profile |
+| `universal-selection.spec.ts` | 10 / 0 / 0 |
+| `resource-cleanup.spec.ts` | 6 / 0 / 0 |
+| `xlsx-selection.spec.ts` | 13 / 0 / 0 |
+| `pptx-selection.spec.ts` | 10 / 0 / 0 |
+| `docx-selection.spec.ts` | 6 / 0 / 0 |
+| `pdf-renderer.spec.ts` | 10 / 0 / 0 |
+| `real-dsh-textpreview.spec.ts` | 8 / 0 / 0 |
+| required matrix total | **63 passed, 0 failed, 0 skipped** (15.4 min, `--workers=1`) |
+| `pnpm check:dsh-contracts` | PASS |
+| `pnpm dsh:doctor -- --runtime` | PASS — installed DSH `0.1.5-rc.2`, contract environment consistent |
+| `pnpm typecheck` | PASS |
+| `pnpm test` | **1 052 passed / 0 failed over 58 files** |
+| `pnpm build` | PASS |
+| `pnpm verify` | **13 / 13** |
+| `npm pack --dry-run` | 92 files — the published file list did not grow |
+| `pnpm verify:package` | PASS — 12 checks |
+| `git diff --check` | clean |
+
+**Artifact identity.** Production changed, so the Task 15 candidate is
+superseded and was **not** reused: `lib/client.js`
+`735F8B77EC0B899F9740A8C0591AB7FE0A294C9D5F185A69A9B4A8F7134A183D` →
+`C866C7945F41A35EC1BE36C48BEAFB1202AA62D8874F1CDADA911186BB34E285`.
+`lib/index.mjs` is unchanged at
+`FAC72B86168E002CB6DD2939C1775CAD0D149AFB24C4C2264B1110B079A60F39`, which is
+what the predicted split requires: every change is client-side and the host entry
+was not touched. Two consecutive `pnpm pack` runs are bit-identical at
+`1FEAD2827C7BC3AF3ACB39DD56EC9CE065147D889534A002303F5D6D5E7EE159`. The tarball
+was copied outside the repository and installed into a **new disposable rc.2
+profile** (`dsa-t15u-release`, pnpm, hoisted linker): the installed
+`lib/client.js` and `lib/index.mjs` hash-match the worktree exactly, no file in
+the installed tree contains this repository's path, and the only links are pnpm
+store hard links. `ui-release.spec.ts` and `universal-selection.spec.ts` were
+then run against that instance.
+
+**Environment boundaries of this round.** The browser matrix runs at device pixel
+ratio 1; the host display is 2560×1600 at 150 % Windows scaling, which was
+recorded but not changed, and OS-scaling rendering beyond that setting is **not
+tested**. Browser zoom was exercised as viewport-equivalent CSS pixel sizes at
+the 100/125/150 ratios; Chromium's native zoom UI was not driven, and
+high-contrast is reported only as Chromium `forced-colors` emulation — Windows
+High Contrast itself is **not tested**. macOS, Linux and mobile remain
+unverified. Screenshots (the four viewports, edge placement, keyboard focus, the
+workbook fallback, dark theme, English and the failure surfaces) live under
+`E:\Projects\DSHarness\.t15u-audit\shots`, outside the repository; none is
+committed and none is inside the package.
+
+**Release state.** Not published: no `npm publish`, no git tag, no GitHub
+Release, and `main` is untouched at `cfabbf7`. The round stops at a verified
+release candidate pending an external UI merge audit.
+
 ## Synchronization
 
 Every completed Task is committed locally and pushed to `origin`, and the round
