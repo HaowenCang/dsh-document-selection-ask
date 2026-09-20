@@ -863,7 +863,7 @@ describe('overlay placement', () => {
     fixture.tree.unmount()
   })
 
-  it('falls back to the composer corner when the snapshot has no geometry', () => {
+  it('falls back clear of the composer card when the snapshot has no geometry', () => {
     const fixture = mountOverlay({
       snapshot: selection({ rects: [] }),
       buttonSize: { width: 100, height: 24 },
@@ -871,8 +871,11 @@ describe('overlay placement', () => {
     })
 
     const button = fixture.tree.container.querySelector<HTMLElement>(BUTTON)
+    // Right-aligned to the card, and one inset *above* it rather than inside it:
+    // the old inner placement covered the right of the composer's editable box,
+    // which the browser audit measured on every XLSX selection.
     expect(Number.parseFloat(button?.style.left ?? '')).toBe(600)
-    expect(Number.parseFloat(button?.style.top ?? '')).toBe(512)
+    expect(Number.parseFloat(button?.style.top ?? '')).toBe(500 - 24 - 12)
     fixture.tree.unmount()
   })
 
@@ -901,10 +904,11 @@ describe('overlay placement', () => {
 
     const button = fixture.tree.container.querySelector<HTMLElement>(BUTTON)
     // A card at the origin offers a right edge of 0, which the clamp lifts to the
-    // margin, and a top edge the inset moves just past it: neither axis is left
+    // margin, and no room above it at all, so the button takes the other side of
+    // the card rather than being pinned inside it: 100 + 12. Neither axis is left
     // sitting on the viewport boundary.
     expect(Number.parseFloat(button?.style.left ?? '')).toBe(8)
-    expect(Number.parseFloat(button?.style.top ?? '')).toBe(12)
+    expect(Number.parseFloat(button?.style.top ?? '')).toBe(112)
 
     fixture.tree.unmount()
   })
