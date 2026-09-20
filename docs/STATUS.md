@@ -3285,6 +3285,15 @@ rather than a one-off measurement.
   **13.34:1** there and hit-tested to itself.
 - The XLSX fallback now sits clear of the card, and probes at 25 %, 50 %, 75 %
   and 95 % across the editable surface's own box never land on a button.
+- The refusal notice was measured with a real refusal rather than a synthesized
+  one: a real drag over `task11-large.xlsx` produced `Sheet1!A2:I29` (252 cells,
+  past the 200-cell limit) and the notice rendered
+  `选中的单元格过多，请选择不超过 200 个单元格` at `[499,598,282×34]`, inside the
+  viewport, in two wrapped lines with no horizontal overflow, at **12.1:1**
+  contrast, with **zero** overlap against the composer card. A hit test at the
+  composer's editable surface still reaches the editable surface, and a hit test
+  at the notice's own centre reaches the notice; the empty live region is 0×0 and
+  the Ask button is correctly absent while the capture is refused.
 
 **Suites and gates.**
 
