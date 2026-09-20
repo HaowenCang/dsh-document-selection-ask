@@ -1,5 +1,5 @@
 /**
- * The smoke driver's control: one test-only button per fixture, twenty-six of
+ * The smoke driver's control: one test-only button per fixture, twenty-seven of
  * them, rendered as a bounded grid inside the chat column.
  *
  * **What this module is allowed to do.** Each button calls exactly one public
@@ -142,6 +142,13 @@ export type SmokeDriverProps = PropsRuntime<'conversation.input.overlay'> & {
  * as the measurement above — with all twenty-six controls inside the viewport,
  * none hidden, and the composer's card still ending 43.4 px above the strip's top
  * edge at `y = 447`.
+ *
+ * Task 16's `pdf-probe` makes it twenty-seven controls and twenty-eight grid
+ * items, and `ceil(28 / 4)` is seven rows exactly, so the strip's geometry is the
+ * one measured above — the last addition that this four-column track can absorb
+ * without a re-measurement. It is placed after `pdf-image` rather than appended so
+ * the five PDF fixtures stay contiguous in the strip; the position inside the grid
+ * does not affect the measurement, which is a function of the item count alone.
  *
  * ## Why a grid rather than a wrapping flex row
  *

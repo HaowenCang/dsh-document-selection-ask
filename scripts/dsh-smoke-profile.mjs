@@ -162,6 +162,7 @@ const PDF_FIXTURE_SOURCES = [
   { key: 'pdf-two', source: 'tests/fixtures/pdf/two-page.pdf' },
   { key: 'pdf-cjk', source: 'tests/fixtures/pdf/cjk.pdf' },
   { key: 'pdf-image', source: 'tests/fixtures/pdf/image-only.pdf' },
+  { key: 'pdf-probe', source: 'tests/fixtures/pdf/alignment-probe.pdf' },
 ]
 
 /**

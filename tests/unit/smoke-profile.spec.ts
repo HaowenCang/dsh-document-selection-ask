@@ -264,13 +264,19 @@ describe('smoke profile tooling', () => {
       expect(declared?.tabKind).toBe('text')
     }
 
-    // The four committed fixtures, which the browser spec opens by key.
-    for (const name of ['single-page', 'two-page', 'cjk', 'image-only']) {
+    // The five committed fixtures, which the browser spec opens by key.
+    for (const name of ['single-page', 'two-page', 'cjk', 'image-only', 'alignment-probe']) {
       expect(existsSync(join(repoRoot, 'tests', 'fixtures', 'pdf', `${name}.pdf`)), `${name}.pdf is missing`).toBe(
         true,
       )
     }
-    expect(sources.map((entry) => entry.key).sort()).toEqual(['pdf-cjk', 'pdf-image', 'pdf-single', 'pdf-two'])
+    expect(sources.map((entry) => entry.key).sort()).toEqual([
+      'pdf-cjk',
+      'pdf-image',
+      'pdf-probe',
+      'pdf-single',
+      'pdf-two',
+    ])
   })
 
   it('agrees with the driver about which DOCX fixtures exist and where they go', () => {
