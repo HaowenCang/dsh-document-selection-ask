@@ -1,0 +1,40 @@
+name: npm publish preflight
+
+on:
+  push:
+    branches:
+      - npm-publish-preflight/v0.1.1
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check npm publication prerequisites
+        shell: bash
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "$NPM_TOKEN" ]; then
+            echo "NPM_TOKEN_CONFIGURED=true"
+          else
+            echo "NPM_TOKEN_CONFIGURED=false"
+          fi
+
+          set +e
+          npm view dsh-document-selection-ask version --json > npm-view.out 2> npm-view.err
+          status=$?
+          set -e
+
+          if [ $status -eq 0 ]; then
+            echo "PACKAGE_EXISTS=true"
+            cat npm-view.out
+          else
+            if grep -qiE 'E404|404 Not Found|is not in this registry' npm-view.err; then
+              echo "PACKAGE_EXISTS=false"
+              echo "PACKAGE_NAME_AVAILABLE_OR_UNPUBLISHED=true"
+            else
+              echo "PACKAGE_LOOKUP_INDETERMINATE=true"
+              cat npm-view.err
+              exit $status
+            fi
+          fi
