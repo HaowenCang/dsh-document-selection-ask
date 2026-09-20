@@ -28,15 +28,25 @@
  * discharged: the module that owns PDF.js's own text-layer DOM is the module that
  * ends a generation, so no caller has to remember to.
  *
- * ## The one number that has to agree with the canvas
+ * ## The one number that has to agree with the canvas box
  *
- * `TextLayer` lays a span out at `transform × viewport.scale × devicePixelRatio`
- * and divides the result back down through the `--total-scale-factor` custom
- * property on its container. The canvas beside it is rendered at
- * `viewport.scale` with a separate output transform, so a text layer that keeps
- * the wrong factor is offset and mis-scaled relative to the image it selects.
- * `configureTextLayer` is where the factor is written, and both callers pass the
- * one `PdfBackingGeometry` they rendered the canvas with.
+ * The container's size and its spans' size both come from `--total-scale-factor`,
+ * which PDF.js's `TextLayer` reads on its own container (`pdfjs-dist@6.3.289`,
+ * `build/pdf.mjs`):
+ *
+ * ```text
+ * container width/height = --total-scale-factor × rawDims.pageWidth/Height
+ * span font-size         = --total-scale-factor × --font-height
+ * --font-height          = |viewport transform · glyph matrix|   (CSS pixels)
+ * ```
+ *
+ * Because `--font-height` is already in CSS pixels, the value that puts a span on
+ * the glyph it selects is the viewport's own CSS scale — the same viewport the
+ * canvas's CSS box is taken from. It is emphatically **not** a function of the
+ * canvas's backing factor: the library's own `devicePixelRatio` term sizes a
+ * canvas text-measurement font and the `--scale-x` correction, and never reaches
+ * the span box or its position. `configureTextLayer` is where the value is
+ * written, and it is handed the CSS viewport scale and nothing else.
  *
  * The container carries `class="textLayer"` because the selectors are the
  * attribute-free class names PDF.js's own stylesheet uses; the sheet this plugin
@@ -102,11 +112,12 @@ export function clearTextLayer(container: HTMLElement): boolean {
  * are values, not rules.
  *
  * @param container - the layer's own element.
- * @param textScaleFactor - the multiplier of `viewport.scale` the text is laid
- * out at, from `PdfBackingGeometry.textScaleFactor`.
+ * @param viewportScale - the CSS viewport's scale, i.e. `PageViewport.scale` for
+ * the viewport the canvas's CSS box was taken from. This is the value of
+ * `--total-scale-factor`.
  */
-export function configureTextLayer(container: HTMLElement, textScaleFactor: number): void {
-  container.style.setProperty('--total-scale-factor', String(textScaleFactor))
+export function configureTextLayer(container: HTMLElement, viewportScale: number): void {
+  container.style.setProperty('--total-scale-factor', String(viewportScale))
   // The rounding the reference viewer applies to its container dimensions. These
   // are 1px by default, which is what a page that is not being snapped to a
   // fractional column width wants.
