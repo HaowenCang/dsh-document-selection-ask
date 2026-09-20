@@ -54,12 +54,12 @@ jobs:
         shell: pwsh
         run: |
           $client = (Get-FileHash ".\lib\client.js" -Algorithm SHA256).Hash.ToUpperInvariant()
-          $host = (Get-FileHash ".\lib\index.mjs" -Algorithm SHA256).Hash.ToUpperInvariant()
+          $hostHash = (Get-FileHash ".\lib\index.mjs" -Algorithm SHA256).Hash.ToUpperInvariant()
           if ($client -ne "C866C7945F41A35EC1BE36C48BEAFB1202AA62D8874F1CDADA911186BB34E285") {
             throw "client bundle hash mismatch: $client"
           }
-          if ($host -ne "FAC72B86168E002CB6DD2939C1775CAD0D149AFB24C4C2264B1110B079A60F39") {
-            throw "host bundle hash mismatch: $host"
+          if ($hostHash -ne "FAC72B86168E002CB6DD2939C1775CAD0D149AFB24C4C2264B1110B079A60F39") {
+            throw "host bundle hash mismatch: $hostHash"
           }
 
       - name: Prepare checksum and release notes
