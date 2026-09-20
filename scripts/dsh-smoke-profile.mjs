@@ -29,10 +29,18 @@
  *
  * ## Safety rules
  *
- * - It writes inside `$DSH_HOME/profiles/dsa-smoke` and inside `smoke-fixtures/`
- *   in this repository. Nothing else is written anywhere.
- * - It never touches any other profile, and it refuses to act at all if the
- *   resolved profile path is not named `dsa-smoke`.
+ * - It writes `package.json` inside `$DSH_HOME/profiles/dsa-smoke`, the package
+ *   links below that profile's `node_modules`, and `smoke-fixtures/` in this
+ *   repository. No other profile's manifest is written anywhere.
+ * - It never touches any other profile's manifest, and it refuses to act at all
+ *   if the resolved profile path is not named `dsa-smoke`.
+ * - The links carry one caveat that the rules above do not cover, stated here
+ *   rather than left implied: `dsa-smoke/node_modules` is itself a directory link
+ *   onto the `web` profile's installed tree, so the two package links it
+ *   maintains physically live in that shared tree rather than in a directory only
+ *   `dsa-smoke` can see. `inspect` prints that target. The script's isolation
+ *   claim is therefore about *manifests and loaders*, not about the filesystem
+ *   location of the links, and `cleanup` removes them from the same shared place.
  * - Every operation is idempotent. Running it twice produces the same files and
  *   the same loader entry set, which is the property the duplicate-loader-entry
  *   regression needs.

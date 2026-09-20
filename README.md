@@ -10,23 +10,28 @@
 | 项目 | 状态 |
 |---|---|
 | Design | APPROVED |
-| Task 1 | COMPLETE |
-| Task 1A | COMPLETE |
-| Task 2 | COMPLETE |
-| Task 3 | COMPLETE |
-| Task 3A | COMPLETE |
-| Task 3B | COMPLETE |
-| Task 4 | COMPLETE |
-| Task 5 | COMPLETE |
-| Task 5A | LOCAL CODE PASS / REAL DSH TEXTPREVIEW SMOKE BLOCKED |
-| Task 5B | REAL DSH TEXTPREVIEW SMOKE PASS / 已记录一处 production defect（未修） |
-| Task 5C | COMPLETE — production defect 已修复（Ask surface 迁至 `shell.overlay`） |
-| Next task | 未授权（Task 6 未开始） |
-| Primary runtime | DSH `0.1.5-rc.1` |
-| Forward contract target | DSH `0.1.5-rc.2` |
+| Tasks 1–14 | COMPLETE |
+| Task 15 | NEXT / NOT AUTHORIZED |
+| Current official DSH runtime | `0.1.5-rc.2` |
+| Primary blocking real-app runtime | `0.1.5-rc.2` |
+| Primary compile-contract baseline | `0.1.5-rc.2` |
+| DSH `0.1.5-rc.1` | historical / optional backward-compatibility evidence |
+| Forward target | 未声明（更新的 DSH release 须先通过 contract 与 real-app acceptance） |
+| 八种格式 | 全部实现，并在真实 DSH 浏览器中验证 |
 | GitHub publication | ACTIVE（public） |
 
-TXT / Markdown / code / CSV 的选择 → 引用 → Ask 流程已经实现，并且已在真实 DSH 预览上通过 Playwright smoke。Task 5B 记录的那处 production defect 已由 Task 5C 修复：可见的 Ask surface 现在位于 `shell.overlay`（root scope，是三个栏位的兄弟节点），不再受 `wSkVaW_composerStack` 的 stacking context 限制，因此右栏展开且真实 TextPreview 挂载时，按钮仍可被真实鼠标点击。composer 侧的契约由 `conversation.input.overlay` 中的 `ComposerTargetRegistrar` 通过 `ComposerTargetRegistry` 按 session 提供；遮挡回归、draft 读取时机与会话隔离规则见 `docs/STATUS.md`。
+TXT / Markdown / code / CSV / PDF / DOCX / PPTX / XLSX 八类文档的“选中内容 → 引用 → Ask”
+流程均已实现，并在真实 DSH `0.1.5-rc.2` 的文档预览上通过 Playwright 验收：Task 13 的跨格式
+矩阵为 63 passed / 0 failed / 0 skipped，Task 14 在同一 runtime 上重新运行该矩阵作为回归
+gate。Ask 面位于 `shell.overlay`，composer 侧契约由 `conversation.input.overlay` 中的
+`ComposerTargetRegistrar` 按 session 提供。
+
+Task 14 同时闭合了 contract pin 与 runtime 的偏差：`@deepseek-ai/*` contract devDependencies
+已从 `0.1.5-rc.1` 迁移到 `0.1.5-rc.2`，`@deepseek-ai/cordis` 保持 `4.0.2`（独立版本体系）。
+迁移前后 `lib/client.js` 与 `lib/index.mjs` 的 SHA-256 完全一致，因此 Task 13 记录的 rc.1
+真实应用证据仍对应同一份 production bundle。
+
+兼容矩阵见 `docs/compatibility.md`，人工验收步骤见 `docs/manual-acceptance.md`。
 
 ## 已冻结范围
 
@@ -48,16 +53,13 @@ TXT / Markdown / code / CSV 的选择 → 引用 → Ask 流程已经实现，�
 - Office 编辑
 - 批注/高亮持久化
 
-架构阻塞（范围内但当前未交付）：
-
-- **XLSX 渲染运行时**。`@extend-ai/react-xlsx` 的解析引擎是 4.4 MB 的
-  `duke_sheets_wasm_bg.wasm`。DSH 只把外部客户端插件的浏览器半边作为**一个**生成脚本
-  提供（`exports["./client"]` 指向的文件及其可选 source map，经封闭的预计算响应表
-  精确匹配，其余路径一律 404），且没有任何公开的、客户端专用的二进制资产投递契约。
-  此前一版在 host 半边注册 `/dsa-assets/...` 路由来绕开这一点，属于架构范围扩张，已移除。
-  在架构决定之前，插件不猜测：选中 XLSX 时渲染器在挂载任何第三方 viewer 之前明确报错，
-  不访问 host 路由、不访问 CDN、不发任何网络请求。证据见
-  `tests/browser/xlsx-selection.spec.ts` 的 case 0。
+XLSX 渲染运行时不再是阻塞项。`@extend-ai/react-xlsx` 的解析引擎是一个 WASM 二进制，DSH 只把
+外部客户端插件的浏览器半边作为**一个**生成脚本提供（`exports["./client"]` 指向的文件及其可选
+source map，其余路径一律 404），没有公开的、客户端专用的二进制资产投递契约。Task 11 的解法
+是让构建管线把该 WASM 与 `@zip.js/zip.js` 一并内联进 `lib/client.js`：运行时 XLSX 的 WASM
+以 HTTP 请求数 0 的方式从内联字节启动，worker 走 `blob:` URL，不访问 host 路由、不访问 CDN。
+真实 DSH 浏览器验收见 `tests/browser/xlsx-selection.spec.ts`（13 passed / 0 failed / 0
+skipped），网络本地性断言见 `tests/browser/resource-cleanup.spec.ts`。
 
 ## 核心架构
 
@@ -119,13 +121,27 @@ Task 1 的启动指令存档在：
 
 ## 关键基线
 
-- Primary verified runtime: DSH `0.1.5-rc.1`
-- Forward contract target: DSH `0.1.5-rc.2`（仅 contract-compatible；未做真实应用 smoke，不得声称完整 runtime 支持）
+- Current official runtime / primary blocking real-app runtime / primary compile-contract
+  baseline: DSH `0.1.5-rc.2`
+- Historical backward-compatibility evidence: DSH `0.1.5-rc.1`（Task 13 的真实应用矩阵；
+  不再是 contract pin，也不作为维护基线）
+- 未声明独立的 forward target：更新的 DSH release 必须同时通过 contract gate 与 real-app
+  acceptance，之后才可以声称支持
 - Node: `^22.19.0 || >=24.0.0`
+- 人工验证平台: Windows 11 + Chromium-based DSH web UI（macOS / Linux / mobile 未验证）
 - client-only v1
 - no cloud conversion
 - no automatic submit
 - no private DSH/React/Lexical hacks
+
+`@deepseek-ai/cordis` 保持 `4.0.2`，它属于独立版本体系，不参与 DSH release 编号。
+
+## 兼容性与验收文档
+
+- `docs/compatibility.md` — DSH 支持矩阵、contract baseline 与真实应用证据
+- `docs/manual-acceptance.md` — 可逐条执行的 DSH rc.2 人工验收步骤（八种格式、草稿保全、
+  渲染器切换、插件禁用/恢复、大文档中途关闭、console / network 检查）
+- `docs/STATUS.md` — 每轮的验证结果记录
 
 ## 开发环境
 
@@ -135,12 +151,13 @@ Contract 编译所需的 DSH public packages 在本项目 `devDependencies` 中�
 git clone https://github.com/HaowenCang/dsh-document-selection-ask.git
 cd dsh-document-selection-ask
 pnpm install
-pnpm typecheck   # normative public-contract gate
+pnpm check:dsh-contracts   # Task 14 gate: pin + runtime + compiled contract probes
+pnpm typecheck             # normative public-contract gate
 pnpm test
 pnpm build
 ```
 
-不需要、也不允许预先修复用户级 DSH 安装。`pnpm dsh:doctor` 仅做检测：比对 contract pin 与本机 DSH 安装版本，不一致时以非零退出码报告；`--runtime` 要求必须找到本机安装。仓库不含任何机器绝对路径：全新 clone 只需 `pnpm install` 即可通过上述 gate。
+不需要、也不允许预先修复用户级 DSH 安装。`pnpm dsh:doctor` 仅做检测：比对 contract pin 与本机 DSH 安装版本，不一致时以非零退出码报告；`--runtime` 要求必须找到本机安装。`pnpm check:dsh-contracts` 是 Task 14 的完整 gate：它报告 contract release pin、各 manifest 的已声明与已安装版本、当前 DSH runtime、sidebar-documentpreview、`pdfjs-dist` 与 Node 版本，随后编译 contract probes，任何一项不一致即以非零退出码失败。它不联网、不安装、不写文件；`DSH_INSTALL_NODE_MODULES` 可显式指定 runtime，一旦指定即为唯一权威：`PATH` 上的 `dsh` 不会被探查，也不会回退到 `DSH_HOME` 或主目录 `node_modules`，override 本身有误时显式失败。二者共用同一份判定逻辑，不会给出互相矛盾的结论。构建、类型检查与测试都不读取仓库之外的路径，全新 clone 只需 `pnpm install` 即可通过上述 gate；`docs/STATUS.md` 的历史记录中引用了若干一次性隔离安装的路径，那是对既往执行的描述，不是本仓库的依赖。
 
 ## 真实 DSH 预览 smoke（开发者用，非用户功能）
 
@@ -148,7 +165,7 @@ pnpm build
 
 该 companion driver 位于 `tests/browser/smoke-driver/`，是独立、最小、private、test-only 的 DSH client plugin：它不 import 被测插件，不创建 `data-textpreview-*` 节点，除 `ctx.sidebarRight.openResource` 外不做任何导航。它不进入主包 `files` 发布集合，也不作为 npm/runtime 依赖发布；用户无需安装它。
 
-复现步骤（只操作隔离 profile `dsa-smoke`，不触碰任何用户 profile）：
+复现步骤（只维护隔离 profile `dsa-smoke` 自己的清单；共享 `node_modules` 链接的含义见下方说明）：
 
 ```bash
 pnpm install
@@ -159,4 +176,6 @@ dsh --profile dsa-smoke --port 50111 --no-open
 DSH_SMOKE_URL='http://127.0.0.1:50111/?token=…' pnpm test:browser
 ```
 
-`pnpm smoke:profile` 支持 `inspect` / `prepare` / `validate` / `cleanup`，固定 profile 名 `dsa-smoke`，写入前会拒绝其它 profile；重复执行不产生 duplicate loader entry。未设置 `DSH_SMOKE_URL` 时真实预览 spec 自动 skip，`pnpm test:browser` 在没有 DSH 的机器上仍可用。
+`pnpm smoke:profile` 支持 `inspect` / `prepare` / `validate` / `cleanup`，固定 profile 名 `dsa-smoke`，写入前会拒绝其它 profile；重复执行不产生 duplicate loader entry。未设置 `DSH_SMOKE_URL` 时真实预览 spec 自动 skip，`pnpm test:browser` 在没有 DSH 的机器上仍可用。逐条的人工验收步骤（含渲染器切换与插件禁用/恢复）见 `docs/manual-acceptance.md`。
+
+隔离范围需要说明清楚：`prepare` 写的是 `dsa-smoke` 自己的 `package.json` 与 `<repo>/smoke-fixtures/`，不写任何其他 profile 的清单；但 `dsa-smoke/node_modules` 本身是指向 `web` profile 已安装树的目录链接，因此它维护的两个目录链接在文件系统上落在同一棵共享树里。`inspect` 会打印该链接的目标。
