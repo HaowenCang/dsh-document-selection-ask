@@ -3350,6 +3350,169 @@ committed and none is inside the package.
 Release, and `main` is untouched at `cfabbf7`. The round stops at a verified
 release candidate pending an external UI merge audit.
 
+### Task 15UR — final UI release evidence closure
+
+An external review of Task 15U returned **production remediation: PASS
+candidate**, **final release evidence: INCOMPLETE**. Nothing in the production
+surface was disputed. What was disputed is that the round's evidence did not
+cover six things it claimed to, and this round closes exactly those six. No UI was
+redesigned, no feature was added, and **no production file was touched**: the
+whole round is `tests/**`, `scripts/**` and documentation.
+
+**The browser-collection gap, and its arithmetic.** Task 15 recorded
+`pnpm test:browser` as *70 passed*. That number was the whole suite as it stood
+then; Task 15U then added a 17-case `ui-release.spec.ts` without deleting any old
+spec, editing `playwright.config.ts`, or narrowing `test:browser` (which is still
+plain `playwright test`). The round therefore expected the complete collection to
+be 87 and had only ever executed 63 of it under the name "required matrix". On
+the final tarball instance, `pnpm exec playwright test --list` reports **87 tests
+in 9 files**, split `ask-flow.spec.ts` 7, `docx-selection.spec.ts` 6,
+`pdf-renderer.spec.ts` 10, `pptx-selection.spec.ts` 10,
+`real-dsh-textpreview.spec.ts` 8, `resource-cleanup.spec.ts` 6,
+`ui-release.spec.ts` 17, `universal-selection.spec.ts` 10,
+`xlsx-selection.spec.ts` 13. `63 + 17 + 7 = 87`: no previously collected case was
+lost, and no number was adjusted to meet the prediction.
+
+**The false-pass branches, and what replaced them.** Four cases in
+`ui-release.spec.ts` measured the Ask button behind a guard —
+`if (after.present && after.box !== null)`, and for the scroll case
+`if (after.present && rects.length > 0)` with the anchoring check skipped
+whenever the anchor had scrolled out of the viewport. The shape is the defect:
+a button that silently disappeared while its selection was still live satisfied
+every one of them. Each is now an explicit two-outcome state machine over a
+single atomic read of the browser selection and the button together. A live
+selection must yield a button that is inside the viewport, reachable by an
+unforced hit test at its own centre, pressable by a trial click, and placed where
+`src/client/selection/viewport.ts` puts it — within a bounded gap of the anchor
+when the anchor is visible, pinned to the near edge when it is not. A selection
+that is genuinely gone must yield no button. A persistent disagreement between
+the two halves is waited out on the selection lifecycle's own frame boundary and
+then fails with every pair it observed. The scroll case additionally clears the
+selection with a real press on the preview body and asserts the absent half on
+the same page. The dark-theme case previously measured the Ask contrast behind
+the same kind of guard, so a workbook selection that produced no button passed on
+the strength of its status copy; the button is now required before anything about
+it is measured.
+
+The hardening is not decorative, and the round's own first run is the evidence:
+the reworked scroll case failed with *"the live selection is above the viewport,
+so the button must be pinned to the top edge; it is at y=25.8"* — a real
+disagreement between a button still carrying the previous scroll's placement and
+a selection that had moved. The settle helper now waits for the lifecycle's frame
+boundary plus a stability window, and the case passes for the right reason. No
+`if (…present…)` branch that can pass without asserting survives in the file.
+
+**Dark-theme XLSX failure contrast, measured on the real surface.** The failure
+copy's contrast had only ever been measured in the light theme, and the same
+round had shown that `--dsw-alias-state-danger-primary` can resolve to nothing in
+rc.2. Reaching the surface needed a fixture nothing had: `xlsx-corrupt`, a
+78-byte file whose bytes are a ZIP local-file header followed by
+`task11-corrupt.xlsx: deliberately truncated archive, no central directory`. It is
+written from the smoke bootstrap's own literal table rather than committed as a
+binary, so the refused bytes are reviewable, and it is opened through the driver's
+ordinary public control — no look-alike `div.dsa-xlsx-error` was ever inserted. On
+the final tarball instance, in the product's own dark theme: `--dsw-alias-bg-canvas`
+resolves to **empty**, so the XLSX root's `background-color` falls back to
+`#ffffff`; `--dsw-alias-state-danger-primary` resolves to **empty**, so the failure
+copy's `color` falls back to `#b42318`; the composited ancestor background measures
+`rgb(255, 255, 255)`, the copy measures `rgb(180, 35, 24)`, and the pair measures
+**6.57:1** — identical to the light theme, because neither token resolves and both
+declared fallbacks are the light-surface values. The requirement is ≥ 4.5:1 and it
+holds. **No XLSX dark contrast defect exists and no production fix was needed**;
+the architecture claim is now an assertion in the dark case (an unresolved danger
+token must leave the declared fallback as the colour that paints) rather than
+prose. The twenty-sixth fixture changed the driver strip's row count from
+`ceil(26 / 4)` to `ceil(27 / 4)`, which is seven either way; re-measured at
+1,280 x 720 the strip box is `292, 490.4, 408 x 217.6` — the same y and height as
+the Task 13 measurement — with all twenty-six controls inside the viewport.
+
+**Full browser suite, against the final tarball.** The run used the disposable
+rc.2 profile `dsa-t15u-release`, whose plugin is the `file:` install of
+`C:\Users\20659\AppData\Local\Temp\dsa-t15u-final\dsh-document-selection-ask-0.1.0.tgz`
+— **not** a worktree link: the installed package directory is a real directory,
+and its `lib/client.js` and `lib/index.mjs` hash-match the frozen tree. With
+`DSH_SMOKE_URL` non-empty and `--workers=1`, `pnpm test:browser` (no spec filter)
+collected 87 and reported **87 passed, 0 failed, 0 skipped in 21.7 min**. The
+required matrix is the 63 of Task 15, unchanged and included; `ui-release` passed
+17; **`ask-flow` passed 7, failed 0, skipped 0** — reported on its own, not folded
+into the 63.
+
+**Eight-format core acceptance on the final tarball.** Because Task 15U changed
+shared UI production code, all eight classes were operated again on the installed
+tarball rather than carried over. Each was performed with a real draft typed by
+keyboard, the class's own real gesture, a real press on the Ask button, and then
+measured for draft preservation, quote count, focus and submission. The observed
+provenance of each:
+
+| Class | Gesture | Observed provenance |
+| --- | --- | --- |
+| TXT | real press + Shift-click on `beta` | `[来源：task5b-smoke.txt，第 2 行]` |
+| Markdown | real horizontal drag across `alpha paragraph` | `[来源：task5b-smoke.md]` |
+| code | real press + Shift-click on `const beta = 2` | `[来源：task5b-smoke.ts，第 2 行]` |
+| CSV | real press + Shift-click on `south,57,beta` | `[来源：task13-smoke.csv，第 3 行]` |
+| PDF | real press + Shift-click across the page-1 text layer | `[来源：task7-single-page.pdf，第 1 页]` |
+| DOCX | real press + Shift-click on paragraph 1 | `[来源：task9-paragraphs.docx，第 1 渲染页]` |
+| PPTX | real drag across slide 1 | `[来源：task10-text-two-slides.pptx，第 1 张幻灯片]` |
+| XLSX | real drag over `Sheet1!A1:C3` | `[来源：task11-simple.xlsx，Sheet1!A1:C3]` |
+
+All eight: Ask published with the contract label `询问 DeepSeek` and reachable by
+an unforced hit test at its own centre; the draft still began with the sentinel
+and had gained exactly one quote block; the composer held focus afterwards; the
+transcript row count was unchanged and the capture-phase `submit` observer counted
+**0** submissions. This is agent-performed scripted acceptance on the real
+application, not a human hand on the mouse; it is recorded as such.
+
+**Artifact identity, and which packaging command reproduces it.** With
+`src/**` and the package surface unchanged from `7cd090b`, the identity holds:
+`lib/client.js` `C866C7945F41A35EC1BE36C48BEAFB1202AA62D8874F1CDADA911186BB34E285`,
+`lib/index.mjs` `FAC72B86168E002CB6DD2939C1775CAD0D149AFB24C4C2264B1110B079A60F39`,
+and the tarball
+`1FEAD2827C7BC3AF3ACB39DD56EC9CE065147D889534A002303F5D6D5E7EE159` — reproduced
+after a clean `pnpm build` of this tree. One correction to the Task 15U record is
+required here, and it is a statement about the tool rather than the artifact:
+**`npm pack` is the command that reproduces that byte stream, not `pnpm pack`.**
+`pnpm pack` (11.7.0) normalises the shipped manifest, moving `scripts` to the end
+of the object and dropping the trailing newline, which yields
+`4A6D6114105BF28462EBBA5F6FBB32A078835064E6405F19CC49372ECECC915A`. The two
+tarballs are otherwise identical: 92 entries each, 91 of them byte-identical, the
+same keys and the same values in the manifest, and both pass
+`pnpm verify:package` (92 files, 82 declarations, every check PASS). The Task 15U
+entry above says "two consecutive `pnpm pack` runs" — the runs were consecutive
+and bit-identical, but the tool was `npm pack`, and this entry is the
+authoritative one.
+
+**Fresh checkout.** A clean `git clone` of this branch, outside the repository, at
+the candidate commit `fab0a05`: no `lib/`, no `node_modules/`, no `.tgz`, no
+`smoke-fixtures/`, no `test-results/` and no `playwright-report/` before anything
+ran, and the clone's own worktree list contains only itself. `pnpm install
+--frozen-lockfile` 0; `pnpm test` **1052 passed over 58 files**; `pnpm typecheck`
+0; `pnpm check:dsh-contracts` PASS; `pnpm build` 0; `pnpm verify` 13/13;
+`npm pack --dry-run` **92 files** (6.4 MB packed, 16.7 MB unpacked). The built
+`lib/client.js` and `lib/index.mjs` hash-match the frozen candidate exactly. The
+only external compatibility input was `DSH_INSTALL_NODE_MODULES` pointing at the
+installed `0.1.5-rc.2`; no `lib/`, link or build output was read from the original
+worktree.
+
+**Static matrix on the frozen head.** `pnpm check:dsh-contracts` PASS with
+`runtime discovery = DSH_INSTALL_NODE_MODULES override` and `PATH CLI report =
+NOT PROBED (explicit override)`; `pnpm dsh:doctor -- --runtime` PASS, installed
+DSH `0.1.5-rc.2`, contract environment consistent; `pnpm typecheck` 0;
+`pnpm test` 1052/1052 over 58 files; `pnpm build` 0 with both bundles
+byte-identical afterwards; `pnpm verify` **13/13**; `npm pack --dry-run` 92 files;
+`pnpm verify:package` PASS; `git diff --check` clean.
+
+**Boundaries this round did not move,** and deliberately: XLSX full ARIA tabs
+pattern stays a NOTE; the XLSX sheet surface and PDF pages stay white in dark
+theme because `--dsw-alias-bg-canvas` does not resolve in rc.2 — which is what
+makes the 6.57:1 above a statement about the light canvas rather than about a
+dark one; Chromium's native zoom UI, Windows High Contrast and OS-scaling
+switching are **not tested**; macOS, Linux and mobile remain unverified. None was
+addressed, and none is claimed.
+
+**Release state.** Not published: no `npm publish`, no git tag, no GitHub
+Release, `main` is untouched at `cfabbf7`, and PR #9 stays a draft. The round
+stops at a verified release candidate pending an external merge audit.
+
 ## Synchronization
 
 Every completed Task is committed locally and pushed to `origin`, and the round
