@@ -1371,6 +1371,180 @@ a WASM integrity failure still fails closed.
 
 ## Current gate
 
+### Task 15 — final packaging, tarball installation and release verification (this round)
+
+Everything below was run in the Task 15 worktree on `2026-09-20`, on Windows 11,
+Node `v24.13.0`, pnpm `11.7.0`, against the installed DSH `0.1.5-rc.2`.
+
+```text
+FINAL_FREEZE_HEAD = 71398dfca5c33c772bd64b4d632720f1bef40d8d
+FINAL_FREEZE_STATUS = clean
+ACTIVE_SUBAGENTS = 0
+```
+
+The freeze commit is the round's release-candidate commit
+`release: prepare universal document selection plugin`. `docs/STATUS.md` is not in
+the package `files` allowlist, so the record commit that follows it changes nothing
+the tarball carries; no other file is touched after the freeze.
+
+**Static matrix, frozen commit.**
+
+```text
+pnpm install --frozen-lockfile   PASS (lockfile unchanged)
+pnpm check:dsh-contracts         PASS — pin 0.1.5-rc.2, probes compile, PATH CLI reported
+pnpm dsh:doctor -- --runtime     PASS (same implementation as the checker)
+pnpm typecheck                   PASS
+pnpm test                        PASS — 58 files, 1052 tests, 0 failed
+pnpm build                       PASS
+pnpm verify                      PASS — 13/13 heuristic rules (R13 is the round's new packaging rule)
+pnpm verify:package              PASS — 9 checks on the real tarball
+npm pack --dry-run               92 entries, no forbidden shape
+git diff --check                 clean
+```
+
+**Production delta.** `git diff f862a05d 71398df -- src` is empty. The built
+artifacts equal the Task 14 build: `lib/client.js` 16,331,628 bytes, SHA-256
+`735F8B77EC0B899F9740A8C0591AB7FE0A294C9D5F185A69A9B4A8F7134A183D`;
+`lib/index.mjs` SHA-256
+`FAC72B86168E002CB6DD2939C1775CAD0D149AFB24C4C2264B1110B079A60F39`. Two
+consecutive builds in the same environment produced identical hashes.
+
+**Tarball.**
+
+| Item | Value |
+| --- | --- |
+| Filename | `dsh-document-selection-ask-0.1.0.tgz` |
+| SHA-256 | `BB2AB1A0048719A6F416BF00AA75A53DF3410ED110D719350DE5437F748E07F8` |
+| Compressed size | 6,393,222 bytes |
+| Unpacked size | 16,688,796 bytes (92 entries, 82 of them `.d.ts`) |
+| `lib/client.js` inside the tarball | 16,331,628 bytes, SHA-256 `735F8B77…` (identical to the build) |
+| Reproducibility | two consecutive `pnpm pack` runs are **bit-identical** (same SHA-256), not merely same file list |
+| Side PDF worker file | absent — the worker source is embedded in `lib/client.js` |
+| Side XLSX `.wasm` / worker file | absent — the gzip payload and the worker source are embedded in `lib/client.js` |
+| `tests/`, fixtures, reports, coverage, `.git/`, `node_modules/` | absent |
+| Screenshots, logs, credentials, absolute machine paths | absent |
+| Shipped docs | `docs/renderer-support.md`, `docs/security.md`, `docs/compatibility.md` |
+
+**Tarball independence.** The plugin was installed from the packed `.tgz` into the
+disposable profile, not from a link:
+
+```text
+dsh --profile dsa-release-t15 --from-default-profile web        profile initialized from the shipped template
+dsh plugin --profile dsa-release-t15 add <tgz>                  forwards to pnpm in the profile directory, then reconciles dsh.profile.bundles itself
+installed path   C:\Users\<user>\.dsh\profiles\dsa-release-t15\node_modules\dsh-document-selection-ask
+```
+
+The installed tree is a real directory inside the profile, not a junction, and it
+does not point at any worktree. Its 92 files, its `lib/client.js` hash and its
+`package.json` identity all match the tarball. The test-only smoke driver is the
+only repository-side input, and it is linked into that profile's own
+`node_modules` rather than into the shared tree. A `remove` + `add` cycle from the
+tarball was also run: removal took the package out of both `dependencies` and
+`dsh.profile.bundles`, and the reinstall put it back and loaded it.
+
+**Automated rc.2 browser matrix, required seven suites, `--workers=1`, against the
+tarball-installed plugin** (port 50031, profile `dsa-release-t15`):
+
+| Suite | Required | Measured |
+| --- | --- | --- |
+| `universal-selection.spec.ts` | >= 10 / 0 / 0 | 10 / 0 / 0 |
+| `resource-cleanup.spec.ts` | >= 6 / 0 / 0 | 6 / 0 / 0 |
+| `xlsx-selection.spec.ts` | >= 13 / 0 / 0 | 13 / 0 / 0 |
+| `pptx-selection.spec.ts` | 10 / 0 / 0 | 10 / 0 / 0 |
+| `docx-selection.spec.ts` | 6 / 0 / 0 | 6 / 0 / 0 |
+| `pdf-renderer.spec.ts` | 10 / 0 / 0 | 10 / 0 / 0 |
+| `real-dsh-textpreview.spec.ts` | 8 / 0 / 0 | 8 / 0 / 0 |
+| **total required** | **63 / 0 / 0** | **63 / 0 / 0** |
+
+`pnpm test:browser` — the full suite, including the eighth spec `ask-flow.spec.ts` —
+reported **70 passed, 0 failed, 0 skipped**. The eight format/provenance cases and
+the draft-preservation and zero-auto-submit assertions all passed against the
+tarball-installed plugin, including the sentinel-draft cases in
+`universal-selection.spec.ts`. After the reinstall from the final tarball, three
+representative suites (`pdf-renderer`, `docx-selection`, `pptx-selection`) were
+re-run: 26 passed, 0 failed.
+
+**Manual acceptance, executed against the tarball-installed plugin.** Sections 6
+and 7 of `docs/manual-acceptance.md` (eight formats, exact provenance, sentinel
+draft preserved, one appended quote block, no auto-submit) are the
+`universal-selection.spec.ts` cases above, which drive the same real preview with
+real gestures; the remaining sections were executed directly and observed:
+
+```text
+text                  PASS   (universal-selection: exact line provenance, sentinel preserved, zero submits)
+markdown              PASS   (file-only provenance, no fabricated source line)
+code                  PASS   (exact line provenance)
+csv                   PASS   (plain-renderer line provenance, no spreadsheet semantics)
+pdf                   PASS   (page provenance)
+docx                  PASS   (rendered-page provenance)
+pptx                  PASS   (slide provenance)
+xlsx                  PASS   (semantic range provenance)
+draft-preserve        PASS   (sentinel at offset 0 in every case, one quote block appended)
+auto-submit-zero      PASS   (submit observer counted 0 in every case)
+renderer-selector     PASS   menu = ["PDF · Selectable", "PDF", "纯文本"]; switching to the builtin
+                             dropped the plugin root (label "PDF", canvas still drawn) and switching
+                             back restored "PDF · Selectable"
+disable/restore       PASS   --patch overlay: plugin root 0, no plugin Ask, menu = ["PDF", "纯文本"],
+                             builtin canvas drawn; after removing the overlay and restarting:
+                             plugin root present, "PDF · Selectable" back in the menu
+rapid-close           PASS   large PPTX (120 slides) and large XLSX cut mid-load: 0 stale Ask,
+                             0 late DOM, sentinel draft intact
+console-clean         PASS   0 error-level console entries and 0 page errors in the main run;
+                             0 in the disabled run; 0 in the restored run
+network-local         PASS   105 requests in the main run and 36 in each of the other two, all to
+                             the instance origin; 0 cross-origin; 0 requests matching
+                             pdf.worker / *.bcmap / standard_fonts / duke_sheets / dsa-assets / xlsx-worker
+```
+
+**Fresh checkout.** A clone of the frozen commit into a directory outside the
+repository, with no `lib/` and no driver build, reached the documented sequence
+without any manual preparation:
+
+```text
+pnpm install --frozen-lockfile    PASS
+pnpm test                         PASS — 58 files, 1052 tests (the Vitest global setup builds both bundles)
+pnpm typecheck                    PASS
+pnpm check:dsh-contracts          PASS with DSH_INSTALL_NODE_MODULES=<rc.2 install>;
+                                  PATH CLI report = NOT PROBED (explicit override)
+pnpm build                        PASS — lib/client.js 735F8B77…, lib/index.mjs FAC72B86…, identical to the worktree
+pnpm verify                       PASS — 13/13
+npm pack --dry-run                92 entries, same as the worktree
+```
+
+No checkout outside the repository was read or required, and no file was modified to
+make this machine's environment fit.
+
+**Round findings that changed a file.**
+
+- `tests/setup/build-artifacts.ts`: the Vitest global setup now builds the test-only
+  smoke driver as well as the shipping artifacts. The fresh-checkout gate found that
+  `pnpm install && pnpm test` failed on a clean clone because
+  `tests/unit/smoke-profile.spec.ts:145-148` asserts the driver's two declared entry
+  points exist on disk and only `pnpm build` ran. The fix builds both rather than
+  weakening the assertion. `src/**` is untouched and both artifacts remain
+  byte-identical.
+- `scripts/verify-package.mjs`: the three checks that depend on the shipped manifest
+  now print a FAIL verdict when that manifest cannot be parsed, instead of printing
+  nothing; the file's own contract says a check that cannot run is a failure rather
+  than a skip. Its forbidden shapes also name the side worker/asset files
+  (`pdf.worker.*`, `xlsx-worker.*`, `*.bcmap`, `*.pfb`, `*.map`), which
+  `scripts/verify.mjs` R13 already rejected in the allowlist.
+- Documentation line references to `scripts/verify.mjs` and
+  `scripts/verify-package.mjs` were re-anchored after those files changed, and four
+  citations in `docs/security.md` were corrected against the sources they name
+  (the XLSX spec assertion lines, the preview-root selector line, the measured
+  artifact-size attribution, and the preflight rejection order, which validates the
+  entry count before the per-entry pass rather than after it).
+
+**An independent read-only adversarial audit of the release-candidate commit was
+run before this record.** It re-derived the tarball contents, the shipped-library
+set, the notices' quantitative claims and the security document's statements from
+the sources and the installed packages, and found no blocking defect. Its findings
+are the three bullet points above; the two script-level ones and the citation
+corrections were closed before the freeze, and the audit's report is summarized
+here rather than quoted.
+
+
 - Task 14 contract migration — baseline pins `0.1.5-rc.1`, runtime `0.1.5-rc.2`,
   `pnpm dsh:doctor -- --runtime` **FAIL** with "installed DSH is 0.1.5-rc.2 while
   the contract packages pin 0.1.5-rc.1" (this is the divergence the round exists to
@@ -2395,8 +2569,21 @@ own dependencies.
 
 ## Next
 
-**Task 15 is NOT AUTHORIZED.** No release, tag or npm publish is authorized
-either. Nothing in this round opens Task 15 or prepares a release.
+**Task 15 is the final implementation task of this plan and was authorized for this
+round. Release, GitHub Release, git tag and npm publish are NOT authorized**, and
+none of them was performed: this round creates no tag, no release and no registry
+publication, and nothing in it claims the package is published.
+
+**Task 15 — Final packaging, notices, user documentation, tarball installation and
+release verification — COMPLETE.** The plan's last implementation task is delivered
+and recorded under "Current gate" above: the packaging metadata, the three user
+documents, the packaging gates, the isolated tarball install, the automated rc.2
+browser matrix, the manual acceptance procedure executed against the
+tarball-installed plugin, and the fresh-checkout build. What remains is an external
+merge audit of the evaluation branch; the round itself ends here and takes no
+release action.
+
+The handover below is retained as history.
 
 **Task 14 — Compatibility matrix and DSH real-app acceptance procedure — COMPLETE.**
 Task 13 closed the cross-format acceptance gate; what it deliberately did not do is
