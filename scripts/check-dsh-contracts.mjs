@@ -38,11 +38,12 @@
  * The script only reads. It never writes inside the project, never touches the
  * DSH installation, never queries a registry, never downloads a package, and
  * never runs an install. Its only two child processes are the CLI version probe
- * described below and the project's own TypeScript compiler; the compiler is
- * invoked directly, as `node <root>/node_modules/typescript/bin/tsc` with the
- * arguments the `typecheck` script declares, because `pnpm run` decides whether
- * the dependency tree is up to date before running a script and would install one
- * for a tree it does not recognise.
+ * described below and the project's own TypeScript compiler — and the probe runs
+ * only when no override names the installation, as the next section states; the
+ * compiler is invoked directly, as `node <root>/node_modules/typescript/bin/tsc`
+ * with the arguments the `typecheck` script declares, because `pnpm run` decides
+ * whether the dependency tree is up to date before running a script and would
+ * install one for a tree it does not recognise.
  *
  * ## The pin fields it owns
  *
@@ -60,11 +61,12 @@
  * in this order:
  *
  * 1. `DSH_INSTALL_NODE_MODULES` — a `node_modules` directory holding an
- *    installation's `@deepseek-ai` scope. When it is set it is the **only**
- *    location inspected, so pointing it at the wrong directory fails loudly
- *    instead of falling back to whatever else the machine happens to have. That
- *    exclusivity is what makes the gate usable for an isolated comparison: an
- *    override onto another release has to produce a mismatch, not a pass.
+ *    installation's `@deepseek-ai` scope. When it is set and non-empty it is the
+ *    **only** authority: the location inspected, the runtime selected and the
+ *    verdict reached. Pointing it at the wrong directory fails loudly instead of
+ *    falling back to whatever else the machine happens to have. That exclusivity
+ *    is what makes the gate usable for an isolated comparison: an override onto
+ *    another release has to produce a mismatch, not a pass.
  * 2. The `dsh` CLI on `PATH`. Its own version command is executed and its output
  *    is validated, rather than assumed: the flag and the output shape were
  *    probed on the installed CLI (`dsh --help` documents `-V, --version`)
@@ -74,6 +76,16 @@
  * 3. The public `DSH_HOME` layout — `$DSH_HOME` or the default home directory,
  *    then `profiles/node_modules` — followed by the home directory's own
  *    `node_modules`.
+ *
+ * Routes 2 and 3 are excluded by the override rather than ranked below it. With
+ * `DSH_INSTALL_NODE_MODULES` set, `probePathCli` is never called: the `dsh` on
+ * `PATH` is not executed, not read, and not reported, so an ambient installation
+ * — a different release, or a launcher that fails — cannot reach the verdict
+ * even as a secondary complaint. Exclusivity therefore holds at three levels at
+ * once: which locations are read, which runtime is selected, and what is
+ * reported. An override that is absent, that is not a `node_modules`, that holds
+ * no `@deepseek-ai/dsh`, or whose version disagrees with the contract pin fails
+ * on its own evidence; none of the three routes is a fallback for a bad override.
  *
  * ## Usage
  *
@@ -437,8 +449,14 @@ function probePathCli(env) {
 /**
  * Candidate `node_modules` directories holding an installation, in precedence
  * order. Nothing outside these is inspected, and none of them is written to.
+ *
+ * An override short-circuits before `pathLaunchers` is consulted, so `PATH` is
+ * not even scanned in that mode — the exclusivity is a property of the read, not
+ * of how a later comparison happens to treat its result.
+ *
  * @param env - the environment to read.
- * @returns `{ roots, source }` where `source` names the route that produced them.
+ * @returns `{ roots, source, exclusive }` where `source` names the route that
+ *   produced them and `exclusive` states whether the override was the authority.
  */
 function runtimeCandidates(env) {
   const override = env.DSH_INSTALL_NODE_MODULES
@@ -493,12 +511,21 @@ function versionAt(root, name) {
 
 /**
  * Discover the installed DSH runtime.
+ *
+ * The candidates are resolved *before* any launcher is probed, because the
+ * override decides whether the `PATH` route exists at all. Probing `PATH` first
+ * and discarding the result afterwards would still execute an ambient launcher
+ * and would still leave its report available to the verdict, which is the
+ * defect this ordering removes: under an override `cli` is `null` without
+ * `probePathCli` having run, so no `PATH` observation can reach a decision.
+ *
  * @param env - the environment to read.
- * @returns the runtime record, the CLI probe result, and the candidates tried.
+ * @returns the runtime record, the CLI probe result (`null` when `PATH` was not
+ *   probed), whether the override was exclusive, and the candidates tried.
  */
 function discoverRuntime(env) {
-  const cli = probePathCli(env)
   const { roots, source, exclusive } = runtimeCandidates(env)
+  const cli = exclusive ? null : probePathCli(env)
   const tried = []
 
   for (const root of roots) {
@@ -658,7 +685,9 @@ export function inspectContractEnvironment({
   // made against an installation nobody confirmed this machine actually runs.
   // Downgrading it would let the gate report PASS for an environment whose
   // load-bearing evidence is missing, which is the failure this file exists to
-  // prevent.
+  // prevent. Neither this rule nor the one below it applies under an override:
+  // there `cli` is `null` because `PATH` was never probed, not because the probe
+  // came back empty, and an ambient launcher is not this gate's evidence.
   if (cli !== null && cli.error !== undefined) {
     problems.push(`  - a \`dsh\` launcher is on PATH but ${cli.error}`)
   }
@@ -689,6 +718,7 @@ export function inspectContractEnvironment({
     cli,
     tried,
     source,
+    exclusive,
     problems,
     notes,
   }
@@ -925,7 +955,9 @@ function main(options) {
     `check-dsh-contracts: runtime sidebar-documentpreview version = ` +
       `${state.runtime?.sidebarDocumentPreview ?? 'not hoisted by the installation'}`,
   )
-  if (state.cli !== null) {
+  if (state.exclusive === true) {
+    console.log('check-dsh-contracts: PATH CLI report = NOT PROBED (explicit override)')
+  } else if (state.cli !== null) {
     console.log(
       `check-dsh-contracts: PATH CLI report = ` +
         `${state.cli.version ?? `unreadable (${state.cli.error})`}`,

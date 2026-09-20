@@ -26,7 +26,11 @@
  * installation a failure rather than a note.
  *
  * Locations are discovered, never hard-coded; `check-dsh-contracts.mjs`
- * documents the three routes and their precedence.
+ * documents the three routes and their precedence. Because the decision is
+ * imported rather than restated, the override semantics come with it: with
+ * `DSH_INSTALL_NODE_MODULES` set, this script reports the same discovery source
+ * and the same "the `PATH` CLI was not probed" state the checker reports, and it
+ * cannot reach a different verdict about an ambient installation.
  */
 
 import { inspectContractEnvironment } from './check-dsh-contracts.mjs'
@@ -37,6 +41,10 @@ const state = inspectContractEnvironment({ requireRuntime })
 
 console.log(`dsh-doctor: installed DSH = ${state.runtime?.version ?? 'not found'}`)
 if (state.runtime !== null) console.log(`dsh-doctor: DSH scope = ${state.runtime.root}`)
+console.log(`dsh-doctor: runtime discovery = ${state.source}`)
+if (state.exclusive === true) {
+  console.log('dsh-doctor: PATH CLI report = NOT PROBED (explicit override)')
+}
 console.log(`dsh-doctor: contract release pin = ${state.releasePin ?? 'inconsistent'}`)
 console.log(
   'dsh-doctor: contract packages = ' +
