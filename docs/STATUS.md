@@ -3865,10 +3865,12 @@ completion report and the PR body carried
 bytes while this file carried
 `1E29537B9E7CE98DD389A7B77D218EF71172A51E4AD06F81681EE98AF3282FC1` at 6,374,909
 bytes, so two candidate identities existed for one tarball. The value was
-re-determined rather than assumed: `1E29537B…` is **superseded**, it is an
-intermediate pre-freeze packing of the same tree that no longer reproduces, and it
-appears nowhere in the repository after this round. From a clean worktree at
-`1b3b7d38…`, `pnpm build` reproduces `lib/client.js` at `CCFDE635…` and
+re-determined rather than assumed: `1E29537B…` is **superseded**; it is an
+intermediate pre-freeze packing of the same tree that no longer reproduces. That
+identity and the 6,374,909-byte size recorded with it are retained only in this
+Task 16R historical correction record, and neither is presented anywhere as the
+final, canonical or current release-candidate artifact identity. From a clean
+worktree at `1b3b7d38…`, `pnpm build` reproduces `lib/client.js` at `CCFDE635…` and
 `lib/index.mjs` at `BEA2CCED…` exactly, and two consecutive `npm pack` invocations
 produce byte-identical tarballs:
 
