@@ -142,7 +142,7 @@ cmd /c mklink /J "%USERPROFILE%\.dsh\profiles\<profile>\node_modules\@dsh-smoke\
 
 下表的数字是 **Task 14 在真实 DSH `0.1.5-rc.2` 上的历史实测基线**（profile `dsa-smoke`，`DSH_SMOKE_URL` 非空，`--workers=1`），逐套件来源为 `docs/STATUS.md` 的 “Task 14 primary rc.2 browser matrix” 条目；`docs/07-testing-strategy.md` 第 9 节记录了同一组数字的 63 / 0 / 0。**Task 15 与 Task 15U 已针对 tarball 安装的插件复测过这组数字**；本文固定的是必需形状与历史基线，某一轮实际跑出的逐套件数值由该轮的 `docs/STATUS.md` 条目记录，本文不预填。
 
-`required matrix` 不是 `pnpm test:browser` 的全部。该命令收集 `tests/browser/` 下的每一个 spec，因此完整集合是 `required matrix` + `ui-release` + `ask-flow` 三者之和。Task 15U 之后的声明数是 `63 + 17 + 7 = 87`；Task 16 新增 `tests/browser/pdf-hidpi.spec.ts`（8 例），并把 PDF 面计入 `required matrix`，于是 `required matrix` 从 63 升到 65，实测收集总数为 **95**：逐文件合计为 `ask-flow 7 + docx 6 + pdf-hidpi 8 + pdf-renderer 10 + pptx 10 + real-dsh-textpreview 8 + resource-cleanup 6 + ui-release 17 + universal-selection 10 + xlsx 13 = 95`（该矩阵的逐套件数值记入当轮 `docs/STATUS.md`，本文不预填）。报告 `pnpm test:browser` 的结果时只写 required matrix 会把两个真实套件从证据里抹掉，因此三部分必须分开列出（见 `docs/STATUS.md` 的 Task 15U、Task 15UR 与 Task 16 条目）。
+`required matrix` 不是 `pnpm test:browser` 的全部。该命令收集 `tests/browser/` 下的每一个 spec，因此完整集合是 `required matrix` + `ui-release` + `ask-flow` 三者之和。Task 15U 之后的声明数是 `63 + 17 + 7 = 87`；Task 16 新增 `tests/browser/pdf-hidpi.spec.ts`（8 例），并把 PDF 面计入 `required matrix`，于是 `required matrix` 从 63 升到 71，实测收集总数为 **95**：逐文件合计为 `ask-flow 7 + docx 6 + pdf-hidpi 8 + pdf-renderer 10 + pptx 10 + real-dsh-textpreview 8 + resource-cleanup 6 + ui-release 17 + universal-selection 10 + xlsx 13 = 95`（该矩阵的逐套件数值记入当轮 `docs/STATUS.md`，本文不预填）。报告 `pnpm test:browser` 的结果时只写 required matrix 会把两个真实套件从证据里抹掉，因此三部分必须分开列出（见 `docs/STATUS.md` 的 Task 15U、Task 15UR 与 Task 16 条目）。
 
 | Suite | Required |
 | --- | --- |

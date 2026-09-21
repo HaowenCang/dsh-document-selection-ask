@@ -3608,12 +3608,21 @@ of the frozen commit reproduces the same two bundle hashes and the same
 
 ### Task 16 — v0.1.2 PDF high-DPI rendering and TextLayer alignment hotfix
 
-**v0.1.0 KNOWN PDF HIGH-DPI DEFECT.** The released selectable PDF renderer drew its
-canvas at a *lower* resolution than the display on every display above 1×, and laid
-its selectable text out at that same reduced scale. The defect shipped in
-`v0.1.0` (tarball `93EE00FB…`) and is present unchanged in `0.1.1`, which was
-published to npm from `release/npm-v0.1.1` without touching `src/client/**`, so both
-released versions carry it.
+**v0.1.0 KNOWN PDF HIGH-DPI DEFECT.** The released selectable PDF renderer carried
+**two independent errors**, and the reported symptom has one component from each.
+The raster error is a threshold effect: on an ordinary page that no cap binds, the
+`finest` detail tier requested `devicePixelRatio / 2` once the ratio reached 1.5, so
+the canvas was backed below the display ratio at 1.5× and above — 0.749 backing
+pixels per CSS pixel at 1.5×, which is below one, and 1.000 at 2×. Below that
+threshold nothing reduced the backing density, so the measured 1.000 and 1.250 at
+1.0× and 1.25× are the requested ratio met exactly, not a defect. The TextLayer
+error has no threshold and is a different failure: `--total-scale-factor` was
+written as `backing.factor / devicePixelRatio` instead of the page's own CSS
+viewport scale, so the text layer was laid out off its glyphs at every ratio,
+including the two where the raster was correct. The defect shipped in `v0.1.0`
+(tarball `93EE00FB…`) and is present unchanged in `0.1.1`, which was published to
+npm from `release/npm-v0.1.1` without touching `src/client/**`, so both released
+versions carry it.
 
 ```text
 symptom           a PDF page is visibly blurry on a scaled display, and the blue
@@ -3622,13 +3631,28 @@ affected surface  src/client/renderers/pdf/{geometry,render-page,text-layer}.ts
                   (canvas backing factor and --total-scale-factor)
 reported on       Windows 2560x1600 at 150 % scaling, i.e. devicePixelRatio 1.5
 root cause        two independent errors with one shared premise
-                  1. a "detail tier" whose `finest` setting asked for
-                     `devicePixelRatio / 2`, selected at devicePixelRatio >= 1.5, so
-                     a 150 % display was rendered at 0.75 device pixels per CSS
-                     pixel and a 200 % display at 1.0;
-                  2. `--total-scale-factor` was written as
+                  1. raster: a "detail tier" whose `finest` setting asked for
+                     `devicePixelRatio / 2`, selected at devicePixelRatio >= 1.5.
+                     This is a threshold effect and it needs its scope stated: only
+                     a page that no cap binds and whose ratio reaches the threshold
+                     was asked for less than its ratio, which is why a 150 % display
+                     was rendered at 0.75 device pixels per CSS pixel — below one
+                     backing pixel per CSS pixel — and a 200 % display at 1.0. At
+                     devicePixelRatio 1.0 and 1.25 the `normal` tier requested the
+                     ratio itself and the backing density was *not* reduced;
+                  2. TextLayer: `--total-scale-factor` was written as
                      `backing.factor / devicePixelRatio`, on the theory that
-                     PDF.js's own `devicePixelRatio` term had to be cancelled
+                     PDF.js's own `devicePixelRatio` term had to be cancelled.
+                     The contract is the page's `cssViewport.scale` alone, so this
+                     error is not a function of the raster factor at all. On the
+                     reproduction page the viewport scale is 1.2851095…, while the
+                     released value was 1 at devicePixelRatio 1.0 and 1.25 and 0.5
+                     at 1.5 and 2 — wrong at every ratio, by a different amount,
+                     and wrong at the two ratios where the raster was correct.
+                     The released client suite asserted "the span's box lies inside
+                     the canvas box", which a text layer shrunk uniformly relative
+                     to the raster satisfies; the browser suite's ink comparison
+                     replaces that proxy
 v0.1.2 fix        the backing factor is the device pixel ratio bounded only by the
                   two frozen caps, and `--total-scale-factor` is `cssViewport.scale`
 regression        tests/unit/renderers/pdf-geometry.spec.ts (DPR matrix),
@@ -3654,10 +3678,16 @@ DPR   CSS box       backing      backing/CSS  textScale     backing      backing
 2.0   765x1081.91   765x1081     1.000        0.5           1530x2163    2.000        1.2851095…
 ```
 
-At devicePixelRatio 1.5 the released renderer produced a backing store **smaller
-than the CSS box** — an upscaled raster, i.e. the reported blur — and a text layer
-297 CSS pixels wide inside a 765-pixel page with spans rendered at 8.61 px where the
-fixed build renders 22.13 px. The glyph-level check on the released build found
+**Two effects, one table.** At devicePixelRatio 1.5 the released renderer produced
+a backing store **smaller than the CSS box** — 573×811 against 765×1081.91, an
+upscaled raster, i.e. the reported blur. That is the raster error alone; the
+TextLayer error is visible on a different axis, in the `textScale` column, which
+reads 1 at 1.0 and 1.25 and 0.5 at 1.5 and 2 where the page's CSS viewport scale is
+1.2851095… at every one of the four ratios. The two errors coincide only at 1.5 and
+above: the misalignment is present at all four ratios, the reduced backing density
+only at those two. Measured at 1.5×, the text layer was 297 CSS pixels wide inside a
+765-pixel page with spans rendered at 8.61 px where the fixed build renders
+22.13 px. The glyph-level check on the released build found
 **zero ink pixels** inside the rectangle the text layer reported for the page's
 headline, at 1.5× and at 2×: the selection was not merely offset, it was over empty
 paper. That is the reported "blue selection scaled and offset" symptom, measured.
@@ -3789,8 +3819,8 @@ lib/client.js   CCFDE63515C939AB449F44AD404CE75CFADABE7BCD80F8E9F9EA68E106305EF8
                 (was C866C7945F41A35EC1BE36C48BEAFB1202AA62D8874F1CDADA911186BB34E285)
 lib/index.mjs   BEA2CCED2245405F7F2D2F0EB9B496A23A14E70FEDCFAF23BE95D33A98E77420
                 (was FAC72B86168E002CB6DD2939C1775CAD0D149AFB24C4C2264B1110B079A60F39)
-tarball         1E29537B9E7CE98DD389A7B77D218EF71172A51E4AD06F81681EE98AF3282FC1
-                6,374,909 bytes packed, 16,705,180 bytes unpacked, 92 files
+tarball         8E204B32DBD30DBEEB2DDA499A1969C91B888A1D2522E13779B6E803E2943058
+                6,374,958 bytes packed, 16,705,180 bytes unpacked, 92 files
 ```
 
 The client hash changing is the expected consequence of a renderer change. The host
@@ -3806,6 +3836,54 @@ constant is updated in the release commit rather than left at `0.1.0`; a case in
 adversarial review found. `npm pack` reproduces the tarball byte-for-byte across two
 consecutive runs, and a fresh clone of the frozen commit reproduces the same three
 values.
+
+**Flakiness boundary of this round.** Five full `pnpm test:browser` runs were
+executed against the release-verification instance. Two suites are timing-sensitive
+under load and are **not** fixed by Task 16: `resource-cleanup`'s DOCX rapid-switch
+case (its 60-second wait for a render to still be in progress) and `ui-release`'s
+locale-switching case, which measures 25 to 30 seconds against the framework's
+former 30-second default. Neither spec is touched by the PDF production fix, and the
+PDF cases passed in all five runs. The tarball-installed run and the worktree-linked
+run each completed **95 / 0 / 0**, which is the accepted evidence; the round does
+**not** claim that all five full runs passed, and this limitation is retained rather
+than papered over. The browser per-case budget is `timeout: 90_000`, `retries: 0`,
+`workers: 1` — three times the slowest observed case, relaxing no assertion and
+retrying nothing. It is a test-infrastructure note, not a production change.
+
+### Task 16R — final evidence identity closure
+
+**Scope: evidence and documentation only.** Task 16R changes two documents and the
+PR body and no other surface: `git diff 1b3b7d38… -- package.json README.md
+THIRD_PARTY_NOTICES.md src tests scripts playwright.config.ts` is empty, so no
+runtime bundle, test, script or package-surface byte moves. No `npm publish`, no
+`git tag`, no GitHub Release, no merge of PR #10, no force push and no amended
+commit.
+
+**The final artifact identity is `8E204B32…`, and it is the only one.** The
+completion report and the PR body carried
+`8E204B32DBD30DBEEB2DDA499A1969C91B888A1D2522E13779B6E803E2943058` at 6,374,958
+bytes while this file carried
+`1E29537B9E7CE98DD389A7B77D218EF71172A51E4AD06F81681EE98AF3282FC1` at 6,374,909
+bytes, so two candidate identities existed for one tarball. The value was
+re-determined rather than assumed: `1E29537B…` is **superseded**, it is an
+intermediate pre-freeze packing of the same tree that no longer reproduces, and it
+appears nowhere in the repository after this round. From a clean worktree at
+`1b3b7d38…`, `pnpm build` reproduces `lib/client.js` at `CCFDE635…` and
+`lib/index.mjs` at `BEA2CCED…` exactly, and two consecutive `npm pack` invocations
+produce byte-identical tarballs:
+
+```text
+run 1  8E204B32DBD30DBEEB2DDA499A1969C91B888A1D2522E13779B6E803E2943058  6,374,958 bytes
+run 2  8E204B32DBD30DBEEB2DDA499A1969C91B888A1D2522E13779B6E803E2943058  6,374,958 bytes
+       identical = YES; 92 files; 16,705,180 bytes unpacked; npm shasum b5c25d08…
+pnpm verify:package   PASS — every packaging check passed (92 members, 82 declarations)
+npm publish --dry-run PASS — the tarball is accepted for publication, not published
+```
+
+`docs/STATUS.md` and `docs/testing.md` are not in the package `files` allowlist, so
+this corrective commit cannot move the artifact: the rebuild and repack performed
+after it reproduce the same three hashes, and the tarball is byte-identical to the
+one verified above.
 
 ## Synchronization
 
