@@ -13,12 +13,13 @@
  *    ratios Windows produces at 100 %, 125 %, 150 % and 200 % scaling — and
  *    asserts each context's own `window.devicePixelRatio` before it measures
  *    anything, so a case cannot pass on an unemulated ratio;
- * 2. the alignment check only asked whether a span's box lay inside the canvas's
- *    box. A text layer scaled to three quarters of the page satisfies that and is
- *    still nowhere near its glyphs. The check here reads the canvas's own pixels
- *    with `getImageData()` and compares the **ink** with what the text layer
- *    claims, on a fixture whose page carries nothing but four isolated lines of
- *    text.
+ * 2. the alignment check only asked whether a span's box lay **inside** the
+ *    canvas's box — one containment test of two rectangles. A text layer scaled to
+ *    three quarters of the page satisfies that and is still nowhere near its
+ *    glyphs, which is exactly what the released build did. The check here reads the
+ *    canvas's own pixels with `getImageData()` and compares the **ink** with what
+ *    the text layer claims, on a fixture whose page carries nothing but four
+ *    isolated lines of text.
  *
  * ## What this suite does not simulate
  *

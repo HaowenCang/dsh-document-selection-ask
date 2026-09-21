@@ -142,7 +142,7 @@ cmd /c mklink /J "%USERPROFILE%\.dsh\profiles\<profile>\node_modules\@dsh-smoke\
 
 下表的数字是 **Task 14 在真实 DSH `0.1.5-rc.2` 上的历史实测基线**（profile `dsa-smoke`，`DSH_SMOKE_URL` 非空，`--workers=1`），逐套件来源为 `docs/STATUS.md` 的 “Task 14 primary rc.2 browser matrix” 条目；`docs/07-testing-strategy.md` 第 9 节记录了同一组数字的 63 / 0 / 0。**Task 15 与 Task 15U 已针对 tarball 安装的插件复测过这组数字**；本文固定的是必需形状与历史基线，某一轮实际跑出的逐套件数值由该轮的 `docs/STATUS.md` 条目记录，本文不预填。
 
-`required matrix` 不是 `pnpm test:browser` 的全部。该命令收集 `tests/browser/` 下的每一个 spec，因此完整集合是 `required matrix` + `ui-release` + `ask-flow` 三者之和。以 Task 15U 之后的声明数为准：`63 + 17 + 7 = 87`。报告 `pnpm test:browser` 的结果时只写 63 会把两个真实套件从证据里抹掉，因此三部分必须分开列出（见 `docs/STATUS.md` 的 Task 15U 与 Task 15UR 条目）。
+`required matrix` 不是 `pnpm test:browser` 的全部。该命令收集 `tests/browser/` 下的每一个 spec，因此完整集合是 `required matrix` + `ui-release` + `ask-flow` 三者之和。Task 15U 之后的声明数是 `63 + 17 + 7 = 87`；Task 16 新增 `tests/browser/pdf-hidpi.spec.ts`（8 例），并把 PDF 面计入 `required matrix`，于是 `required matrix` 从 63 升到 65，实测收集总数为 **95**：逐文件合计为 `ask-flow 7 + docx 6 + pdf-hidpi 8 + pdf-renderer 10 + pptx 10 + real-dsh-textpreview 8 + resource-cleanup 6 + ui-release 17 + universal-selection 10 + xlsx 13 = 95`（该矩阵的逐套件数值记入当轮 `docs/STATUS.md`，本文不预填）。报告 `pnpm test:browser` 的结果时只写 required matrix 会把两个真实套件从证据里抹掉，因此三部分必须分开列出（见 `docs/STATUS.md` 的 Task 15U、Task 15UR 与 Task 16 条目）。
 
 | Suite | Required |
 | --- | --- |
@@ -152,13 +152,14 @@ cmd /c mklink /J "%USERPROFILE%\.dsh\profiles\<profile>\node_modules\@dsh-smoke\
 | pptx-selection | 10 / 0 / 0 |
 | docx-selection | 6 / 0 / 0 |
 | pdf-renderer | 10 / 0 / 0 |
+| pdf-hidpi | 8 / 0 / 0 |
 | real-dsh-textpreview | 8 / 0 / 0 |
-| required matrix total | 63 / 0 / 0 |
+| required matrix | 71 / 0 / 0 |
 | ui-release | 17 / 0 / 0 |
 | ask-flow | 7 / 0 / 0 |
-| `pnpm test:browser` total | 87 / 0 / 0 |
+| `pnpm test:browser` total | 95 / 0 / 0 |
 
-“Required” 一列的判读方式：`>=` 表示该套件允许增加用例，通过数不得低于该值；等号表示该套件当前声明的用例数就是要求数。任一列出现非零 failed 或非零 skipped 即使通过数达标也不成立。上表的用例数与各文件当前声明的 `test(` 数一致（第 2 节的表），其中 `real-dsh-textpreview` 的 8 来自 7 处声明加一个按两个视口展开的循环用例。
+“Required” 一列的判读方式：`>=` 表示该套件允许增加用例，通过数不得低于该值；等号表示该套件当前声明的用例数就是要求数。任一列出现非零 failed 或非零 skipped 即使通过数达标也不成立。上表的用例数与各文件当前声明的 `test(` 数一致（第 2 节的表），其中 `real-dsh-textpreview` 的 8 来自 7 处声明加一个按两个视口展开的循环用例，`pdf-hidpi` 的 8 来自一处按四个 `deviceScaleFactor` 展开的循环用例加四例其它场景，`docx-selection` 的 6 与 `xlsx-selection` 的 13 均已按声明数计入。表中总数是逐套件声明数之和；`pnpm test:browser` 的实际收集数以当轮实测为准，Task 16 的两轮实测都是 95（worktree 链接的一轮与 tarball 安装的一轮），逐套件通过数记入当轮 `docs/STATUS.md`。判读一轮结果时应以实测的收集数为准，不得用本表的总数替换它。
 
 ## 6. 夹具与测试驱动
 

@@ -485,7 +485,15 @@ assumption that no longer describes the acceptance policy.
     `--total-scale-factor = factor / devicePixelRatio`, and the same value is
     written from JavaScript. This is the one DSH does not have to solve, because
     its renderer has no text layer; the browser suite asserts a span's rectangle
-    lies inside its canvas box, before and after a real viewport resize
+    lies inside its canvas box, before and after a real viewport resize.
+    **SUPERSEDED by Task 16**: the `--total-scale-factor = factor /
+    devicePixelRatio` rule is wrong. PDF.js's own `devicePixelRatio` term reaches
+    only a canvas text-measurement font and the `--scale-x` ratio, span
+    `--font-height` is already in CSS pixels, and the reference viewer sets
+    `--total-scale-factor` from `viewport.scale` alone. See the Task 16 entry at
+    the end of this file for the installed-source evidence and the measured
+    before/after numbers. The passage is left in place because it is this
+    round's record of what was implemented and tested at the time.
   - the frozen raster limits are `MAX_CANVAS_DIMENSION = 16_384` and
     `MAX_CANVAS_PIXELS = 64 * 1024 * 1024`, applied as
     `factor = min(requested, MAX_DIMENSION / max(w, h), sqrt(MAX_PIXELS / (w × h)))`
@@ -2804,7 +2812,12 @@ user's own `dsa-smoke` profile tree, whose links already point at this worktree.
   real-user document renders sharp with its selection on the glyphs at 1.5× and 2×.
   v0.1.2 release candidate prepared — npm-ready metadata, reproducible `npm pack`,
   `verify:package`, `npm publish --dry-run` and an independent tarball install — and
-  nothing published.
+  nothing published. Vitest moves 1052 → 1061 cases over the same 58 files, with no
+  case deleted: the three Vitest files this round edits are a net zero (48 → 48) and
+  the additions are the four-ratio raster/text pairs, two `configureTextLayer` cases
+  and the version/`package.json` agreement case, plus `pnpm test:browser` going
+  95 total (`required matrix` 71, `ui-release` 17, `ask-flow` 7) with zero failed and
+  zero skipped on both the worktree-linked build and the tarball installation.
 
 `LICENSE` is the standard MIT text with the copyright holder taken from the
 authenticated GitHub account. `package.json` declares `"license": "MIT"`.
@@ -2980,7 +2993,15 @@ Task 7 notes carried forward:
   result back down through that custom property, so a canvas rendered at `factor`
   device pixels per CSS pixel must be paired with `factor / devicePixelRatio`. The
   rule is in `src/client/renderers/pdf/geometry.ts`, the value is written by
-  `text-layer.ts`, and the browser suite asserts the alignment;
+  `text-layer.ts`, and the browser suite asserts the alignment.
+  **SUPERSEDED by Task 16**: the value must be `viewport.scale`, not
+  `factor / devicePixelRatio` — the library never divides its
+  `devicePixelRatio` term back through that property, and the reference viewer
+  sets it from the viewport scale. The rule is no longer in `geometry.ts` (the
+  module now computes no text-layer factor at all) and the value written by
+  `text-layer.ts` is the CSS viewport scale. The conclusion this bullet draws —
+  that the property is not optional — still holds. See the Task 16 entry at the
+  end of this file;
 - **a percentage `rootMargin` is not safe under its own effect.** A `100% 0px`
   margin is measured against the scroll container, whose height is a consequence
   of how many pages have rendered, so the first page's render expands the margin
@@ -3640,13 +3661,22 @@ fixed build renders 22.13 px. The glyph-level check on the released build found
 **zero ink pixels** inside the rectangle the text layer reported for the page's
 headline, at 1.5× and at 2×: the selection was not merely offset, it was over empty
 paper. That is the reported "blue selection scaled and offset" symptom, measured.
+The zero-ink reading is the first probe harness's; a second harness, whose band is
+clamped to the run's own box rather than grown by a whole line height, read 105 and
+218 ink pixels at 1.5× and 2× — non-zero because its wider band reaches the shrink
+displaced ink, and far below the fixed build's 5138. Both readings agree on the
+substance: at those ratios the text layer covered a different part of the page from
+the one its own box names.
 
-`docs/STATUS.md:3337-3341` (Task 15U) had already recorded that "the browser matrix
-runs at device pixel ratio 1 … OS-scaling rendering beyond that setting is **not
-tested**", and `docs/STATUS.md:482-485`, `docs/STATUS.md:2968-2970` and
-`docs/04-format-adapters.md:62` restated the inverted contract as a design
-guarantee. Those statements were measurements of a suite that could not reach the
-defect; Task 16 replaces the claim with the four-ratio matrix above.
+`docs/STATUS.md:481-488` and `docs/STATUS.md:2978-2983` state the inverted contract
+in the present tense as live design, and `docs/STATUS.md:3337-3341` (Task 15U) had
+already recorded that "the browser matrix runs at device pixel ratio 1 … OS-scaling
+rendering beyond that setting is **not tested**". Task 16 corrects the contract:
+those two passages describe the model that was removed, and the four-ratio matrix
+above replaces the claim they made. `docs/04-format-adapters.md:61-67` was checked
+against its text during this round and already states the corrected model — the
+viewport uses CSS pixel dimensions and the TextLayer takes the same CSS viewport as
+the canvas — so it is not among the corrected passages.
 
 **The PDF.js 6.3.289 contract, read from the installed source.** No part of the fix
 rests on this project's own reasoning about the library. From
@@ -3750,6 +3780,32 @@ Nothing is published by Task 16: no `npm publish`, no `v0.1.2` tag, no GitHub
 release, and the published `0.1.1` package, the `v0.1.0` tag and the `v0.1.0`
 release asset are untouched. `dsh-document-selection-ask` remains an available,
 owned name — the published `0.1.1` is this project's own.
+
+**Build identity, and why the host bundle moved this time.** Two bundles and one
+tarball, each reproduced twice with the same command:
+
+```text
+lib/client.js   CCFDE63515C939AB449F44AD404CE75CFADABE7BCD80F8E9F9EA68E106305EF8
+                (was C866C7945F41A35EC1BE36C48BEAFB1202AA62D8874F1CDADA911186BB34E285)
+lib/index.mjs   BEA2CCED2245405F7F2D2F0EB9B496A23A14E70FEDCFAF23BE95D33A98E77420
+                (was FAC72B86168E002CB6DD2939C1775CAD0D149AFB24C4C2264B1110B079A60F39)
+tarball         1E29537B9E7CE98DD389A7B77D218EF71172A51E4AD06F81681EE98AF3282FC1
+                6,374,909 bytes packed, 16,705,180 bytes unpacked, 92 files
+```
+
+The client hash changing is the expected consequence of a renderer change. The host
+hash changing is **not** a consequence of the client change and was investigated:
+the PDF fix alone leaves `lib/index.mjs` byte-identical at `FAC72B86…` — that was
+measured after the production and test commits, before the release commit — and the
+hash moves only when `src/index.ts`'s exported `PLUGIN_VERSION` moves with
+`package.json`. Its own comment requires the two to stay in step, and a v0.1.2
+consumer reading `PLUGIN_VERSION` must see the version the package is, so the
+constant is updated in the release commit rather than left at `0.1.0`; a case in
+`tests/unit/host-entry.spec.ts` now asserts the exported constant equals
+`package.json`'s `version`, which is what would have caught the mismatch the
+adversarial review found. `npm pack` reproduces the tarball byte-for-byte across two
+consecutive runs, and a fresh clone of the frozen commit reproduces the same three
+values.
 
 ## Synchronization
 

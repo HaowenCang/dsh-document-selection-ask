@@ -368,8 +368,9 @@ whole viewer; the rules for the annotation editor, the sidebar and the viewer
 shell are omitted, because this renderer creates none of those elements; and the
 custom properties that carry values rather than rules
 (`--total-scale-factor`, `--scale-round-x`, `--scale-round-y`) are written from
-JavaScript instead of from a literal, because their correct value is the one the
-canvas beside the text was rendered with.
+JavaScript instead of from a literal, because their correct values are the page's
+CSS viewport scale and its rounding granularity — the geometry the canvas's CSS
+box is laid out from, not the canvas's backing-store scale.
 
 ### `@zip.js/zip.js` 2.15.0
 
