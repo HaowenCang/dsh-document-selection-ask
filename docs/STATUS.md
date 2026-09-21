@@ -3946,3 +3946,74 @@ Every completed Task is committed locally and pushed to `origin`, and the round
 is reported as PASS only after `origin/<branch>` is verified to point at local
 HEAD. A Task whose local commit succeeds and whose push fails is
 LOCAL PASS / GITHUB SYNC BLOCKED and does not proceed to the next Task.
+
+### Task 17 — v0.1.2 publication record
+
+**The release is published on both channels, and the two are byte-identical.**
+This section records the irreversible half of Task 17, which the entry above left
+pending on npm credentials. The frozen artifact was produced before publication
+and was not rebuilt for it: `npm pack` was not re-run, and the published bytes,
+the GitHub Release asset and the local frozen copy all hash to the same value.
+
+| Field | Value |
+| --- | --- |
+| Release commit | `cf4ec35017420085bc12adfb12a051cdef1ebc85` |
+| `FINAL_TARBALL_SHA256` | `B90F7DDAAEA2E17C874A92330B0E97890028D3552493735908228B9581567EF8` |
+| Canonical tarball | `dsh-document-selection-ask-0.1.2.tgz` |
+| Compressed size | 6,375,167 bytes |
+| Unpacked size | 16,706,088 bytes |
+| Archived files | 92 |
+| `lib/client.js` | `CCFDE63515C939AB449F44AD404CE75CFADABE7BCD80F8E9F9EA68E106305EF8` |
+| `lib/index.mjs` | `BEA2CCED2245405F7F2D2F0EB9B496A23A14E70FEDCFAF23BE95D33A98E77420` |
+| npm `latest` dist-tag | `0.1.2` |
+| npm `dist.shasum` | `edf5a9e304e35a743f791bc6ab7e870e3e7fdb22` |
+| npm `dist.integrity` | `sha512-qK0RvT/3Myp2T/RWVrPHtvj7sAIvNfoSKwzBWZLyANkP3KHye+pwDi0Wk3mT0S5E23GZs/j0ZBq6oBvOmwRmGA==` |
+| Git tag | `v0.1.2`, annotated, object `bbb3bb137ccce11f2e5254470aadd1083197b194` |
+| Tag target | `cf4ec35017420085bc12adfb12a051cdef1ebc85` |
+| GitHub Release | `dsh-document-selection-ask v0.1.2`, `isDraft = false`, `isPrerelease = false` |
+
+The registry was confirmed before the irreversible step and again after it: the
+`0.1.2` version did not exist, no `v0.1.2` tag existed on the remote, and no
+GitHub Release existed, so no release identity was reused. `npm publish` ran
+against the frozen tarball rather than a rebuilt directory, which is what makes
+the identity check meaningful instead of circular; the registry then served an
+artifact whose SHA-256 equals the frozen one, and `pnpm verify:package` passed on
+that downloaded copy as well as on the local one.
+
+**Post-publication acceptance ran against the registry-installed build, not the
+working tree.** A disposable profile (`dsa-v012-npm-release`) installed
+`dsh-document-selection-ask@0.1.2` from the registry — no repository symlink and
+no local tarball, with the lockfile's `resolution.integrity` equal to the
+published one — and the installed `lib/client.js` and `lib/index.mjs` hash to the
+frozen values. The profile booted on port 50132 with no host error, and the
+PDF high-DPI suite ran against it: **8 passed / 0 failed / 0 skipped**, covering
+the four `deviceScaleFactor` contexts, the cross-ratio geometry case, the CJK
+high-DPI case and the pointer-drag case. A separate Ask smoke asserted the six
+Ask properties on the PDF path — the selection was quoted once, with the file
+provenance and the question suffix, an existing draft was retained, focus
+returned to the composer, and the transcript gained no turn.
+
+The human's own 13-page PDF was then opened in the same registry-installed
+instance at DPR 1.5. The raster backed at exactly 1.5 device pixels per CSS pixel
+against a 720 px CSS column, the text layer's box matched the canvas CSS box to
+within a pixel, `--total-scale-factor` was 1.2095 — the PDF CSS viewport scale
+for a 595.28 pt page in that column, and not the 1.5 raster factor — and the
+document's CJK text was present in the layer once. On the page's long runs the
+canvas ink covered 0.97 to 1.18 of each span's own box with offsets below 15 px
+horizontally and 6 px vertically, so no run was compressed toward the page origin
+and every run sat on the glyphs it covers. Ask quoted the selected text with the
+file's provenance and did not submit. The document itself was neither committed
+nor uploaded, and it was removed from the workspace afterwards.
+
+**One release-blocking interaction is recorded for the next round.** With
+`auth-type = web`, npm 11.12.0 raises the web OTP challenge from `otplease`,
+which returns early when `process.stdin.isTTY` or `process.stdout.isTTY` is false
+(`lib/utils/auth.js`), and the CLI then prints the authentication URL with its
+identifier redacted. A non-interactive runner therefore cannot complete the
+challenge and cannot read the URL either, so `npm publish` was executed by the
+human in a terminal while everything before and after it was machine-verified.
+Publishing from an automated runner needs a credential type that does not raise
+the interactive challenge.
+
+The `0.1.1` deprecation is recommended but not executed: it is a separate
+registry mutation and is left for explicit authorisation.
