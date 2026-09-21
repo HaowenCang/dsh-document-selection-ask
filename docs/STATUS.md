@@ -3887,6 +3887,59 @@ this corrective commit cannot move the artifact: the rebuild and repack performe
 after it reproduce the same three hashes, and the tarball is byte-identical to the
 one verified above.
 
+### Task 17 — v0.1.2 production release finalization
+
+**Scope: distribution metadata and release records only.** Task 17 prepares the
+v0.1.2 production release from `a883051a927b339649e5151de70c4becae4132b7`, the merge
+of PR #10 ("Merge v0.1.2 PDF high-DPI hotfix"). The only source files the round is
+permitted to change are the packaged `README.md` and this non-packaged file;
+`src/`, `tests/`, `scripts/`, `package.json`, `pnpm-lock.yaml`,
+`playwright.config.ts` and `cordis.patch.yml` are frozen. The freeze is verified
+mechanically by diffing the finalization commit against `a883051a…` over exactly
+those paths, so the claim does not rest on a reading of the author's intent.
+
+The packaged README carried wording that expires the moment the release lands: the
+phrase `v0.1.2 release candidate`, the statement that v0.1.2 is 尚未发布, and a note
+that the publish action belongs to a later release gate. A file in the `files`
+allowlist cannot be corrected after publication, because editing it would move
+bytes that npm has already frozen; this file can, because it is not packaged. The
+README therefore now states the package version and the two distribution channels
+without asserting either that the release has happened or that it has not, and the
+authoritative status is kept here. It recommends the pinned form
+`dsh-document-selection-ask@0.1.2` rather than `latest`, since release verification
+targets an exact version, and it retains both channels — the registry install path
+and the GitHub Release tarball — as first-class options rather than demoting either.
+
+No SHA-256 is written into the README. The final release identity is produced by
+the `npm pack` freeze that follows the finalization commit, so embedding it in a
+packaged file would force a further packaging commit, a re-freeze and a new
+identity. The value belongs in this file and in the release's `SHA256SUMS.txt`.
+
+**Release finalization is not publication.** At the time of this commit no
+irreversible release action has been taken, and the wording above is written so
+that it stays correct whether or not the publish step ultimately succeeds:
+
+| Action | State at this commit |
+| --- | --- |
+| `npm publish` of `dsh-document-selection-ask@0.1.2` | not executed |
+| git tag `v0.1.2` | not created |
+| GitHub Release `v0.1.2` | not created |
+| npm `latest` dist-tag | `0.1.1` |
+
+**npm publication is blocked on credentials, and the block is recorded rather
+than worked around.** The §8 authentication gate requires `npm whoami` to succeed
+against `https://registry.npmjs.org/`. It does not: the command returns
+`E401 Unauthorized` on repeated attempts, while `npm ping` returns `PONG` and no
+proxy is configured, which localises the failure to the stored credential rather
+than to connectivity or to the registry. `npm owner ls dsh-document-selection-ask`
+returns `evan-williams <canghw2023@foxmail.com>`, but that is public packument
+metadata and therefore does not evidence an authenticated session. Restoring a
+working credential requires interactive `npm login`, so the publish gate is left
+unpassed and the irreversible steps are not attempted. Everything up to and
+including the frozen artifact, the verification gates and the release merge is
+reversible and is completed in this round; the tag, the GitHub Release and the
+registry verification that follow publication remain pending.
+
 ## Synchronization
 
 Every completed Task is committed locally and pushed to `origin`, and the round
