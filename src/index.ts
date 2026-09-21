@@ -22,7 +22,7 @@
 export const PLUGIN_NAME = 'dsh-document-selection-ask'
 
 /** Package version, kept in step with `package.json`. */
-export const PLUGIN_VERSION = '0.1.0'
+export const PLUGIN_VERSION = '0.1.2'
 
 /** Host-side services the plugin requires before activation; none in v1. */
 export const inject: readonly string[] = []

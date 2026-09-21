@@ -43,6 +43,7 @@ export interface SmokeFixture {
     | 'pdf-two'
     | 'pdf-cjk'
     | 'pdf-image'
+    | 'pdf-probe'
     | 'docx-paragraphs'
     | 'docx-break'
     | 'docx-table-image'
@@ -171,6 +172,16 @@ export const SMOKE_FIXTURES: readonly SmokeFixture[] = [
     key: 'pdf-image',
     label: 'Open PDF image only',
     path: 'smoke-fixtures/task7-image-only.pdf',
+    tabKind: 'text',
+  },
+  {
+    // Task 16's fixture. The high-DPI defect was a text layer that did not sit on
+    // the glyphs it selected, and only a page whose raster is text and nothing
+    // else can show that: the alignment check reads the canvas's own pixels, and
+    // on this page every dark pixel belongs to one of its four isolated lines.
+    key: 'pdf-probe',
+    label: 'Open PDF alignment probe',
+    path: 'smoke-fixtures/task7-alignment-probe.pdf',
     tabKind: 'text',
   },
   {
@@ -342,6 +353,7 @@ export const PDF_FIXTURE_SOURCES: readonly { readonly key: SmokeFixture['key']; 
   { key: 'pdf-two', source: 'tests/fixtures/pdf/two-page.pdf' },
   { key: 'pdf-cjk', source: 'tests/fixtures/pdf/cjk.pdf' },
   { key: 'pdf-image', source: 'tests/fixtures/pdf/image-only.pdf' },
+  { key: 'pdf-probe', source: 'tests/fixtures/pdf/alignment-probe.pdf' },
 ]
 
 /**

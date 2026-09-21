@@ -56,7 +56,20 @@ function expectLoadablePlugin(module: HostPlugin, label: string): void {
 describe('host entry', () => {
   it('exposes the plugin identity', () => {
     expect(source.PLUGIN_NAME).toBe('dsh-document-selection-ask')
-    expect(source.PLUGIN_VERSION).toBe('0.1.0')
+    // Kept in step with `package.json`, which this round moves to the v0.1.2
+    // release candidate. A consumer reading the exported constant must see the
+    // version the package actually is.
+    expect(source.PLUGIN_VERSION).toBe('0.1.2')
+  })
+
+  it('ships a version that matches the package manifest', () => {
+    const manifest = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')) as {
+      version?: string
+    }
+    expect(manifest.version, 'package.json must declare a version').toBeDefined()
+    expect(source.PLUGIN_VERSION, 'the exported version must equal package.json version').toBe(
+      manifest.version,
+    )
   })
 
   it('is a loadable plugin and needs no host service', () => {

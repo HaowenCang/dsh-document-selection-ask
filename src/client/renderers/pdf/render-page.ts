@@ -34,6 +34,24 @@
  * idempotent and never throws, and `page.cleanup()` still waits for both render
  * paths to settle; releasing a listener does not release the page earlier.
  *
+ * ## The three geometries, and which one each layer takes
+ *
+ * A page has one CSS geometry and one raster geometry, and conflating them is the
+ * defect this module was corrected for. Both layers are laid out from the same CSS
+ * `PageViewport`:
+ *
+ * ```text
+ * page wrapper, canvas CSS box, text layer   ← cssViewport        (CSS pixels)
+ * canvas backing store, output transform     ← cssViewport × factor (device pixels)
+ * ```
+ *
+ * The raster factor is the display's device pixel ratio bounded by the caps in
+ * `geometry.ts`, and it says nothing about where anything is: the browser paints
+ * the backing store into the canvas's CSS box whatever the factor was. The text
+ * layer's own scale is therefore `cssViewport.scale` and not a function of the
+ * raster — passing it the raster factor is what made selectable text shrink and
+ * slide off the glyphs it was supposed to cover whenever the ratio was above 1.
+ *
  * ## The text layer this operation inherits
  *
  * The text-layer element is React's and is the same element on every re-render of
@@ -49,8 +67,7 @@
 
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist'
 
-import type { PdfBackingGeometry } from './geometry.js'
-import { pageBackingGeometry } from './geometry.js'
+import { backingGeometry } from './geometry.js'
 import { clearTextLayer, configureTextLayer, renderTextLayer } from './text-layer.js'
 import type { PdfTextRender } from './text-layer.js'
 
@@ -177,12 +194,7 @@ export function renderPdfPage(
       const cssScale = cssWidth / unitViewport.width
       const cssViewport = page.getViewport({ scale: cssScale })
 
-      const backing: PdfBackingGeometry = pageBackingGeometry(
-        cssViewport.width,
-        cssViewport.height,
-        cssScale,
-        devicePixelRatio,
-      )
+      const backing = backingGeometry(cssViewport.width, cssViewport.height, devicePixelRatio)
 
       // The canvas box is the CSS viewport, never the backing size: the backing
       // size is what the raster is drawn at, not how large the page is.
@@ -191,7 +203,12 @@ export function renderPdfPage(
       hosts.canvas.style.width = `${cssViewport.width}px`
       hosts.canvas.style.height = `${cssViewport.height}px`
 
-      configureTextLayer(hosts.textLayer, backing.textScaleFactor)
+      // The text layer takes the **CSS** scale, and the raster factor is
+      // deliberately not passed to it. Spans are laid out from the same viewport
+      // the canvas box was taken from, so a raster the safety cap reduced below
+      // the device ratio coarsens the picture without moving the text a reader
+      // selects; `geometry.ts` records the PDF.js contract this rests on.
+      configureTextLayer(hosts.textLayer, cssViewport.scale)
       text = renderTextLayer(page, cssViewport, hosts.textLayer, signal)
 
       canvasTask = page.render({

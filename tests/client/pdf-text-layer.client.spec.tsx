@@ -45,7 +45,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 
-import { clearTextLayer } from '../../src/client/renderers/pdf/text-layer.js'
+import { clearTextLayer, configureTextLayer } from '../../src/client/renderers/pdf/text-layer.js'
 import { renderPdfPage } from '../../src/client/renderers/pdf/render-page.js'
 import { FakePage, addPage, addScriptedPage, control } from './helpers/pdfjs-mock.js'
 import type { PageControl } from './helpers/pdfjs-mock.js'
@@ -303,5 +303,42 @@ describe('what a render leaves in the layer when it does not finish', () => {
     expect(clearTextLayer(container)).toBe(true)
     expect(container.childNodes.length).toBe(0)
     expect(clearTextLayer(container)).toBe(false)
+  })
+})
+
+describe('the scale a container is configured with', () => {
+  it('writes the viewport scale, not a value derived from the raster', () => {
+    // `--total-scale-factor` is read by PDF.js's `TextLayer` for the container's
+    // own width and for every span's `font-size`, and `--font-height` — the other
+    // operand — is already in CSS pixels. The only value that therefore puts a
+    // span on its glyph is the CSS viewport's scale. A value derived from the
+    // canvas's backing factor is the released defect: it shrank the container and
+    // the text together, off the image they were supposed to cover.
+    const container = document.createElement('div')
+
+    configureTextLayer(container, 1)
+
+    expect(container.style.getPropertyValue('--total-scale-factor')).toBe('1')
+    // The reference viewer's own rounding variables, so the width PDF.js writes
+    // from this factor is rounded to whole pixels at the same granularity.
+    expect(container.style.getPropertyValue('--scale-round-x')).toBe('1px')
+    expect(container.style.getPropertyValue('--scale-round-y')).toBe('1px')
+  })
+
+  it('is a function of the viewport alone, so the same page at two ratios is configured identically', () => {
+    const atOne = document.createElement('div')
+    const atTwo = document.createElement('div')
+    const cssScale = 400 / 816
+
+    // The caller computes this from `PageViewport.scale`; the device pixel ratio
+    // is not an argument of `configureTextLayer` at all, and this case states the
+    // consequence: two displays cannot produce two different text geometries.
+    configureTextLayer(atOne, cssScale)
+    configureTextLayer(atTwo, cssScale)
+
+    expect(atOne.style.getPropertyValue('--total-scale-factor')).toBe(
+      atTwo.style.getPropertyValue('--total-scale-factor'),
+    )
+    expect(Number(atOne.style.getPropertyValue('--total-scale-factor'))).toBeCloseTo(cssScale, 10)
   })
 })

@@ -485,7 +485,15 @@ assumption that no longer describes the acceptance policy.
     `--total-scale-factor = factor / devicePixelRatio`, and the same value is
     written from JavaScript. This is the one DSH does not have to solve, because
     its renderer has no text layer; the browser suite asserts a span's rectangle
-    lies inside its canvas box, before and after a real viewport resize
+    lies inside its canvas box, before and after a real viewport resize.
+    **SUPERSEDED by Task 16**: the `--total-scale-factor = factor /
+    devicePixelRatio` rule is wrong. PDF.js's own `devicePixelRatio` term reaches
+    only a canvas text-measurement font and the `--scale-x` ratio, span
+    `--font-height` is already in CSS pixels, and the reference viewer sets
+    `--total-scale-factor` from `viewport.scale` alone. See the Task 16 entry at
+    the end of this file for the installed-source evidence and the measured
+    before/after numbers. The passage is left in place because it is this
+    round's record of what was implemented and tested at the time.
   - the frozen raster limits are `MAX_CANVAS_DIMENSION = 16_384` and
     `MAX_CANVAS_PIXELS = 64 * 1024 * 1024`, applied as
     `factor = min(requested, MAX_DIMENSION / max(w, h), sqrt(MAX_PIXELS / (w × h)))`
@@ -2794,6 +2802,22 @@ user's own `dsa-smoke` profile tree, whose links already point at this worktree.
   control. Every static gate passes, `lib/client.js` and `lib/index.mjs` are
   byte-identical, the `src` delta from both baselines is zero, no pin, lockfile or
   browser file changed, and the frozen tree carried zero active sub-agents
+- Task 16 — PASS. The released renderer's PDF high-DPI defect (canvas backed below
+  the display ratio and the text layer scaled with it) is reproduced with measured
+  before/after numbers at device pixel ratios 1, 1.25, 1.5 and 2, its root cause is
+  established from the installed `pdfjs-dist@6.3.289` source, and it is fixed by
+  deleting the inverted `finest` tier and laying the text layer out from the CSS
+  viewport. The regression suite fails 9/19 on the released unit implementation and
+  8/8 on the released client bundle, and passes on the fix. The non-committed
+  real-user document renders sharp with its selection on the glyphs at 1.5× and 2×.
+  v0.1.2 release candidate prepared — npm-ready metadata, reproducible `npm pack`,
+  `verify:package`, `npm publish --dry-run` and an independent tarball install — and
+  nothing published. Vitest moves 1052 → 1061 cases over the same 58 files, with no
+  case deleted: the three Vitest files this round edits are a net zero (48 → 48) and
+  the additions are the four-ratio raster/text pairs, two `configureTextLayer` cases
+  and the version/`package.json` agreement case, plus `pnpm test:browser` going
+  95 total (`required matrix` 71, `ui-release` 17, `ask-flow` 7) with zero failed and
+  zero skipped on both the worktree-linked build and the tarball installation.
 
 `LICENSE` is the standard MIT text with the copyright holder taken from the
 authenticated GitHub account. `package.json` declares `"license": "MIT"`.
@@ -2969,7 +2993,15 @@ Task 7 notes carried forward:
   result back down through that custom property, so a canvas rendered at `factor`
   device pixels per CSS pixel must be paired with `factor / devicePixelRatio`. The
   rule is in `src/client/renderers/pdf/geometry.ts`, the value is written by
-  `text-layer.ts`, and the browser suite asserts the alignment;
+  `text-layer.ts`, and the browser suite asserts the alignment.
+  **SUPERSEDED by Task 16**: the value must be `viewport.scale`, not
+  `factor / devicePixelRatio` — the library never divides its
+  `devicePixelRatio` term back through that property, and the reference viewer
+  sets it from the viewport scale. The rule is no longer in `geometry.ts` (the
+  module now computes no text-layer factor at all) and the value written by
+  `text-layer.ts` is the CSS viewport scale. The conclusion this bullet draws —
+  that the property is not optional — still holds. See the Task 16 entry at the
+  end of this file;
 - **a percentage `rootMargin` is not safe under its own effect.** A `100% 0px`
   margin is measured against the scroll container, whose height is a consequence
   of how many pages have rendered, so the first page's render expands the margin
@@ -3573,6 +3605,287 @@ re-run, because neither the runtime bundle nor the tests changed. A fresh clone
 of the frozen commit reproduces the same two bundle hashes and the same
 `93EE00FB…` tarball through `pnpm install --frozen-lockfile`, `pnpm build` and
 `npm pack`.
+
+### Task 16 — v0.1.2 PDF high-DPI rendering and TextLayer alignment hotfix
+
+**v0.1.0 KNOWN PDF HIGH-DPI DEFECT.** The released selectable PDF renderer carried
+**two independent errors**, and the reported symptom has one component from each.
+The raster error is a threshold effect: on an ordinary page that no cap binds, the
+`finest` detail tier requested `devicePixelRatio / 2` once the ratio reached 1.5, so
+the canvas was backed below the display ratio at 1.5× and above — 0.749 backing
+pixels per CSS pixel at 1.5×, which is below one, and 1.000 at 2×. Below that
+threshold nothing reduced the backing density, so the measured 1.000 and 1.250 at
+1.0× and 1.25× are the requested ratio met exactly, not a defect. The TextLayer
+error has no threshold and is a different failure: `--total-scale-factor` was
+written as `backing.factor / devicePixelRatio` instead of the page's own CSS
+viewport scale, so the text layer was laid out off its glyphs at every ratio,
+including the two where the raster was correct. The defect shipped in `v0.1.0`
+(tarball `93EE00FB…`) and is present unchanged in `0.1.1`, which was published to
+npm from `release/npm-v0.1.1` without touching `src/client/**`, so both released
+versions carry it.
+
+```text
+symptom           a PDF page is visibly blurry on a scaled display, and the blue
+                  selection sits offset and shrunk relative to the glyphs it covers
+affected surface  src/client/renderers/pdf/{geometry,render-page,text-layer}.ts
+                  (canvas backing factor and --total-scale-factor)
+reported on       Windows 2560x1600 at 150 % scaling, i.e. devicePixelRatio 1.5
+root cause        two independent errors with one shared premise
+                  1. raster: a "detail tier" whose `finest` setting asked for
+                     `devicePixelRatio / 2`, selected at devicePixelRatio >= 1.5.
+                     This is a threshold effect and it needs its scope stated: only
+                     a page that no cap binds and whose ratio reaches the threshold
+                     was asked for less than its ratio, which is why a 150 % display
+                     was rendered at 0.75 device pixels per CSS pixel — below one
+                     backing pixel per CSS pixel — and a 200 % display at 1.0. At
+                     devicePixelRatio 1.0 and 1.25 the `normal` tier requested the
+                     ratio itself and the backing density was *not* reduced;
+                  2. TextLayer: `--total-scale-factor` was written as
+                     `backing.factor / devicePixelRatio`, on the theory that
+                     PDF.js's own `devicePixelRatio` term had to be cancelled.
+                     The contract is the page's `cssViewport.scale` alone, so this
+                     error is not a function of the raster factor at all. On the
+                     reproduction page the viewport scale is 1.2851095…, while the
+                     released value was 1 at devicePixelRatio 1.0 and 1.25 and 0.5
+                     at 1.5 and 2 — wrong at every ratio, by a different amount,
+                     and wrong at the two ratios where the raster was correct.
+                     The released client suite asserted "the span's box lies inside
+                     the canvas box", which a text layer shrunk uniformly relative
+                     to the raster satisfies; the browser suite's ink comparison
+                     replaces that proxy
+v0.1.2 fix        the backing factor is the device pixel ratio bounded only by the
+                  two frozen caps, and `--total-scale-factor` is `cssViewport.scale`
+regression        tests/unit/renderers/pdf-geometry.spec.ts (DPR matrix),
+coverage          tests/client/pdf-runtime.client.spec.tsx (raster and text
+                  decoupling), tests/client/pdf-text-layer.client.spec.tsx,
+                  tests/browser/pdf-hidpi.spec.ts (four real device scale factors,
+                  glyph-level ink comparison), plus the alignment-probe fixture
+```
+
+**Reproduction, on the released implementation.** The released defect was measured
+before any production file was touched, on the real-user document
+`正交横波交汇点分析.pdf` (12 pages, 728,611 bytes) opened in a real DSH instance at
+a 1700×1000 viewport, and independently on the committed probe fixture. The
+per-ratio numbers are identical in shape for both, because the defect is a function
+of the ratio and not of the document:
+
+```text
+                    released (v0.1.0 / 0.1.1)                fixed (v0.1.2)
+DPR   CSS box       backing      backing/CSS  textScale     backing      backing/CSS  textScale
+1.0   765x1081.91   765x1081     1.000        1             765x1081     1.000        1.2851095…
+1.25  765x1081.91   956x1352     1.250        1             956x1352     1.250        1.2851095…
+1.5   765x1081.91   573x811      0.749        0.5           1147x1622    1.499        1.2851095…
+2.0   765x1081.91   765x1081     1.000        0.5           1530x2163    2.000        1.2851095…
+```
+
+**Two effects, one table.** At devicePixelRatio 1.5 the released renderer produced
+a backing store **smaller than the CSS box** — 573×811 against 765×1081.91, an
+upscaled raster, i.e. the reported blur. That is the raster error alone; the
+TextLayer error is visible on a different axis, in the `textScale` column, which
+reads 1 at 1.0 and 1.25 and 0.5 at 1.5 and 2 where the page's CSS viewport scale is
+1.2851095… at every one of the four ratios. The two errors coincide only at 1.5 and
+above: the misalignment is present at all four ratios, the reduced backing density
+only at those two. Measured at 1.5×, the text layer was 297 CSS pixels wide inside a
+765-pixel page with spans rendered at 8.61 px where the fixed build renders
+22.13 px. The glyph-level check on the released build found
+**zero ink pixels** inside the rectangle the text layer reported for the page's
+headline, at 1.5× and at 2×: the selection was not merely offset, it was over empty
+paper. That is the reported "blue selection scaled and offset" symptom, measured.
+The zero-ink reading is the first probe harness's; a second harness, whose band is
+clamped to the run's own box rather than grown by a whole line height, read 105 and
+218 ink pixels at 1.5× and 2× — non-zero because its wider band reaches the shrink
+displaced ink, and far below the fixed build's 5138. Both readings agree on the
+substance: at those ratios the text layer covered a different part of the page from
+the one its own box names.
+
+`docs/STATUS.md:481-488` and `docs/STATUS.md:2978-2983` state the inverted contract
+in the present tense as live design, and `docs/STATUS.md:3337-3341` (Task 15U) had
+already recorded that "the browser matrix runs at device pixel ratio 1 … OS-scaling
+rendering beyond that setting is **not tested**". Task 16 corrects the contract:
+those two passages describe the model that was removed, and the four-ratio matrix
+above replaces the claim they made. `docs/04-format-adapters.md:61-67` was checked
+against its text during this round and already states the corrected model — the
+viewport uses CSS pixel dimensions and the TextLayer takes the same CSS viewport as
+the canvas — so it is not among the corrected passages.
+
+**The PDF.js 6.3.289 contract, read from the installed source.** No part of the fix
+rests on this project's own reasoning about the library. From
+`node_modules/pdfjs-dist@6.3.289`:
+
+```text
+build/pdf.mjs:15083   TextLayer constructor:  this.#scale = viewport.scale * OutputScale.pixelRatio
+build/pdf.mjs:15282   #layout uses #scale only for the canvas measurement font and --scale-x
+build/pdf.mjs:15244   span --font-height is written in CSS pixels: `${fontHeight.toFixed(2)}px`
+web/pdf_viewer.css    span font-size = --text-scale-factor × --font-height
+web/pdf_viewer.css    container width/height = --total-scale-factor × rawDims.pageWidth/Height
+web/pdf_viewer.css    .pdfViewer{--scale-factor:1} .pdfViewer .page{--total-scale-factor:calc(--scale-factor × --user-unit)}
+web/pdf_viewer.mjs    PDFPageView sets --scale-factor to this.viewport.scale / scale × PDF_TO_CSS_UNITS
+build/pdf.mjs:15096   the library never calls setLayerDimensions with a devicePixelRatio term
+build/pdf.mjs:10991   CanvasGraphics only *consumes* the caller's transform; it never resizes the canvas
+```
+
+`--total-scale-factor` multiplies a CSS-pixel quantity and the reference viewer sets
+it from `viewport.scale` alone, so the value that puts a span on its glyph is the CSS
+viewport's scale. The library's `devicePixelRatio` term sizes a text-measurement font
+and the `--scale-x` correction; it reaches neither the span box nor the span's
+position, and it was never the renderer's to cancel. `TextLayer`'s container *width*
+is also derived from that variable, which is why the released error shrank the layer
+itself (297 px) and not only the glyphs.
+
+**Production fix.** Three files, all inside the PDF renderer:
+
+- `src/client/renderers/pdf/geometry.ts` — `PdfRenderDetail`, `detailFor`,
+  `requestedFactor`, `FINEST_DETAIL_RATIO` and `pageBackingGeometry` are deleted
+  rather than redefined, because the tier inverted the meaning of its own name. The
+  surviving `backingGeometry(cssWidth, cssHeight, devicePixelRatio)` requests exactly
+  `devicePixelRatio` and bounds it by the two frozen caps and by nothing else, and
+  `PdfBackingGeometry` no longer carries `scale`, `detail` or `textScaleFactor`.
+- `src/client/renderers/pdf/render-page.ts` — the canvas box and the text layer take
+  the same CSS viewport; `configureTextLayer` is handed `cssViewport.scale`, and the
+  raster factor reaches only the backing size and the output transform.
+- `src/client/renderers/pdf/text-layer.ts` — the parameter is renamed
+  `viewportScale` and documented as the CSS viewport scale.
+
+`MAX_CANVAS_DIMENSION = 16_384` and `MAX_CANVAS_PIXELS = 64 Mi` are unchanged and
+still bind: a page large enough to exceed either is rendered at a factor below the
+ratio, and the text layer stays on its glyphs because it is no longer a function of
+the raster. Selection semantics, provenance, the quote format, the composer bridge,
+the same-root rule and the Ask auto-submit policy are untouched, and the change is
+confined to the PDF renderer: `git diff 436bb052 -- src` names no DOCX, PPTX, XLSX,
+selection-kernel, composer or OOXML file.
+
+**Regression coverage, and the proof that it kills the released build.** The unit
+matrix asserts `factor === devicePixelRatio` for 1, 1.25, 1.5, 2, 2.5 and 3 on an
+ordinary page, keeps both caps binding under a raised ratio, and asserts that the
+removed fields stay removed. Against the released `geometry.ts` the same file is
+**9 failed / 10 passed**, with `expected 0.75 to be 1.5`, `expected 1 to be 2` and
+`expected 1.25 to be 2.5` among the failures. The client suite asserts that the
+canvas backing scales with the ratio while the CSS box and `--total-scale-factor`
+do not, at all four ratios. The browser suite
+(`tests/browser/pdf-hidpi.spec.ts`) fails **8 of 8** against the released client
+bundle, with `the canvas is backed at 0.7500 device pixels per CSS pixel on a 1.5×
+display`, `the canvas is backed at 1.0000 … on a 2× display`, `the run's band must
+contain ink — received 0`, and `expected 1.5, received 0.7490196078431373` for the
+CJK page; those are the recorded `OLD IMPLEMENTATION REGRESSION PROOF` lines. The
+suite opens **real browser contexts** at `deviceScaleFactor` 1, 1.25, 1.5 and 2,
+asserts each context's own `window.devicePixelRatio` before measuring, and compares
+the canvas's own pixels — read with `getImageData()` — against the rectangle the text
+layer reports for the same words, so it no longer depends on "the span's box is
+inside the canvas's box", which a 0.75× text layer satisfies.
+
+**Real-world acceptance.** The non-committed real-user document was staged into the
+session workspace by hand for the run and is not in this repository: it appears in
+no commit, in no fixture and in no tarball. After the fix, on the same 1700×1000
+viewport, its first page measures `backing/CSS = 1.5` at devicePixelRatio 1.5
+(1147×1622 for a 765×1081.91 CSS box) and `= 2.0` at 2.0, with
+`--total-scale-factor` identical at every ratio and the headline's raster ink
+1.48 px from the box the text layer reports for it, against a relative scale error of
+0.973. Before the fix the same run found no ink at all under that box at 1.5× and
+2×. Evidence screenshots for both states are written outside the repository, under
+`E:\Projects\DSHarness\.task16-pdf-hotfix\{before,after}`, and are not committed.
+
+**Environment boundaries of this round.** `deviceScaleFactor` is the browser's own
+emulation of a display and no case patches `window.devicePixelRatio` — the property
+is read and asserted. What is *not* verified is a live move of one window between two
+displays of different scale: the four ratios are four separate boots, and the
+renderer's re-render on a ratio change is covered where the ratio is an input and by
+the resize case, not by a real monitor migration. The host display is 2560×1600 at
+150 % Windows scaling.
+
+**Known issue observed in the upstream library, not in this renderer.** The
+`--scale-x` correction PDF.js applies is computed from a canvas measurement of the
+*substituted* font, so on a run the browser's own ink is a few percent narrower than
+the box PDF.js derives from the PDF's declared advance widths. Measured on the
+alignment probe it stays within ±7 % at all four ratios and is independent of the
+device pixel ratio; it is recorded here as an observation about the pinned library
+and is not worked around. The pinned version is unchanged at `pdfjs-dist@6.3.289`.
+
+**Release candidate.** `package.json` moves `0.1.0` → `0.1.2`, `private: true` is
+removed, and `publishConfig {access: public, registry: https://registry.npmjs.org/}`,
+`repository`, `homepage` and `bugs` are declared. The version is **0.1.2 and not
+0.1.1** because `dsh-document-selection-ask@0.1.1` is already on the public registry
+(published 2026-09-20T11:31:54Z, `dist-tags.latest = 0.1.1`) and npm rejects a
+re-publish of an existing version; the human operator selected 0.1.2 for this round.
+Nothing is published by Task 16: no `npm publish`, no `v0.1.2` tag, no GitHub
+release, and the published `0.1.1` package, the `v0.1.0` tag and the `v0.1.0`
+release asset are untouched. `dsh-document-selection-ask` remains an available,
+owned name — the published `0.1.1` is this project's own.
+
+**Build identity, and why the host bundle moved this time.** Two bundles and one
+tarball, each reproduced twice with the same command:
+
+```text
+lib/client.js   CCFDE63515C939AB449F44AD404CE75CFADABE7BCD80F8E9F9EA68E106305EF8
+                (was C866C7945F41A35EC1BE36C48BEAFB1202AA62D8874F1CDADA911186BB34E285)
+lib/index.mjs   BEA2CCED2245405F7F2D2F0EB9B496A23A14E70FEDCFAF23BE95D33A98E77420
+                (was FAC72B86168E002CB6DD2939C1775CAD0D149AFB24C4C2264B1110B079A60F39)
+tarball         8E204B32DBD30DBEEB2DDA499A1969C91B888A1D2522E13779B6E803E2943058
+                6,374,958 bytes packed, 16,705,180 bytes unpacked, 92 files
+```
+
+The client hash changing is the expected consequence of a renderer change. The host
+hash changing is **not** a consequence of the client change and was investigated:
+the PDF fix alone leaves `lib/index.mjs` byte-identical at `FAC72B86…` — that was
+measured after the production and test commits, before the release commit — and the
+hash moves only when `src/index.ts`'s exported `PLUGIN_VERSION` moves with
+`package.json`. Its own comment requires the two to stay in step, and a v0.1.2
+consumer reading `PLUGIN_VERSION` must see the version the package is, so the
+constant is updated in the release commit rather than left at `0.1.0`; a case in
+`tests/unit/host-entry.spec.ts` now asserts the exported constant equals
+`package.json`'s `version`, which is what would have caught the mismatch the
+adversarial review found. `npm pack` reproduces the tarball byte-for-byte across two
+consecutive runs, and a fresh clone of the frozen commit reproduces the same three
+values.
+
+**Flakiness boundary of this round.** Five full `pnpm test:browser` runs were
+executed against the release-verification instance. Two suites are timing-sensitive
+under load and are **not** fixed by Task 16: `resource-cleanup`'s DOCX rapid-switch
+case (its 60-second wait for a render to still be in progress) and `ui-release`'s
+locale-switching case, which measures 25 to 30 seconds against the framework's
+former 30-second default. Neither spec is touched by the PDF production fix, and the
+PDF cases passed in all five runs. The tarball-installed run and the worktree-linked
+run each completed **95 / 0 / 0**, which is the accepted evidence; the round does
+**not** claim that all five full runs passed, and this limitation is retained rather
+than papered over. The browser per-case budget is `timeout: 90_000`, `retries: 0`,
+`workers: 1` — three times the slowest observed case, relaxing no assertion and
+retrying nothing. It is a test-infrastructure note, not a production change.
+
+### Task 16R — final evidence identity closure
+
+**Scope: evidence and documentation only.** Task 16R changes two documents and the
+PR body and no other surface: `git diff 1b3b7d38… -- package.json README.md
+THIRD_PARTY_NOTICES.md src tests scripts playwright.config.ts` is empty, so no
+runtime bundle, test, script or package-surface byte moves. No `npm publish`, no
+`git tag`, no GitHub Release, no merge of PR #10, no force push and no amended
+commit.
+
+**The final artifact identity is `8E204B32…`, and it is the only one.** The
+completion report and the PR body carried
+`8E204B32DBD30DBEEB2DDA499A1969C91B888A1D2522E13779B6E803E2943058` at 6,374,958
+bytes while this file carried
+`1E29537B9E7CE98DD389A7B77D218EF71172A51E4AD06F81681EE98AF3282FC1` at 6,374,909
+bytes, so two candidate identities existed for one tarball. The value was
+re-determined rather than assumed: `1E29537B…` is **superseded**; it is an
+intermediate pre-freeze packing of the same tree that no longer reproduces. That
+identity and the 6,374,909-byte size recorded with it are retained only in this
+Task 16R historical correction record, and neither is presented anywhere as the
+final, canonical or current release-candidate artifact identity. From a clean
+worktree at `1b3b7d38…`, `pnpm build` reproduces `lib/client.js` at `CCFDE635…` and
+`lib/index.mjs` at `BEA2CCED…` exactly, and two consecutive `npm pack` invocations
+produce byte-identical tarballs:
+
+```text
+run 1  8E204B32DBD30DBEEB2DDA499A1969C91B888A1D2522E13779B6E803E2943058  6,374,958 bytes
+run 2  8E204B32DBD30DBEEB2DDA499A1969C91B888A1D2522E13779B6E803E2943058  6,374,958 bytes
+       identical = YES; 92 files; 16,705,180 bytes unpacked; npm shasum b5c25d08…
+pnpm verify:package   PASS — every packaging check passed (92 members, 82 declarations)
+npm publish --dry-run PASS — the tarball is accepted for publication, not published
+```
+
+`docs/STATUS.md` and `docs/testing.md` are not in the package `files` allowlist, so
+this corrective commit cannot move the artifact: the rebuild and repack performed
+after it reproduce the same three hashes, and the tarball is byte-identical to the
+one verified above.
 
 ## Synchronization
 

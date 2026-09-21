@@ -99,7 +99,7 @@ dsh --profile <disposable-profile> --port <port> --no-open
 DSH_SMOKE_URL='http://127.0.0.1:<port>/?token=<token>' pnpm test:browser
 ```
 
-`pnpm build` 必须先于 `npm pack`：`files` 允许列表指向 `lib/`，未构建时打出的 tarball 里没有客户端 bundle。`npm pack` 是**规范 release artifact 打包命令**，`docs/STATUS.md` 记录的一切 candidate SHA-256 都由它复现；它产出的文件名由 `package.json` 的 `name` 与 `version` 决定，即 `dsh-document-selection-ask-0.1.0.tgz`，写在仓库根目录。该文件是这棵树自己的构建产物而不是源文件：它不在 `files` 允许列表内，并且被 `.gitignore` 的 `dsh-document-selection-ask-*.tgz` 一行忽略，因此既不要提交它，也不要让上一次的 tarball 被误当成当前候选。打包之后紧接着运行 `pnpm verify:package`（第 1 节）检查这个 tarball 的实际内容：它会检查必需文件、禁止形状、声明入口与随包 `README.md` 的相对链接，早于把它装进 profile，这样打包缺陷在花时间准备实例之前就被发现。
+`pnpm build` 必须先于 `npm pack`：`files` 允许列表指向 `lib/`，未构建时打出的 tarball 里没有客户端 bundle。`npm pack` 是**规范 release artifact 打包命令**，`docs/STATUS.md` 记录的一切 candidate SHA-256 都由它复现；它产出的文件名由 `package.json` 的 `name` 与 `version` 决定，即 `dsh-document-selection-ask-0.1.2.tgz`，写在仓库根目录。该文件是这棵树自己的构建产物而不是源文件：它不在 `files` 允许列表内，并且被 `.gitignore` 的 `dsh-document-selection-ask-*.tgz` 一行忽略，因此既不要提交它，也不要让上一次的 tarball 被误当成当前候选。打包之后紧接着运行 `pnpm verify:package`（第 1 节）检查这个 tarball 的实际内容：它会检查必需文件、禁止形状、声明入口与随包 `README.md` 的相对链接，早于把它装进 profile，这样打包缺陷在花时间准备实例之前就被发现。
 
 `pnpm pack` 是**当前已知的语义等价替代品，但与规范产物不逐字节相同**，因此不能用来复现本轮记录的 candidate SHA。以 Task 15UR-D 的验证环境（pnpm 11.7.0）对同一棵树的实测为例：两个 tarball 各有 92 个条目，其中 91 个逐字节相同，唯一差异是随包的 `package.json`——`pnpm pack` 把 `scripts` 移到对象末尾并去掉结尾换行符，键集合与取值完全一致（顺序无关的深比较相等）。该 tarball 同样通过 `pnpm verify:package` 的全部检查，所以本文不对它作为安装来源的可用性作否定判断，只把 `npm pack` 定为本文所有 SHA 的复现命令。
 
@@ -136,13 +136,13 @@ cmd /c mklink /J "%USERPROFILE%\.dsh\profiles\<profile>\node_modules\@dsh-smoke\
 
 第 3 步是必需的：loader 只装配 `dsh.profile.bundles` 里列出的层，链接本身不会让它加载。**只有驱动与夹具允许来自本仓库检出**；被测插件必须来自第 4 节的 tarball，否则这次运行就退回成 `link:` 安装，失去本节要证明的性质。
 
-夹具地址相对**会话工作区根**解析，因此还要确认实例的工作区根指向夹具所在的那棵树；`tests/browser/helpers/shell.ts:34` 的默认工作区名是注册表条目名，不一定等于检出目录名（`docs/manual-acceptance.md` 第 2 节记录了这一点）。若两棵树不是同一个工作副本，先确认 `smoke-fixtures/` 下同名文件逐字节相同再开始。
+夹具地址相对**会话工作区根**解析，因此还要确认实例的工作区根指向夹具所在的那棵树；`tests/browser/helpers/shell.ts:34` 的默认工作区名是注册表条目名，不一定等于检出目录名（`docs/manual-acceptance.md` 第 2 节记录了这一点）。若两棵树不是同一个工作副本，先确认 `smoke-fixtures/` 下同名文件逐字节相同再开始。Task 16 新增的 `smoke-fixtures/task7-alignment-probe.pdf` 也必须出现在那棵树的 `smoke-fixtures/` 里：`tests/browser/pdf-hidpi.spec.ts` 的 DPR 矩阵按该名字打开它，缺失时全套失败。
 
 ## 5. 当前浏览器基线
 
 下表的数字是 **Task 14 在真实 DSH `0.1.5-rc.2` 上的历史实测基线**（profile `dsa-smoke`，`DSH_SMOKE_URL` 非空，`--workers=1`），逐套件来源为 `docs/STATUS.md` 的 “Task 14 primary rc.2 browser matrix” 条目；`docs/07-testing-strategy.md` 第 9 节记录了同一组数字的 63 / 0 / 0。**Task 15 与 Task 15U 已针对 tarball 安装的插件复测过这组数字**；本文固定的是必需形状与历史基线，某一轮实际跑出的逐套件数值由该轮的 `docs/STATUS.md` 条目记录，本文不预填。
 
-`required matrix` 不是 `pnpm test:browser` 的全部。该命令收集 `tests/browser/` 下的每一个 spec，因此完整集合是 `required matrix` + `ui-release` + `ask-flow` 三者之和。以 Task 15U 之后的声明数为准：`63 + 17 + 7 = 87`。报告 `pnpm test:browser` 的结果时只写 63 会把两个真实套件从证据里抹掉，因此三部分必须分开列出（见 `docs/STATUS.md` 的 Task 15U 与 Task 15UR 条目）。
+`required matrix` 不是 `pnpm test:browser` 的全部。该命令收集 `tests/browser/` 下的每一个 spec，因此完整集合是 `required matrix` + `ui-release` + `ask-flow` 三者之和。Task 15U 之后的声明数是 `63 + 17 + 7 = 87`；Task 16 新增 `tests/browser/pdf-hidpi.spec.ts`（8 例），并把 PDF 面计入 `required matrix`，于是 `required matrix` 从 63 升到 71，实测收集总数为 **95**：逐文件合计为 `ask-flow 7 + docx 6 + pdf-hidpi 8 + pdf-renderer 10 + pptx 10 + real-dsh-textpreview 8 + resource-cleanup 6 + ui-release 17 + universal-selection 10 + xlsx 13 = 95`（该矩阵的逐套件数值记入当轮 `docs/STATUS.md`，本文不预填）。报告 `pnpm test:browser` 的结果时只写 required matrix 会把两个真实套件从证据里抹掉，因此三部分必须分开列出（见 `docs/STATUS.md` 的 Task 15U、Task 15UR 与 Task 16 条目）。
 
 | Suite | Required |
 | --- | --- |
@@ -152,13 +152,14 @@ cmd /c mklink /J "%USERPROFILE%\.dsh\profiles\<profile>\node_modules\@dsh-smoke\
 | pptx-selection | 10 / 0 / 0 |
 | docx-selection | 6 / 0 / 0 |
 | pdf-renderer | 10 / 0 / 0 |
+| pdf-hidpi | 8 / 0 / 0 |
 | real-dsh-textpreview | 8 / 0 / 0 |
-| required matrix total | 63 / 0 / 0 |
+| required matrix | 71 / 0 / 0 |
 | ui-release | 17 / 0 / 0 |
 | ask-flow | 7 / 0 / 0 |
-| `pnpm test:browser` total | 87 / 0 / 0 |
+| `pnpm test:browser` total | 95 / 0 / 0 |
 
-“Required” 一列的判读方式：`>=` 表示该套件允许增加用例，通过数不得低于该值；等号表示该套件当前声明的用例数就是要求数。任一列出现非零 failed 或非零 skipped 即使通过数达标也不成立。上表的用例数与各文件当前声明的 `test(` 数一致（第 2 节的表），其中 `real-dsh-textpreview` 的 8 来自 7 处声明加一个按两个视口展开的循环用例。
+“Required” 一列的判读方式：`>=` 表示该套件允许增加用例，通过数不得低于该值；等号表示该套件当前声明的用例数就是要求数。任一列出现非零 failed 或非零 skipped 即使通过数达标也不成立。上表的用例数与各文件当前声明的 `test(` 数一致（第 2 节的表），其中 `real-dsh-textpreview` 的 8 来自 7 处声明加一个按两个视口展开的循环用例，`pdf-hidpi` 的 8 来自一处按四个 `deviceScaleFactor` 展开的循环用例加四例其它场景，`docx-selection` 的 6 与 `xlsx-selection` 的 13 均已按声明数计入。表中总数是逐套件声明数之和；`pnpm test:browser` 的实际收集数以当轮实测为准，Task 16 的两轮实测都是 95（worktree 链接的一轮与 tarball 安装的一轮），逐套件通过数记入当轮 `docs/STATUS.md`。判读一轮结果时应以实测的收集数为准，不得用本表的总数替换它。
 
 ## 6. 夹具与测试驱动
 

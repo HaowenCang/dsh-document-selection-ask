@@ -1,6 +1,6 @@
 # PDF fixtures
 
-These four files are committed, and the browser suite opens them through the real
+These five files are committed, and the browser suite opens them through the real
 DSH document preview. They are generated, never downloaded.
 
 | File | Content | Purpose |
@@ -9,6 +9,15 @@ DSH document preview. They are generated, never downloaded.
 | `two-page.pdf` | six **A2** pages, each naming itself in its first line (`Alpha page one` … `Zeta page six`) | page 1 renders immediately and the later pages render lazily; the names make a wrong page identifiable |
 | `cjk.pdf` | one A4 page: `中文选段测试`, then a second Chinese line | CJK text extraction and CJK browser selection |
 | `image-only.pdf` | one A4 page of drawn rectangles and a circle, with **no text operator at all** | a page with nothing to select; asserts that no fake text is invented |
+| `alignment-probe.pdf` | one A4 page, four isolated lines of black text at 40/24/16/12 pt, and nothing else | glyph-level alignment: the canvas raster contains no ink except these lines, so the ink's own bounding box can be compared with the rectangle the text layer reports for the same words |
+
+`alignment-probe.pdf` was added in Task 16 for the high-DPI rendering hotfix. The
+defect it guards is a text layer laid out at the wrong scale, which the earlier
+suites could not see: their alignment check only asked whether a span's box lay
+inside the canvas's box, and a text layer scaled to 0.75 of the page satisfies that
+while sitting nowhere near the glyph it selects. A check that reads the canvas's
+own pixels needs a page it can read unambiguously, which is what the four isolated,
+widely separated, Latin-only lines provide.
 
 The multi-page fixture is A2 and carries six pages so that a page exists well
 beyond the renderer's lookahead. A page is rendered when an `IntersectionObserver`
@@ -24,7 +33,7 @@ range on open and demonstrates nothing about laziness. At A2, page 6 sits about
 node scripts/generate-pdf-fixtures.mjs
 ```
 
-The generator writes all four with `pdf-lib`, pins the document metadata to a
+The generator writes all five with `pdf-lib`, pins the document metadata to a
 fixed date, and writes no timestamp of its own, so two runs on the same inputs
 produce byte-identical files: the committed bytes are reproducible, and a diff
 of them is a meaningful review.

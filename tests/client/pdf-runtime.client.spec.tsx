@@ -26,7 +26,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { PdfAssetFailure, PdfWorkerFailure } from '../../src/client/renderers/pdf/errors.js'
-import { backingGeometry } from '../../src/client/renderers/pdf/geometry.js'
 import { renderPdfPage } from '../../src/client/renderers/pdf/render-page.js'
 import { openPdf } from '../../src/client/renderers/pdf/runtime.js'
 import { PDF_WORKER_SOURCE } from '../../src/client/renderers/pdf/worker-source.js'
@@ -378,7 +377,7 @@ describe('page rendering', () => {
     return { canvas, textLayer }
   }
 
-  it('sizes the canvas from the cap and the page box from the CSS viewport', async () => {
+  it('backs the canvas at the device pixel ratio and leaves the CSS box alone', async () => {
     addPage(['Alpha', 'Beta'])
     const session = openPdf({ bytes: sampleBytes(), signal: new AbortController().signal })
     const ready = await session.ready
@@ -387,22 +386,60 @@ describe('page rendering', () => {
     const render = renderPdfPage(ready.document, 1, elements, 816, 2, new AbortController().signal)
     await render.done
 
-    // The default tier at 2× is the finest one, so the raster is exactly the
-    // CSS box and no output transform is needed.
-    expect(elements.canvas.width).toBe(816)
-    expect(elements.canvas.height).toBe(1056)
+    // 816 CSS pixels at 2 device pixels per CSS pixel: the raster is the display's
+    // own resolution, and the CSS box is the page's, not the raster's.
+    expect(elements.canvas.width).toBe(1632)
+    expect(elements.canvas.height).toBe(2112)
     expect(elements.canvas.style.width).toBe('816px')
     expect(elements.canvas.style.height).toBe('1056px')
-    expect(control.pages[0]?.renders[0]?.transform).toBeUndefined()
+    expect(control.pages[0]?.renders[0]?.transform).toEqual([2, 0, 0, 2, 0, 0])
 
+    // The text layer takes the CSS viewport's scale, never the raster factor: the
+    // container is sized from this property, so a value derived from the backing
+    // store would shrink the whole layer off the glyphs it selects.
     const layer = FakeTextLayer.instances.at(-1)
     expect(layer?.viewport.scale).toBe(1)
-    expect(elements.textLayer.style.getPropertyValue('--total-scale-factor')).toBe('0.5')
+    expect(elements.textLayer.style.getPropertyValue('--total-scale-factor')).toBe('1')
 
     await session.dispose()
   })
 
-  it('renders the raster at the backing factor when the tier spends one', async () => {
+  it.each([
+    [1, 816, 1056, undefined],
+    [1.25, 1020, 1320, [1.25, 0, 0, 1.25, 0, 0]],
+    [1.5, 1224, 1584, [1.5, 0, 0, 1.5, 0, 0]],
+    [2, 1632, 2112, [2, 0, 0, 2, 0, 0]],
+  ])(
+    'at %s× the raster scales with the display while the text layer does not move',
+    async (devicePixelRatio, backingWidth, backingHeight, transform) => {
+      addPage(['Alpha'])
+      const session = openPdf({ bytes: sampleBytes(), signal: new AbortController().signal })
+      const ready = await session.ready
+
+      const elements = hosts()
+      const render = renderPdfPage(
+        ready.document,
+        1,
+        elements,
+        816,
+        devicePixelRatio,
+        new AbortController().signal,
+      )
+      await render.done
+
+      expect(elements.canvas.width).toBe(backingWidth)
+      expect(elements.canvas.height).toBe(backingHeight)
+      expect(elements.canvas.style.width).toBe('816px')
+      expect(elements.canvas.style.height).toBe('1056px')
+      expect(control.pages[0]?.renders[0]?.transform).toEqual(transform)
+      // Identical at every ratio: this is the decoupling the hotfix is about.
+      expect(elements.textLayer.style.getPropertyValue('--total-scale-factor')).toBe('1')
+
+      await session.dispose()
+    },
+  )
+
+  it('backs the raster at the ratio for a page whose CSS scale is not 1', async () => {
     addPage(['Alpha'])
     const session = openPdf({ bytes: sampleBytes(), signal: new AbortController().signal })
     const ready = await session.ready
@@ -411,12 +448,17 @@ describe('page rendering', () => {
     const render = renderPdfPage(ready.document, 1, elements, 400, 3, new AbortController().signal)
     await render.done
 
-    // 400 CSS pixels at 3× in the finest tier is 600 device pixels, and the CSS
-    // box stays 400: the raster scale never moves the page.
-    const expected = backingGeometry(400, (1056 / 816) * 400, 3, 'finest')
-    expect(elements.canvas.width).toBe(Math.floor(400 * expected.factor))
+    // 400 CSS pixels at 3× is 1200 device pixels, and the CSS box stays 400: the
+    // raster scale never moves the page. The CSS scale is 400/816, and that — not
+    // the raster factor — is what the text layer is laid out with.
+    expect(elements.canvas.width).toBe(1200)
     expect(elements.canvas.style.width).toBe('400px')
-    expect(control.pages[0]?.renders[0]?.transform).toEqual([expected.factor, 0, 0, expected.factor, 0, 0])
+    expect(control.pages[0]?.renders[0]?.transform).toEqual([3, 0, 0, 3, 0, 0])
+    const cssScale = 400 / 816
+    expect(FakeTextLayer.instances.at(-1)?.viewport.scale).toBeCloseTo(cssScale, 10)
+    expect(
+      Number(elements.textLayer.style.getPropertyValue('--total-scale-factor')),
+    ).toBeCloseTo(cssScale, 10)
 
     await session.dispose()
   })

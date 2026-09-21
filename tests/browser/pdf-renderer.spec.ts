@@ -589,7 +589,7 @@ function expectAligned(measured: { span: DOMRectLike; canvas: DOMRectLike } | nu
   )
 }
 
-test.describe('real DSH 0.1.5-rc.1 selectable PDF renderer', () => {
+test.describe('real DSH 0.1.5-rc.2 selectable PDF renderer', () => {
   test('renders a real PDF with a canvas and a selectable text layer, raises Ask, and quotes with single-page provenance', async ({ page }) => {
     await openShell(page)
 

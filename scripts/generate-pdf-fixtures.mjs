@@ -7,11 +7,20 @@
  * never reach the network for one:
  *
  * ```text
- * single-page.pdf   one page, "Alpha Beta Gamma" and a Latin-only paragraph
- * two-page.pdf      two pages whose first-line text names the page
- * cjk.pdf           one page of Chinese text, with the font embedded
- * image-only.pdf    one page of drawn shapes and no text operator at all
+ * single-page.pdf      one page, "Alpha Beta Gamma" and a Latin-only paragraph
+ * two-page.pdf         six pages whose first-line text names the page
+ * cjk.pdf              one page of Chinese text, with the font embedded
+ * image-only.pdf       one page of drawn shapes and no text operator at all
+ * alignment-probe.pdf  one page, four isolated lines and nothing else
  * ```
+ *
+ * `alignment-probe.pdf` is Task 16's fixture. The high-DPI defect it guards was a
+ * text layer that did not sit on the glyphs it selected, and detecting that needs a
+ * page whose raster contains **only** text: the other four fixtures all draw more
+ * than one line or draw shapes, so a scan of their canvas cannot separate "the
+ * selection is on the glyphs" from "the selection is on some other ink". Its lines
+ * are large, left-aligned, widely separated and Latin-only so the raster ink of
+ * each one is a single unambiguous band.
  *
  * **Determinism.** The generator uses `pdf-lib`, which writes no timestamp into a
  * PDF unless asked, and the document metadata is pinned to a fixed date. Two runs
@@ -371,6 +380,39 @@ async function buildImageOnly(outDir) {
   return writeFixture(outDir, 'image-only.pdf', await document.save({ useObjectStreams: false }))
 }
 
+/**
+ * Build `alignment-probe.pdf`: four isolated lines of black text on white, and
+ * nothing else on the page.
+ *
+ * The page is what a glyph-level alignment check needs. A browser suite can read
+ * the canvas raster with `getImageData()`, and on this page every dark pixel in it
+ * belongs to a glyph of one of these four lines — so the ink's own bounding box is
+ * a statement about where the glyphs are, and it can be compared with the
+ * rectangle the text layer reports for the same words. Any other fixture would
+ * confound that comparison with ink from shapes or a second column.
+ *
+ * The lines are ordered by size and separated by more than twice the largest line
+ * height, so a scan for ink in one band cannot reach the next line, and each line
+ * is short enough that its own ink is a single horizontal run. Latin-only keeps the
+ * expected advance widths a property of the embedded standard font rather than of
+ * a subset, which is what makes a tolerance in pixels meaningful.
+ *
+ * @param outDir - the output directory.
+ * @returns the written file's record.
+ */
+async function buildAlignmentProbe(outDir) {
+  const document = await createDocument('dsa fixture: alignment probe')
+  const page = document.addPage([595.28, 841.89]) // A4, in PDF points
+  const font = await document.embedFont('Helvetica')
+
+  page.drawText('ALIGNMENT PROBE 12345', { x: 72, y: 720, size: 40, font, color: rgb(0, 0, 0) })
+  page.drawText('alignment probe 67890', { x: 72, y: 650, size: 24, font, color: rgb(0, 0, 0) })
+  page.drawText('glyph alignment 24680', { x: 72, y: 600, size: 16, font, color: rgb(0, 0, 0) })
+  page.drawText('text layer 13579', { x: 72, y: 560, size: 12, font, color: rgb(0, 0, 0) })
+
+  return writeFixture(outDir, 'alignment-probe.pdf', await document.save({ useObjectStreams: false }))
+}
+
 const { out, font } = parseArgs(process.argv.slice(2))
 mkdirSync(out, { recursive: true })
 
@@ -387,6 +429,7 @@ const written = [
   await buildTwoPage(out),
   await buildCjk(out, cjkFont),
   await buildImageOnly(out),
+  await buildAlignmentProbe(out),
 ]
 
 for (const fixture of written) {
