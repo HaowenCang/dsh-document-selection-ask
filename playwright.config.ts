@@ -18,6 +18,20 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: 0,
   reporter: [['list']],
+  /**
+   * One budget for every case, and it is a budget rather than a race.
+   *
+   * The default 30 seconds is the framework's default, not a measurement: a case
+   * opens a real browser context, boots a session against a live DSH instance,
+   * decodes a document in a worker and then asserts. Measured across four full
+   * runs on the release-verification instance, the slowest ordinary case takes
+   * about 20 seconds and `ui-release`'s locale-switching case takes 25 to 30, so a
+   * 30-second limit failed that case on timing rather than on behaviour — twice,
+   * on runs where every other case passed. The limit below is three times the
+   * slowest observed case; it relaxes no assertion, retries nothing, and a case
+   * with a real defect still fails.
+   */
+  timeout: 90_000,
   use: {
     /**
      * The primary verified runtime ships Chinese copy and this plugin's contract
